@@ -1664,6 +1664,18 @@ const SCRIPT_SEED = [
     ],
   },
   {
+    id: "seed-3-6", name: "3-6",
+    lines: [
+      { speaker: "Sasha", tokens: [{ t: "先生", r: "せんせい" }, { t: "の" }, { t: "傘", r: "かさ" }, { t: "、ここにありますか？これかな？" }], romaji: "sensei no kasa, koko ni arimasu ka? kore ka na?", en: "Is the teacher's umbrella here? Maybe this one?" },
+      { speaker: "Kanda", tokens: [{ t: "いや、それは" }, { t: "私", r: "わたし" }, { t: "のです。" }], romaji: "iya, sore wa watashi no desu.", en: "No, that's mine." },
+      { speaker: "Sasha", tokens: [{ t: "え、じゃこれですかねえ。" }], romaji: "e, ja kore desu ka nē.", en: "Huh, then is it this one, I wonder?" },
+      { speaker: "Kanda", tokens: [{ t: "いや、それも" }, { t: "違", r: "ちが" }, { t: "いますよ。" }, { t: "先生", r: "せんせい" }, { t: "のって" }, { t: "青", r: "あお" }, { t: "いのだよね？" }], romaji: "iya, sore mo chigaimasu yo. sensei no tte aoi no da yo ne?", en: "No, that's wrong too. The teacher's is the blue one, right?" },
+      { speaker: "Sasha", tokens: [{ t: "そうですけど……。" }], romaji: "sō desu kedo……", en: "That's right, but…" },
+      { speaker: "Kanda", tokens: [{ t: "ないですねえ、やっぱり。" }, { t: "雨", r: "あめ" }, { t: "ですか？" }], romaji: "nai desu nē, yappari. ame desu ka?", en: "It's not here after all. Is it raining?" },
+      { speaker: "Sasha", tokens: [{ t: "いや、そうじゃないけど……" }], romaji: "iya, sō ja nai kedo……", en: "No, that's not it, but…" },
+    ],
+  },
+  {
     id: "seed-culture-talk", name: "Culture talk",
     lines: [
       { speaker: "Matthew", tokens: [{ t: "こんにちは。エイムズ・マシューです。" }], romaji: "konnichiwa. Eimuzu Mashū desu.", en: "Hello. I'm Matthew Ames." },
