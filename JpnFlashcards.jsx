@@ -385,25 +385,159 @@ const SEED = [
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-// ── storage helpers (fall back to memory if window.storage is unavailable) ──
+// ── storage helpers ──
+// window.storage is a Claude.ai artifact-sandbox API — it does NOT exist on the
+// deployed site. localStorage is the real persistence layer there; window.storage
+// (if present) is preferred only when running inside the Claude artifact preview.
+// Memory-only `mem` is the last-resort fallback (e.g. storage blocked entirely).
 const mem = {};
 async function sGet(key) {
   try {
     if (window.storage?.get) {
       const r = await window.storage.get(key);
-      return r ? r.value : null;
+      if (r) return r.value;
     }
   } catch (e) { /* key missing or unavailable */ }
+  try {
+    const v = window.localStorage.getItem(key);
+    if (v !== null) return v;
+  } catch (e) { /* localStorage blocked (private mode, disabled, etc.) */ }
   return key in mem ? mem[key] : null;
 }
 async function sSet(key, value) {
-  for (let i = 0; i < 2; i++) {
+  let ok = false;
+  for (let i = 0; i < 2 && !ok; i++) {
     if (!window.storage?.set) break;
-    try { await window.storage.set(key, value); return true; }
+    try { await window.storage.set(key, value); mem[key] = value; ok = true; }
     catch (e) { await new Promise((res) => setTimeout(res, 600)); /* retry once */ }
   }
-  mem[key] = value;   // memory-only fallback: survives this session, NOT a reload
-  return false;
+  if (!ok) {
+    try { window.localStorage.setItem(key, value); mem[key] = value; ok = true; }
+    catch (e) { /* quota exceeded or storage blocked */ }
+  }
+  if (!ok) mem[key] = value;   // memory-only fallback: survives this session, NOT a reload
+  if (ok && key.startsWith(SYNC_PREFIX) && !SYNC_SKIP_KEYS.has(key)) scheduleCloudPush();
+  return ok;
+}
+
+// ── cross-device sync (Netlify Blobs via /.netlify/functions/sync) ──
+// Every device has a short "sync code". Any device using the same code reads
+// and writes the same cloud snapshot, so progress made on one device shows up
+// on the others. Merging is per-record (not whole-file last-write-wins) so
+// studying on two devices before either has synced never loses progress.
+const SYNC_KEY = "jpn101:syncCode";
+const SYNC_ENDPOINT = "/.netlify/functions/sync";
+const SYNC_PREFIX = "jpn101:";
+const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncCode", "jpn101:syncLastPulled", "jpn101:snapshot"]);
+
+function genSyncCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous-looking chars
+  let s = "";
+  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+function getSyncCode() {
+  try {
+    let c = window.localStorage.getItem(SYNC_KEY);
+    if (!c) { c = genSyncCode(); window.localStorage.setItem(SYNC_KEY, c); }
+    return c;
+  } catch (e) { return null; }
+}
+function setSyncCode(code) {
+  try { window.localStorage.setItem(SYNC_KEY, code); } catch (e) {}
+}
+function collectLocalSnapshot() {
+  const snap = {};
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(SYNC_PREFIX) && !SYNC_SKIP_KEYS.has(k)) snap[k] = window.localStorage.getItem(k);
+    }
+  } catch (e) {}
+  return snap;
+}
+function mergeDeck(localRaw, cloudRaw) {   // per-card: keep whichever side studied that card more/most recently
+  let local = [], cloud = [];
+  try { local = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
+  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : []; } catch (e) {}
+  if (!cloud.length) return localRaw;
+  if (!local.length) return cloudRaw;
+  const byTerm = new Map(local.map((c) => [c.term, c]));
+  cloud.forEach((c) => {
+    const ex = byTerm.get(c.term);
+    if (!ex) { byTerm.set(c.term, c); return; }
+    const exScore = (ex.seen || 0) * 1e6 + (ex.last || 0);
+    const cScore = (c.seen || 0) * 1e6 + (c.last || 0);
+    if (cScore > exScore) byTerm.set(c.term, c);
+  });
+  return JSON.stringify(Array.from(byTerm.values()));
+}
+function mergeDays(localRaw, cloudRaw) {   // per-day: keep whichever side logged more reviews that day
+  let local = {}, cloud = {};
+  try { local = localRaw ? JSON.parse(localRaw) : {}; } catch (e) {}
+  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : {}; } catch (e) {}
+  const out = { ...local };
+  Object.keys(cloud).forEach((day) => {
+    const c = cloud[day], l = out[day];
+    if (!l || (c.rev || 0) > (l.rev || 0)) out[day] = c;
+  });
+  return JSON.stringify(out);
+}
+function mergeScripts(localRaw, cloudRaw) {   // union by id, preferring the fully-annotated copy
+  let local = [], cloud = [];
+  try { local = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
+  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : []; } catch (e) {}
+  if (!cloud.length) return localRaw;
+  const byId = new Map(local.map((s) => [s.id, s]));
+  cloud.forEach((s) => {
+    const ex = byId.get(s.id);
+    if (!ex || (ex.plain && !s.plain)) byId.set(s.id, s);
+  });
+  return JSON.stringify(Array.from(byId.values()));
+}
+function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
+  const out = { ...localSnap };
+  const keys = new Set([...Object.keys(localSnap), ...Object.keys(cloudSnap)]);
+  keys.forEach((k) => {
+    if (k === "jpn101:deck") { out[k] = mergeDeck(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:days") { out[k] = mergeDays(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:deckVersion") { out[k] = String(Math.max(Number(localSnap[k] || 0), Number(cloudSnap[k] || 0))); return; }
+    if (!(k in localSnap)) { out[k] = cloudSnap[k]; return; }   // new key we don't have locally yet
+    if (k in cloudSnap && cloudUpdatedAt && cloudUpdatedAt > (localLastPulled || 0)) out[k] = cloudSnap[k];   // secondary keys: newer whole snapshot wins
+  });
+  return out;
+}
+let _cloudPushTimer = null;
+function scheduleCloudPush() {
+  const code = getSyncCode();
+  if (!code) return;
+  if (_cloudPushTimer) clearTimeout(_cloudPushTimer);
+  _cloudPushTimer = setTimeout(async () => {
+    try {
+      await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
+      });
+    } catch (e) { /* offline or endpoint unreachable — local data is still safe */ }
+  }, 2500);
+}
+async function pullAndMergeCloud(code) {
+  if (!code) return false;
+  try {
+    const res = await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code));
+    if (!res.ok) return false;
+    const { data } = await res.json();
+    if (!data || !data.snapshot) return false;
+    const localSnap = collectLocalSnapshot();
+    let lastPulled = 0;
+    try { lastPulled = Number(window.localStorage.getItem("jpn101:syncLastPulled") || 0); } catch (e) {}
+    const merged = mergeSnapshots(localSnap, data.snapshot, data.updatedAt, lastPulled);
+    Object.keys(merged).forEach((k) => { try { window.localStorage.setItem(k, merged[k]); } catch (e) {} });
+    try { window.localStorage.setItem("jpn101:syncLastPulled", String(Date.now())); } catch (e) {}
+    return true;
+  } catch (e) { return false; /* offline — keep using local data */ }
 }
 
 const KIND_LABEL = { kanji: "漢字", hiragana: "ひらがな", katakana: "カタカナ", mixed: "混" };
@@ -465,12 +599,17 @@ export default function JpnFlashcards() {
 
   useEffect(() => {   // storage self-test: write a ping, read it straight back from real storage (not the mem fallback)
     (async () => {
+      const stamp = "ping-" + Date.now();
       try {
-        if (!window.storage?.set || !window.storage?.get) { setStorageOk(false); return; }
-        const stamp = "ping-" + Date.now();
-        await window.storage.set("jpn101:ping", stamp);
-        const back = await window.storage.get("jpn101:ping");
-        setStorageOk(back?.value === stamp);
+        if (window.storage?.set && window.storage?.get) {
+          await window.storage.set("jpn101:ping", stamp);
+          const back = await window.storage.get("jpn101:ping");
+          if (back?.value === stamp) { setStorageOk(true); return; }
+        }
+      } catch (e) { /* fall through to localStorage check */ }
+      try {
+        window.localStorage.setItem("jpn101:ping", stamp);
+        setStorageOk(window.localStorage.getItem("jpn101:ping") === stamp);
       } catch (e) { setStorageOk(false); }
     })();
   }, []);
@@ -478,6 +617,7 @@ export default function JpnFlashcards() {
   // ── load + seed-merge ──
   useEffect(() => {
     (async () => {
+      try { await pullAndMergeCloud(getSyncCode()); } catch (e) { /* offline — proceed with whatever's local */ }
       const rawCards = await sGet(STORE_KEY);
       const rawVer = await sGet(SEED_KEY);
       let list = null;
@@ -1676,6 +1816,14 @@ const SCRIPT_SEED = [
     ],
   },
   {
+    id: "seed-3-7", name: "3-7",
+    lines: [
+      { speaker: "Kuno", tokens: [{ t: "サーシャさん" }], romaji: "Sāsha-san", en: "Sasha," },
+      { speaker: "Kuno", tokens: [{ t: "すみません、あしたの" }, { t: "会議", r: "かいぎ" }, { t: "は" }, { t: "何時", r: "なんじ" }, { t: "ですか？" }, { t: "朝", r: "あさ" }, { t: "の" }, { t: "１０時半", r: "じゅうじはん" }, { t: "ですか？" }], romaji: "sumimasen, ashita no kaigi wa nanji desu ka? asa no jū-ji-han desu ka?", en: "Sorry, what time is tomorrow's meeting? Is it 10:30 in the morning?" },
+      { speaker: "Kuno", tokens: [{ t: "久野", r: "くの" }], romaji: "Kuno", en: "— Kuno" },
+    ],
+  },
+  {
     id: "seed-culture-talk", name: "Culture talk",
     lines: [
       { speaker: "Matthew", tokens: [{ t: "こんにちは。エイムズ・マシューです。" }], romaji: "konnichiwa. Eimuzu Mashū desu.", en: "Hello. I'm Matthew Ames." },
@@ -2182,6 +2330,24 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
   const [filter, setFilter] = useState("all");   // all | review | new | mastered
   const [sortWeak, setSortWeak] = useState(true);
 
+  const [deviceCode, setDeviceCode] = useState(() => getSyncCode());
+  const [syncInput, setSyncInput] = useState("");
+  const [syncMsg, setSyncMsg] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncCopied, setSyncCopied] = useState(false);
+  const copySyncCode = async () => {
+    try { await navigator.clipboard.writeText(deviceCode); setSyncCopied(true); setTimeout(() => setSyncCopied(false), 2000); } catch (e) {}
+  };
+  const linkSyncCode = async () => {
+    const code = syncInput.trim().toUpperCase();
+    if (!code || code.length < 4) { setSyncMsg("Enter the code shown on your other device."); return; }
+    setSyncBusy(true); setSyncMsg("");
+    setSyncCode(code); setDeviceCode(code);
+    await pullAndMergeCloud(code);
+    setSyncMsg("Linked ✓ — reloading to load your merged progress…");
+    setTimeout(() => window.location.reload(), 900);
+  };
+
   const summary = useMemo(() => {
     let mastered = 0, need = 0, fresh = 0;
     cards.forEach((c) => {
@@ -2215,6 +2381,20 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
         <div className="tc-sumitem tc-sum-good"><b>{summary.mastered}</b><span>mastered</span></div>
         <div className="tc-sumitem tc-sum-need"><b>{summary.need}</b><span>need work</span></div>
         <div className="tc-sumitem tc-sum-new"><b>{summary.fresh}</b><span>untouched</span></div>
+      </div>
+
+      <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+        <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
+        <p style={{ margin: "0 0 8px", fontSize: 13, opacity: .85 }}>
+          This device's code: <b style={{ fontFamily: "ui-monospace,monospace", letterSpacing: 1 }}>{deviceCode}</b>{" "}
+          <button className="tc-btn tc-btn-sm" onClick={copySyncCode}>{syncCopied ? "Copied!" : "Copy"}</button>
+        </p>
+        <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Enter this same code on your other phone or computer to link them together — progress merges both ways, nothing gets overwritten.</p>
+        <div className="tc-browsebar" style={{ marginBottom: 0 }}>
+          <input className="tc-search" placeholder="Enter a code from another device" value={syncInput} onChange={(e) => setSyncInput(e.target.value)} />
+          <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={linkSyncCode} disabled={syncBusy || !syncInput.trim()}>{syncBusy ? "Linking…" : "Link device"}</button>
+        </div>
+        {syncMsg && <p className="tc-restoremsg">{syncMsg}</p>}
       </div>
 
       {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
