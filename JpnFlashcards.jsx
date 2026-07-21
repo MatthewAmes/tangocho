@@ -530,7 +530,9 @@ function decodeJwtEmail(token) {
   } catch (e) { return null; }
 }
 let _googleInitDone = false;
+let _googleTokenListeners = [];   // every caller's callback fires — initialize() itself only ever runs once
 function initGoogleAuth(onToken) {
+  if (onToken) _googleTokenListeners.push(onToken);
   gisReady().then(() => {
     if (!_googleInitDone) {
       window.google.accounts.id.initialize({
@@ -539,7 +541,7 @@ function initGoogleAuth(onToken) {
         callback: (resp) => {
           _googleIdToken = resp.credential;
           _googleEmail = decodeJwtEmail(resp.credential);
-          if (onToken) onToken(resp.credential);
+          _googleTokenListeners.forEach((fn) => { try { fn(resp.credential); } catch (e) {} });
         },
       });
       _googleInitDone = true;
@@ -562,19 +564,21 @@ function syncRequestOptions(extra) {
   return { url: SYNC_ENDPOINT + "?code=" + encodeURIComponent(getSyncCode()), opts };
 }
 
+async function pushCloudNow() {   // immediate, non-debounced — used right after sign-in so existing local progress uploads without waiting on the next study action
+  try {
+    const { url, opts } = syncRequestOptions({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
+    });
+    await fetch(url, opts);
+    return true;
+  } catch (e) { return false; /* offline or endpoint unreachable — local data is still safe */ }
+}
 let _cloudPushTimer = null;
 function scheduleCloudPush() {
   if (_cloudPushTimer) clearTimeout(_cloudPushTimer);
-  _cloudPushTimer = setTimeout(async () => {
-    try {
-      const { url, opts } = syncRequestOptions({
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
-      });
-      await fetch(url, opts);
-    } catch (e) { /* offline or endpoint unreachable — local data is still safe */ }
-  }, 2500);
+  _cloudPushTimer = setTimeout(pushCloudNow, 2500);
 }
 async function pullAndMergeCloud() {
   try {
@@ -695,13 +699,17 @@ export default function JpnFlashcards() {
       }
       setCards(list);
       setReady(true);
+      scheduleCloudPush();   // baseline safety net: make sure whatever's local lands in the cloud even before any edits happen this session
     })();
   }, []);
 
   // ── Google Sign-In: silently re-authenticates if this browser signed in before; ──
-  // re-pulls and re-merges whenever a fresh token arrives (including the first one).
+  // pushes whatever's already local FIRST (so a device with real progress that just
+  // signed in doesn't sit there un-backed-up waiting for the next study action),
+  // then pulls+merges in case another device is further ahead.
   useEffect(() => {
     initGoogleAuth(async () => {
+      await pushCloudNow();
       const merged = await pullAndMergeCloud();
       if (merged) {
         try { const raw = await sGet(STORE_KEY); const list = raw ? JSON.parse(raw) : null; if (list) setCards(list); } catch (e) {}
