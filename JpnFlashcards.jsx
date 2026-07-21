@@ -519,6 +519,7 @@ function scheduleCloudPush() {
     try {
       await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code), {
         method: "POST",
+        cache: "no-store",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
       });
@@ -528,7 +529,7 @@ function scheduleCloudPush() {
 async function pullAndMergeCloud(code) {
   if (!code) return false;
   try {
-    const res = await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code));
+    const res = await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code), { cache: "no-store" });
     if (!res.ok) return false;
     const { data } = await res.json();
     if (!data || !data.snapshot) return false;
