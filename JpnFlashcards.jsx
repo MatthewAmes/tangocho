@@ -787,7 +787,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["oral", "Oral"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -803,8 +803,6 @@ export default function JpnFlashcards() {
           <Freq />
         ) : tab === "drill" ? (
           <ConjDrill />
-        ) : tab === "oral" ? (
-          <OralExam />
         ) : tab === "write" ? (
           <Write cards={cards} onResult={recordResult} />
         ) : tab === "kana" ? (
@@ -1028,15 +1026,22 @@ function Study({ cards, onResult, goAdd }) {
 
         <div className="tc-batchhead"><span>Sections</span></div>
         <div className="tc-batchgrid">
-          {batches.map((b) => (
-            <button key={b.name} className="tc-batchchip" onClick={() => start(b.cards)}
-              style={{ background: `radial-gradient(140% 160% at 30% -15%, hsla(${hueFor(b.name)},75%,62%,.5) 0%, hsla(${hueFor(b.name)},55%,42%,.16) 55%, rgba(255,255,255,.02) 85%)` }}>
-              <span className="tc-batchnum">{b.name}</span>
-              <span className={"tc-batchmeta" + (b.rate === null ? " tc-rate-new" : b.rate < 0.6 ? " tc-rate-low" : "")}>
-                {b.cards.length} words · {b.rate === null ? "new" : Math.round(b.rate * 100) + "%"}
-              </span>
-            </button>
-          ))}
+          {batches.map((b) => {
+            const art = sectionArt(b.cards);
+            return (
+              <button key={b.name} className="tc-batchchip" onClick={() => start(b.cards)}
+                style={{ background: `radial-gradient(140% 160% at 30% -15%, hsla(${hueFor(b.name)},75%,62%,.5) 0%, hsla(${hueFor(b.name)},55%,42%,.16) 55%, rgba(255,255,255,.02) 85%)` }}>
+                {art[0] && <span className="tc-batchart tc-batchart-a" aria-hidden="true">{art[0]}</span>}
+                {art[1] && <span className="tc-batchart tc-batchart-b" aria-hidden="true">{art[1]}</span>}
+                <div className="tc-batchglass">
+                  <span className="tc-batchnum">{b.name}</span>
+                  <span className={"tc-batchmeta" + (b.rate === null ? " tc-rate-new" : b.rate < 0.6 ? " tc-rate-low" : "")}>
+                    {b.cards.length} words · {b.rate === null ? "new" : Math.round(b.rate * 100) + "%"}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
         </div>
         <div className="tc-setupfoot">
           <button className="tc-btn tc-btn-sm" onClick={() => start()}>All · {cards.length}</button>
@@ -1195,6 +1200,11 @@ function hueFor(name) {
   if (name === "Class notes") return 42;
   let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return SECTION_HUES[h % SECTION_HUES.length];
+}
+function sectionArt(cardsInSec) {   // top 2 most-used emojis in this section — genuinely representative, no external images needed
+  const counts = new Map();
+  cardsInSec.forEach((c) => { if (c.emoji) counts.set(c.emoji, (counts.get(c.emoji) || 0) + 1); });
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2).map((e) => e[0]);
 }
 function sectionRank(s) {
   if (s === "Act 1") return 100;
@@ -3159,162 +3169,6 @@ function Freq() {
   );
 }
 
-/* ─────────────────────────── ORAL EXAM ───────────────────────────
-   Mock oral midterm: Claude plays Kanda-san at 大垣商会 through the
-   5-section exam flow. Transcripts + debriefs are saved to storage
-   (and included in Backup) so every rehearsal is kept.            */
-const ORAL_KEY = "jpn101:oralAttempts";
-function oralBrief(name) {
-  return `You are role-playing 神田さん (Kanda-san), an employee at 大垣商会 (Ogaki Trading), so a first-semester Japanese student can rehearse an oral midterm. The student, ${name}, is a new intern meeting you for the first time.
-
-Follow this 5-part exam flow, moving forward as the student completes each part:
-1. ENTRY: The student knocks, enters, greets, introduces themself, and asks permission to sit. Respond warmly and briefly (はい、どうぞ etc.).
-2. NAME: Early on, mispronounce the student's name ONCE in a plausible way, so they can correct you. Accept the correction graciously (あ、失礼しました). Then ask what BYU stands for (ビーワイユーは何ですか？).
-3. FREE TALK (~2 min): You have things around your office: せんべい, a book with foreign writing, restaurant reviews, a new smartphone, a tennis racket, an umbrella, a bag, and a photo of people. The STUDENT must lead. Answer naturally in 1-2 short sentences, and occasionally ask one simple follow-up question back. Do not lead the conversation yourself.
-4. EXCEL: Ask エクセル、できますか？ When they say yes, compliment them (すごいですね). Give them the task of inputting inventory. When they later ask if you're busy and ask what you think of the work, react positively.
-5. WRAP: Ask 今、何時ですか？ Accept their answer. If they ask whether there's anything else to do, say no, not today (今日はもうないです). Respond to their leave-taking.
-
-Rules:
-- Use ONLY beginner Japanese (polite です/ます style, Acts 1-3 of a first-semester course: greetings, これ/それ/あれ, できます, あります/います, likes, simple adjectives, time).
-- Keep every reply to 1-2 SHORT Japanese sentences, followed by a romaji version in parentheses.
-- The student may type romaji, kana, or kanji; accept all.
-- Stay in character. NO English coaching, NO corrections during the exam. If the student says something confusing, react like a real person (え？すみません、もう一度？) and continue.
-- Reply with Kanda-san's next line ONLY.`;
-}
-function oralDebriefPrompt(name, turns) {
-  return `You are a strict but encouraging first-semester Japanese instructor. A student named ${name} just finished a mock oral exam where they played a new intern meeting Kanda-san (transcript below; the real exam has 5 parts: entering/greeting/asking to sit, correcting a mispronounced name + explaining BYU, leading 2 minutes of free conversation about objects, accepting Excel work + checking in on it, and telling the time + leaving).
-
-Grade the rehearsal in English with Japanese examples:
-1. Section-by-section: what they nailed, and what was missing or unnatural (missing set phrases like 失礼します, politeness slips, particle/conjugation errors). Quote their exact lines and give the corrected Japanese with romaji.
-2. Score each section 1-5.
-3. End with the TOP 3 fixes to drill before the real exam.
-Keep it under 350 words, concrete, no fluff.
-
-TRANSCRIPT:
-${turns.map((t) => (t.who === "you" ? "STUDENT: " : "KANDA: ") + t.text).join("\n")}`;
-}
-
-function OralExam() {
-  const [name, setName] = useState("マシュー (Matthew)");
-  const [turns, setTurns] = useState([]);        // {who:"you"|"kanda", text}
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(false);
-  const [phase, setPhase] = useState("setup");   // setup | exam | debrief
-  const [debrief, setDebrief] = useState(null);
-  const [attempts, setAttempts] = useState([]);
-  const [viewOld, setViewOld] = useState(null);
-  const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns, busy, debrief]);
-  useEffect(() => { (async () => { try { const r = await sGet(ORAL_KEY); if (r) setAttempts(JSON.parse(r) || []); } catch (e) {} })(); }, []);
-
-  const kandaTurn = useCallback(async (history) => {
-    setBusy(true); setErr(false);
-    try {
-      const prompt = oralBrief(name) + "\n\nTRANSCRIPT SO FAR:\n" +
-        history.map((t) => (t.who === "you" ? "STUDENT: " : "KANDA: ") + t.text).join("\n");
-      const reply = (await callClaude(prompt)).trim();
-      setTurns([...history, { who: "kanda", text: reply }]);
-    } catch (e) { setErr(true); setTurns(history); }
-    setBusy(false);
-  }, [name]);
-
-  const send = useCallback((text) => {
-    const t = (text ?? input).trim();
-    if (!t || busy) return;
-    setInput("");
-    const history = [...turns, { who: "you", text: t }];
-    setTurns(history);
-    kandaTurn(history);
-  }, [input, busy, turns, kandaTurn]);
-
-  const finish = useCallback(async () => {
-    if (busy || turns.length < 2) return;
-    setBusy(true); setPhase("debrief"); setDebrief(null);
-    let d = null;
-    try { d = (await callClaude(oralDebriefPrompt(name, turns))).trim(); setDebrief({ text: d }); }
-    catch (e) { setDebrief({ err: true }); }
-    const attempt = { date: new Date().toISOString(), turns, debrief: d };
-    const next = [attempt, ...attempts].slice(0, 10);
-    setAttempts(next); sSet(ORAL_KEY, JSON.stringify(next));
-    setBusy(false);
-  }, [busy, turns, name, attempts]);
-
-  const reset = () => { setTurns([]); setDebrief(null); setViewOld(null); setPhase("setup"); };
-
-  if (phase === "setup") {
-    return (
-      <div className="tc-conj">
-        <div className="tc-conjintro">
-          <h2 className="tc-conjtitle">Oral midterm rehearsal · 大垣商会</h2>
-          <p className="tc-conjsub">Claude plays Kanda-san through the full 5-part exam: enter & greet → name correction & BYU → 2 min of free talk about his stuff → the Excel task → time & leave-taking. He stays in character (no coaching), then grades you section by section at the end. Type romaji, kana, or kanji.</p>
-          <label className="tc-conjsub" htmlFor="tc-oralname">Your name (as Kanda-san should learn it):</label>
-          <input id="tc-oralname" className="tc-input" value={name} onChange={(e) => setName(e.target.value)} />
-          <button className="tc-btn tc-btn-wide tc-btn-primary" onClick={() => { setPhase("exam"); setTurns([]); }}>
-            Walk up to the office door
-          </button>
-          {attempts.length > 0 && (
-            <>
-              <p className="tc-conjsub">Past rehearsals ({attempts.length}):</p>
-              <div className="tc-conjchips">
-                {attempts.map((a, i) => (
-                  <button key={a.date} className="tc-conjchip" onClick={() => { setViewOld(a); setPhase("debrief"); setDebrief(a.debrief ? { text: a.debrief } : { err: true }); setTurns(a.turns); }}>
-                    {a.date.slice(5, 10)} · {a.turns.filter((t) => t.who === "you").length} lines
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="tc-oral">
-      <div className="tc-oralchat" role="log" aria-live="polite">
-        {turns.length === 0 && !busy && (
-          <p className="tc-conjsub">You're outside Kanda-san's office. Knock and enter — or type your own opening.</p>
-        )}
-        {turns.map((t, i) => (
-          <div key={i} className={"tc-bubble " + (t.who === "you" ? "tc-bubble-you" : "tc-bubble-kanda")}>
-            <span className="tc-bubblewho">{t.who === "you" ? "You" : "神田さん"}</span>
-            {t.text}
-          </div>
-        ))}
-        {busy && phase === "exam" && <div className="tc-bubble tc-bubble-kanda"><span className="tc-bubblewho">神田さん</span>…</div>}
-        {err && <p className="tc-conjnote">Connection hiccup — your line is still here, tap Send again.</p>}
-        {phase === "debrief" && (
-          <div className="tc-oraldebrief">
-            <h3>Instructor debrief</h3>
-            {debrief === null ? <p>Grading your run…</p>
-              : debrief.err ? <p>Couldn't reach the grader — the transcript is saved, try grading again from the list later.</p>
-              : <p className="tc-debrieftext">{debrief.text}</p>}
-            <button className="tc-btn tc-btn-wide" onClick={reset}>{viewOld ? "Back" : "Run it again"}</button>
-          </div>
-        )}
-        <div ref={endRef} />
-      </div>
-      {phase === "exam" && (
-        <div className="tc-oralbar">
-          {turns.length === 0 ? (
-            <button className="tc-btn tc-btn-wide tc-btn-primary" disabled={busy}
-              onClick={() => send("*コンコン* (knocks twice)")}>🚪 Knock twice</button>
-          ) : (
-            <>
-              <input className="tc-input tc-oralinput" value={input} placeholder="Your line (romaji ok)…"
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") send(); }} disabled={busy} />
-              <button className="tc-btn" onClick={() => send()} disabled={busy || !input.trim()}>Send</button>
-              <button className="tc-btn tc-btn-miss" onClick={finish} disabled={busy || turns.length < 2}>End & grade</button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const CSS = `
 html,body{margin:0;padding:0;background:#0c1122;}
 html{height:100%;}
@@ -3390,14 +3244,22 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-szbtn{appearance:none;border:0;background:transparent;color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:4px 11px;border-radius:6px;cursor:pointer;}
 .tc-szbtn.is-on{background:var(--washi);color:var(--ai);}
 .tc-batchgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;}
-.tc-batchchip{appearance:none;text-align:left;border:0;
-  background:radial-gradient(130% 150% at 25% -10%, rgba(124,92,255,.18) 0%, rgba(64,84,168,.10) 45%, rgba(255,255,255,.03) 75%);
-  color:var(--washi);font:inherit;min-height:62px;padding:12px 14px;border-radius:16px;cursor:pointer;
-  transition:border-color .15s,box-shadow .15s,transform .1s;display:flex;flex-direction:column;gap:3px;justify-content:center;}
+.tc-batchchip{appearance:none;text-align:left;border:0;position:relative;overflow:hidden;
+  color:var(--washi);font:inherit;min-height:62px;padding:0;border-radius:16px;cursor:pointer;
+  transition:box-shadow .15s,transform .1s;}
 .tc-batchchip:active{transform:scale(.97);}
 .tc-batchchip:hover{box-shadow:0 0 26px -6px rgba(216,72,47,.5);}
-.tc-batchnum{font-size:14px;font-weight:600;color:#fff;}
-.tc-batchmeta{font-size:12px;color:var(--mut-2);}
+.tc-batchart{position:absolute;line-height:1;pointer-events:none;user-select:none;filter:blur(.5px);}
+.tc-batchart-a{right:-10px;bottom:-16px;font-size:60px;opacity:.4;transform:rotate(-10deg);}
+.tc-batchart-b{left:-8px;top:-10px;font-size:36px;opacity:.24;transform:rotate(14deg);}
+.tc-batchglass{position:relative;z-index:1;height:100%;box-sizing:border-box;min-height:62px;
+  display:flex;flex-direction:column;gap:3px;justify-content:center;padding:12px 14px;
+  background:linear-gradient(155deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 55%, rgba(255,255,255,.02) 100%);
+  backdrop-filter:blur(9px) saturate(150%);-webkit-backdrop-filter:blur(9px) saturate(150%);
+  border:1px solid rgba(255,255,255,.16);border-radius:16px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.3), inset 0 -14px 20px -14px rgba(0,0,0,.25);}
+.tc-batchnum{font-size:14px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.4);}
+.tc-batchmeta{font-size:12px;color:rgba(255,255,255,.82);text-shadow:0 1px 2px rgba(0,0,0,.35);}
 .tc-rate-low{color:var(--shu-soft);}
 .tc-rate-new{color:var(--mut-2);}
 .tc-setupfoot{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
