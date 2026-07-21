@@ -510,26 +510,76 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
   });
   return out;
 }
+// ── Google Sign-In (preferred identity for sync — no code to type/share) ──
+// Falls back to the manual sync code below if the user never signs in.
+const GOOGLE_CLIENT_ID = "249268364314-fkmn7ol1jtkv12sme6fjp70fj2cpr6l3.apps.googleusercontent.com";
+let _googleIdToken = null;
+let _googleEmail = null;
+let _gisReadyPromise = null;
+function gisReady() {
+  if (_gisReadyPromise) return _gisReadyPromise;
+  _gisReadyPromise = new Promise((resolve) => {
+    (function check() { if (window.google?.accounts?.id) resolve(); else setTimeout(check, 150); })();
+  });
+  return _gisReadyPromise;
+}
+function decodeJwtEmail(token) {
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b64)).email || null;
+  } catch (e) { return null; }
+}
+let _googleInitDone = false;
+function initGoogleAuth(onToken) {
+  gisReady().then(() => {
+    if (!_googleInitDone) {
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        auto_select: true,
+        callback: (resp) => {
+          _googleIdToken = resp.credential;
+          _googleEmail = decodeJwtEmail(resp.credential);
+          if (onToken) onToken(resp.credential);
+        },
+      });
+      _googleInitDone = true;
+    }
+    try { window.google.accounts.id.prompt(); } catch (e) { /* silent sign-in unavailable; button still works */ }
+  });
+}
+function renderGoogleButton(el) {
+  if (!el) return;
+  gisReady().then(() => {
+    try { window.google.accounts.id.renderButton(el, { theme: "outline", size: "medium", text: "signin_with" }); } catch (e) {}
+  });
+}
+function syncRequestOptions(extra) {
+  const opts = { ...extra, cache: "no-store", headers: { ...((extra && extra.headers) || {}) } };
+  if (_googleIdToken) {
+    opts.headers.authorization = "Bearer " + _googleIdToken;
+    return { url: SYNC_ENDPOINT, opts };
+  }
+  return { url: SYNC_ENDPOINT + "?code=" + encodeURIComponent(getSyncCode()), opts };
+}
+
 let _cloudPushTimer = null;
 function scheduleCloudPush() {
-  const code = getSyncCode();
-  if (!code) return;
   if (_cloudPushTimer) clearTimeout(_cloudPushTimer);
   _cloudPushTimer = setTimeout(async () => {
     try {
-      await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code), {
+      const { url, opts } = syncRequestOptions({
         method: "POST",
-        cache: "no-store",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
       });
+      await fetch(url, opts);
     } catch (e) { /* offline or endpoint unreachable — local data is still safe */ }
   }, 2500);
 }
-async function pullAndMergeCloud(code) {
-  if (!code) return false;
+async function pullAndMergeCloud() {
   try {
-    const res = await fetch(SYNC_ENDPOINT + "?code=" + encodeURIComponent(code), { cache: "no-store" });
+    const { url, opts } = syncRequestOptions({});
+    const res = await fetch(url, opts);
     if (!res.ok) return false;
     const { data } = await res.json();
     if (!data || !data.snapshot) return false;
@@ -620,7 +670,7 @@ export default function JpnFlashcards() {
   // ── load + seed-merge ──
   useEffect(() => {
     (async () => {
-      try { await pullAndMergeCloud(getSyncCode()); } catch (e) { /* offline — proceed with whatever's local */ }
+      try { await pullAndMergeCloud(); } catch (e) { /* offline — proceed with whatever's local */ }
       const rawCards = await sGet(STORE_KEY);
       const rawVer = await sGet(SEED_KEY);
       let list = null;
@@ -646,6 +696,17 @@ export default function JpnFlashcards() {
       setCards(list);
       setReady(true);
     })();
+  }, []);
+
+  // ── Google Sign-In: silently re-authenticates if this browser signed in before; ──
+  // re-pulls and re-merges whenever a fresh token arrives (including the first one).
+  useEffect(() => {
+    initGoogleAuth(async () => {
+      const merged = await pullAndMergeCloud();
+      if (merged) {
+        try { const raw = await sGet(STORE_KEY); const list = raw ? JSON.parse(raw) : null; if (list) setCards(list); } catch (e) {}
+      }
+    });
   }, []);
 
   const persist = useCallback((next) => {
@@ -2338,6 +2399,13 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
   const [syncMsg, setSyncMsg] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncCopied, setSyncCopied] = useState(false);
+  const [showCodeFallback, setShowCodeFallback] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState(() => _googleEmail);
+  const googleBtnRef = useRef(null);
+  useEffect(() => {
+    if (!googleEmail) renderGoogleButton(googleBtnRef.current);
+    initGoogleAuth(() => setGoogleEmail(_googleEmail));
+  }, [googleEmail]);
   const copySyncCode = async () => {
     try { await navigator.clipboard.writeText(deviceCode); setSyncCopied(true); setTimeout(() => setSyncCopied(false), 2000); } catch (e) {}
   };
@@ -2346,7 +2414,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
     if (!code || code.length < 4) { setSyncMsg("Enter the code shown on your other device."); return; }
     setSyncBusy(true); setSyncMsg("");
     setSyncCode(code); setDeviceCode(code);
-    await pullAndMergeCloud(code);
+    await pullAndMergeCloud();
     setSyncMsg("Linked ✓ — reloading to load your merged progress…");
     setTimeout(() => window.location.reload(), 900);
   };
@@ -2388,6 +2456,20 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
 
       <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
+        {googleEmail ? (
+          <p style={{ margin: "0 0 4px", fontSize: 13, opacity: .85 }}>Signed in as <b>{googleEmail}</b> — this device stays synced automatically.</p>
+        ) : (
+          <>
+            <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Sign in once per device to keep your progress synced everywhere — no code to copy.</p>
+            <div ref={googleBtnRef} style={{ marginBottom: 4 }} />
+          </>
+        )}
+        <button className="tc-btn tc-btn-sm" style={{ marginTop: 6 }} onClick={() => setShowCodeFallback((v) => !v)}>
+          {showCodeFallback ? "Hide code option" : "Having trouble? Use a code instead"}
+        </button>
+      </div>
+      {showCodeFallback && (
+      <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
         <p style={{ margin: "0 0 8px", fontSize: 13, opacity: .85 }}>
           This device's code: <b style={{ fontFamily: "ui-monospace,monospace", letterSpacing: 1 }}>{deviceCode}</b>{" "}
           <button className="tc-btn tc-btn-sm" onClick={copySyncCode}>{syncCopied ? "Copied!" : "Copy"}</button>
@@ -2399,6 +2481,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
         </div>
         {syncMsg && <p className="tc-restoremsg">{syncMsg}</p>}
       </div>
+      )}
 
       {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
         <p className="tc-conjnote">💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — tap Backup below. It saves a file to your phone plus a clipboard copy of everything: both decks, all stats, think-times, scripts, and exam history.</p>
