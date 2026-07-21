@@ -510,11 +510,30 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
   });
   return out;
 }
-// ── Google Sign-In (preferred identity for sync — no code to type/share) ──
-// Falls back to the manual sync code below if the user never signs in.
+// ── Google Sign-In with a real persistent session ──
+// One explicit click exchanges a Google ID token for OUR OWN long-lived signed
+// session token (~2 years), stored in localStorage. Every later visit just reads
+// that token straight from storage — no re-running Google's sign-in flow, no
+// dependency on browser silent-reauth (which is unreliable and was causing
+// "asks me to log in again every time"). Falls back to the manual sync code
+// only if the user has never signed in with Google at all.
 const GOOGLE_CLIENT_ID = "249268364314-fkmn7ol1jtkv12sme6fjp70fj2cpr6l3.apps.googleusercontent.com";
-let _googleIdToken = null;
-let _googleEmail = null;
+const SESSION_KEY = "jpn101:session";
+const USER_EMAIL_KEY = "jpn101:userEmail";
+function loadSession() {
+  try { return window.localStorage.getItem(SESSION_KEY); } catch (e) { return null; }
+}
+function saveSession(session, email) {
+  try {
+    window.localStorage.setItem(SESSION_KEY, session);
+    if (email) window.localStorage.setItem(USER_EMAIL_KEY, email);
+  } catch (e) {}
+}
+function signOutGoogle() {
+  try { window.localStorage.removeItem(SESSION_KEY); window.localStorage.removeItem(USER_EMAIL_KEY); } catch (e) {}
+  _googleEmail = null;
+}
+let _googleEmail = (() => { try { return window.localStorage.getItem(USER_EMAIL_KEY); } catch (e) { return null; } })();
 let _gisReadyPromise = null;
 function gisReady() {
   if (_gisReadyPromise) return _gisReadyPromise;
@@ -523,42 +542,50 @@ function gisReady() {
   });
   return _gisReadyPromise;
 }
-function decodeJwtEmail(token) {
+async function exchangeForSession(idToken) {
   try {
-    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(b64)).email || null;
-  } catch (e) { return null; }
+    const res = await fetch(SYNC_ENDPOINT + "?exchange=1", {
+      method: "POST", cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ idToken }),
+    });
+    if (!res.ok) return false;
+    const { session, email } = await res.json();
+    if (!session) return false;
+    saveSession(session, email);
+    _googleEmail = email;
+    return true;
+  } catch (e) { return false; /* offline — try again next click */ }
 }
 let _googleInitDone = false;
 let _googleTokenListeners = [];   // every caller's callback fires — initialize() itself only ever runs once
 function initGoogleAuth(onToken) {
   if (onToken) _googleTokenListeners.push(onToken);
+  if (loadSession()) return;   // already have a persistent session — no need to touch Google's flow at all
   gisReady().then(() => {
     if (!_googleInitDone) {
       window.google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
-        auto_select: true,
-        callback: (resp) => {
-          _googleIdToken = resp.credential;
-          _googleEmail = decodeJwtEmail(resp.credential);
-          _googleTokenListeners.forEach((fn) => { try { fn(resp.credential); } catch (e) {} });
+        callback: async (resp) => {
+          const ok = await exchangeForSession(resp.credential);
+          if (ok) _googleTokenListeners.forEach((fn) => { try { fn(); } catch (e) {} });
         },
       });
       _googleInitDone = true;
     }
-    try { window.google.accounts.id.prompt(); } catch (e) { /* silent sign-in unavailable; button still works */ }
   });
 }
 function renderGoogleButton(el) {
-  if (!el) return;
+  if (!el || loadSession()) return;
   gisReady().then(() => {
     try { window.google.accounts.id.renderButton(el, { theme: "outline", size: "medium", text: "signin_with" }); } catch (e) {}
   });
 }
 function syncRequestOptions(extra) {
   const opts = { ...extra, cache: "no-store", headers: { ...((extra && extra.headers) || {}) } };
-  if (_googleIdToken) {
-    opts.headers.authorization = "Bearer " + _googleIdToken;
+  const session = loadSession();
+  if (session) {
+    opts.headers.authorization = "Bearer " + session;
     return { url: SYNC_ENDPOINT, opts };
   }
   return { url: SYNC_ENDPOINT + "?code=" + encodeURIComponent(getSyncCode()), opts };
@@ -703,18 +730,21 @@ export default function JpnFlashcards() {
     })();
   }, []);
 
-  // ── Google Sign-In: silently re-authenticates if this browser signed in before; ──
-  // pushes whatever's already local FIRST (so a device with real progress that just
-  // signed in doesn't sit there un-backed-up waiting for the next study action),
-  // then pulls+merges in case another device is further ahead.
+  // ── cloud sync: if already signed in (persistent session from a prior visit), ──
+  // sync right away — no Google involvement needed. If not signed in yet, wait for
+  // a sign-in click. Either way: push whatever's already local FIRST (so a device
+  // with real progress doesn't sit un-backed-up waiting for the next study action),
+  // then pull+merge in case another device is further ahead.
   useEffect(() => {
-    initGoogleAuth(async () => {
+    const doSyncFlow = async () => {
       await pushCloudNow();
       const merged = await pullAndMergeCloud();
       if (merged) {
         try { const raw = await sGet(STORE_KEY); const list = raw ? JSON.parse(raw) : null; if (list) setCards(list); } catch (e) {}
       }
-    });
+    };
+    if (loadSession()) doSyncFlow();
+    else initGoogleAuth(doSyncFlow);
   }, []);
 
   const persist = useCallback((next) => {
@@ -991,9 +1021,25 @@ function Study({ cards, onResult, goAdd }) {
     return (
       <div className="tc-study-setup">
         <div className="tc-hero">
-          <div className="tc-heronum">{dueCount}</div>
-          <p className="tc-herolabel">due for review</p>
-          <p className="tc-herosub">{cards.length} words · {newCount} untouched</p>
+          {dueCount > 0 ? (
+            <>
+              <div className="tc-heronum">{dueCount}</div>
+              <p className="tc-herolabel">due for review</p>
+              <p className="tc-herosub">{cards.length} words · {newCount} untouched</p>
+            </>
+          ) : newCount > 0 ? (
+            <>
+              <div className="tc-heronum">{newCount}</div>
+              <p className="tc-herolabel">new words ready to learn</p>
+              <p className="tc-herosub">{cards.length} words · {ranked.length} studied so far</p>
+            </>
+          ) : (
+            <>
+              <div className="tc-heronum">✓</div>
+              <p className="tc-herolabel">all caught up</p>
+              <p className="tc-herosub">{cards.length} words · check back later for reviews</p>
+            </>
+          )}
         </div>
         {smartBatch && (
           <button className="tc-btn tc-btn-primary tc-start" onClick={() => start(smartBatch.cards)}>
@@ -2315,6 +2361,7 @@ function Write({ cards, onResult }) {
 }
 
 function Browse({ cards, onRemove, onClear, onRestore }) {
+  const [showMore, setShowMore] = useState(false);
   const [showRestore, setShowRestore] = useState(false);
   const [restoreText, setRestoreText] = useState("");
   const [backupDone, setBackupDone] = useState(false);
@@ -2468,38 +2515,45 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
         )}
       </div>
 
-      {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
-        <p className="tc-conjnote">💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — tap Backup below. It saves a file to your phone plus a clipboard copy of everything: both decks, all stats, think-times, scripts, and exam history.</p>
-      )}
-
       <div className="tc-browsebar">
         <input className="tc-search" placeholder="Search words…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button className="tc-btn tc-btn-sm" onClick={exportText} disabled={!cards.length}>{copied ? "Copied!" : "Export"}</button>
-        <button className="tc-btn tc-btn-sm" onClick={doBackup} disabled={!cards.length}>{backupDone ? "Backed up ✓" : "💾 Backup"}</button>
-        <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore((v) => !v); setRestoreMsg(""); }}>Restore</button>
-        {!confirm ? (
-          <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => setConfirm(true)} disabled={!cards.length}>Clear all</button>
-        ) : (
-          <span className="tc-confirm">
-            Delete everything?
-            <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => { onClear(); setConfirm(false); }}>Yes</button>
-            <button className="tc-btn tc-btn-sm" onClick={() => setConfirm(false)}>No</button>
-          </span>
-        )}
+        <button className="tc-btn tc-btn-sm" onClick={() => setShowMore((v) => !v)}>{showMore ? "Less ⌃" : "More ⌄"}</button>
       </div>
 
-      {showRestore && (
-        <div className="tc-restore">
-          <p className="tc-restorehint">Paste a 💾 backup (replaces everything) or an update pack from Claude (adds new words & scripts — progress untouched), then Apply.</p>
-          <textarea className="tc-restorebox" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='{"app":"tangocho", ...}' />
-          <div className="tc-restorebtns">
-            <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={doRestore} disabled={!restoreText.trim()}>Apply backup</button>
-            <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore(false); setRestoreMsg(""); }}>Close</button>
+      {showMore && (
+        <div style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+          {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
+            <p className="tc-conjnote" style={{ marginTop: 0 }}>💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — a backup file has everything: both decks, all stats, think-times, scripts, and exam history.</p>
+          )}
+          <div className="tc-browsebar" style={{ marginBottom: 0 }}>
+            <button className="tc-btn tc-btn-sm" onClick={exportText} disabled={!cards.length}>{copied ? "Copied!" : "Export"}</button>
+            <button className="tc-btn tc-btn-sm" onClick={doBackup} disabled={!cards.length}>{backupDone ? "Backed up ✓" : "💾 Backup"}</button>
+            <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore((v) => !v); setRestoreMsg(""); }}>Restore</button>
+            {!confirm ? (
+              <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => setConfirm(true)} disabled={!cards.length}>Clear all</button>
+            ) : (
+              <span className="tc-confirm">
+                Delete everything?
+                <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => { onClear(); setConfirm(false); }}>Yes</button>
+                <button className="tc-btn tc-btn-sm" onClick={() => setConfirm(false)}>No</button>
+              </span>
+            )}
           </div>
-          {restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
+
+          {showRestore && (
+            <div className="tc-restore">
+              <p className="tc-restorehint">Paste a 💾 backup (replaces everything) or an update pack from Claude (adds new words & scripts — progress untouched), then Apply.</p>
+              <textarea className="tc-restorebox" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='{"app":"tangocho", ...}' />
+              <div className="tc-restorebtns">
+                <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={doRestore} disabled={!restoreText.trim()}>Apply backup</button>
+                <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore(false); setRestoreMsg(""); }}>Close</button>
+              </div>
+              {restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
+            </div>
+          )}
+          {!showRestore && restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
         </div>
       )}
-      {!showRestore && restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
       <div className="tc-filters">
         {[["all", "All"], ["review", "Needs work"], ["new", "Untouched"], ["mastered", "Mastered"]].map(([id, label]) => (
           <button key={id} className={"tc-fchip" + (filter === id ? " is-on" : "")} onClick={() => setFilter(id)}>{label}</button>
