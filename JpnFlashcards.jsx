@@ -2412,30 +2412,12 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
   const [filter, setFilter] = useState("all");   // all | review | new | mastered
   const [sortWeak, setSortWeak] = useState(true);
 
-  const [deviceCode, setDeviceCode] = useState(() => getSyncCode());
-  const [syncInput, setSyncInput] = useState("");
-  const [syncMsg, setSyncMsg] = useState("");
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncCopied, setSyncCopied] = useState(false);
-  const [showCodeFallback, setShowCodeFallback] = useState(false);
   const [googleEmail, setGoogleEmail] = useState(() => _googleEmail);
   const googleBtnRef = useRef(null);
   useEffect(() => {
     if (!googleEmail) renderGoogleButton(googleBtnRef.current);
     initGoogleAuth(() => setGoogleEmail(_googleEmail));
   }, [googleEmail]);
-  const copySyncCode = async () => {
-    try { await navigator.clipboard.writeText(deviceCode); setSyncCopied(true); setTimeout(() => setSyncCopied(false), 2000); } catch (e) {}
-  };
-  const linkSyncCode = async () => {
-    const code = syncInput.trim().toUpperCase();
-    if (!code || code.length < 4) { setSyncMsg("Enter the code shown on your other device."); return; }
-    setSyncBusy(true); setSyncMsg("");
-    setSyncCode(code); setDeviceCode(code);
-    await pullAndMergeCloud();
-    setSyncMsg("Linked ✓ — reloading to load your merged progress…");
-    setTimeout(() => window.location.reload(), 900);
-  };
 
   const summary = useMemo(() => {
     let mastered = 0, need = 0, fresh = 0;
@@ -2475,31 +2457,17 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
         {googleEmail ? (
-          <p style={{ margin: "0 0 4px", fontSize: 13, opacity: .85 }}>Signed in as <b>{googleEmail}</b> — this device stays synced automatically.</p>
+          <p style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3ddc84", display: "inline-block", boxShadow: "0 0 6px #3ddc84" }} />
+            Signed in as <b>{googleEmail}</b> — synced automatically.
+          </p>
         ) : (
           <>
-            <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Sign in once per device to keep your progress synced everywhere — no code to copy.</p>
+            <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Sign in once per device to keep your progress synced everywhere.</p>
             <div ref={googleBtnRef} style={{ marginBottom: 4 }} />
           </>
         )}
-        <button className="tc-btn tc-btn-sm" style={{ marginTop: 6 }} onClick={() => setShowCodeFallback((v) => !v)}>
-          {showCodeFallback ? "Hide code option" : "Having trouble? Use a code instead"}
-        </button>
       </div>
-      {showCodeFallback && (
-      <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
-        <p style={{ margin: "0 0 8px", fontSize: 13, opacity: .85 }}>
-          This device's code: <b style={{ fontFamily: "ui-monospace,monospace", letterSpacing: 1 }}>{deviceCode}</b>{" "}
-          <button className="tc-btn tc-btn-sm" onClick={copySyncCode}>{syncCopied ? "Copied!" : "Copy"}</button>
-        </p>
-        <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Enter this same code on your other phone or computer to link them together — progress merges both ways, nothing gets overwritten.</p>
-        <div className="tc-browsebar" style={{ marginBottom: 0 }}>
-          <input className="tc-search" placeholder="Enter a code from another device" value={syncInput} onChange={(e) => setSyncInput(e.target.value)} />
-          <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={linkSyncCode} disabled={syncBusy || !syncInput.trim()}>{syncBusy ? "Linking…" : "Link device"}</button>
-        </div>
-        {syncMsg && <p className="tc-restoremsg">{syncMsg}</p>}
-      </div>
-      )}
 
       {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
         <p className="tc-conjnote">💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — tap Backup below. It saves a file to your phone plus a clipboard copy of everything: both decks, all stats, think-times, scripts, and exam history.</p>
