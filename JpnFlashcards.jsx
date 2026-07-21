@@ -1039,9 +1039,8 @@ function Study({ cards, onResult, goAdd }) {
             return (
               <button key={b.name} className="tc-batchchip" onClick={() => start(b.cards)}
                 style={{ background: `radial-gradient(140% 160% at 30% -15%, hsla(${hueFor(b.name)},75%,62%,.5) 0%, hsla(${hueFor(b.name)},55%,42%,.16) 55%, rgba(255,255,255,.02) 85%)` }}>
-                {art[0] && <span className="tc-batchart tc-batchart-a" aria-hidden="true">{art[0]}</span>}
-                {art[1] && <span className="tc-batchart tc-batchart-b" aria-hidden="true">{art[1]}</span>}
                 <div className="tc-batchglass">
+                  {art[0] && <span className="tc-batchicon" aria-hidden="true">{art[0]}</span>}
                   <span className="tc-batchnum">{b.name}</span>
                   <span className={"tc-batchmeta" + (b.rate === null ? " tc-rate-new" : b.rate < 0.6 ? " tc-rate-low" : "")}>
                     {b.cards.length} words · {b.rate === null ? "new" : Math.round(b.rate * 100) + "%"}
@@ -1209,10 +1208,10 @@ function hueFor(name) {
   let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return SECTION_HUES[h % SECTION_HUES.length];
 }
-function sectionArt(cardsInSec) {   // top 2 most-used emojis in this section — genuinely representative, no external images needed
+function sectionArt(cardsInSec) {   // single most-used emoji in this section — genuinely representative, no external images needed
   const counts = new Map();
   cardsInSec.forEach((c) => { if (c.emoji) counts.set(c.emoji, (counts.get(c.emoji) || 0) + 1); });
-  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2).map((e) => e[0]);
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 1).map((e) => e[0]);
 }
 function sectionRank(s) {
   if (s === "Act 1") return 100;
@@ -3225,15 +3224,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
   transition:box-shadow .15s,transform .1s;}
 .tc-batchchip:active{transform:scale(.97);}
 .tc-batchchip:hover{box-shadow:0 0 26px -6px rgba(216,72,47,.5);}
-.tc-batchart{position:absolute;line-height:1;pointer-events:none;user-select:none;}
-.tc-batchart-a{right:-12px;bottom:-20px;font-size:76px;opacity:.65;transform:rotate(-8deg);}
-.tc-batchart-b{left:-6px;top:-14px;font-size:42px;opacity:.4;transform:rotate(12deg);}
 .tc-batchglass{position:relative;z-index:1;height:100%;box-sizing:border-box;min-height:62px;
-  display:flex;flex-direction:column;gap:3px;justify-content:center;padding:12px 14px;
+  display:flex;flex-direction:column;gap:3px;justify-content:center;padding:12px 40px 12px 14px;
   background:linear-gradient(155deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 55%, rgba(255,255,255,.02) 100%);
   backdrop-filter:blur(9px) saturate(150%);-webkit-backdrop-filter:blur(9px) saturate(150%);
   border:1px solid rgba(255,255,255,.16);border-radius:16px;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.3), inset 0 -14px 20px -14px rgba(0,0,0,.25);}
+.tc-batchicon{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:26px;
+  line-height:1;opacity:.75;pointer-events:none;user-select:none;filter:drop-shadow(0 1px 3px rgba(0,0,0,.4));}
 .tc-batchnum{font-size:14px;font-weight:600;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.4);}
 .tc-batchmeta{font-size:12px;color:rgba(255,255,255,.82);text-shadow:0 1px 2px rgba(0,0,0,.35);}
 .tc-rate-low{color:var(--shu-soft);}
