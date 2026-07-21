@@ -456,21 +456,23 @@ function collectLocalSnapshot() {
   } catch (e) {}
   return snap;
 }
+function cardMergeKey(c) { return c.term + "|" + (c.lesson || "") + "|" + (c.sec || ""); }   // term alone collapses legit duplicate words that appear in two different lessons (e.g. なるほど in both 3-1 and 3-3)
 function mergeDeck(localRaw, cloudRaw) {   // per-card: keep whichever side studied that card more/most recently
   let local = [], cloud = [];
   try { local = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
   try { cloud = cloudRaw ? JSON.parse(cloudRaw) : []; } catch (e) {}
   if (!cloud.length) return localRaw;
   if (!local.length) return cloudRaw;
-  const byTerm = new Map(local.map((c) => [c.term, c]));
+  const byKey = new Map(local.map((c) => [cardMergeKey(c), c]));
   cloud.forEach((c) => {
-    const ex = byTerm.get(c.term);
-    if (!ex) { byTerm.set(c.term, c); return; }
+    const key = cardMergeKey(c);
+    const ex = byKey.get(key);
+    if (!ex) { byKey.set(key, c); return; }
     const exScore = (ex.seen || 0) * 1e6 + (ex.last || 0);
     const cScore = (c.seen || 0) * 1e6 + (c.last || 0);
-    if (cScore > exScore) byTerm.set(c.term, c);
+    if (cScore > exScore) byKey.set(key, c);
   });
-  return JSON.stringify(Array.from(byTerm.values()));
+  return JSON.stringify(Array.from(byKey.values()));
 }
 function mergeDays(localRaw, cloudRaw) {   // per-day: keep whichever side logged more reviews that day
   let local = {}, cloud = {};
