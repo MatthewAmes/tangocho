@@ -1301,10 +1301,18 @@ function Study({ cards, onResult, goAdd }) {
   }, []);
   const [flipped, setFlipped] = useState(false);
   const [running, setRunning] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
   const shownRef = useRef(0);          // when the current card appeared
   const thinkRef = useRef(null);       // ms from shown → first reveal (think time)
   useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, running]);
+  useEffect(() => {                    // auto-speak the term as soon as each card appears
+    if (!running || !voiceOn) return;
+    const c = queue[pos];
+    if (!c) return;
+    speakJa(c.reading || c.term, 0.9);
+    return stopJa;
+  }, [running, voiceOn, pos, queue]);
   const flip = useCallback(() => {
     setFlipped((f) => {
       if (!f && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
@@ -1576,6 +1584,10 @@ function Study({ cards, onResult, goAdd }) {
         <button className={"tc-rpill" + (showPitch ? " is-on" : "")}
           aria-pressed={showPitch} onClick={() => setShowPitch((v) => !v)}>
           Pitch {showPitch ? "on" : "off"}
+        </button>
+        <button className={"tc-rpill" + (voiceOn ? " is-on" : "")}
+          aria-pressed={voiceOn} onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>
+          🔊 Voice {voiceOn ? "on" : "off"}
         </button>
       </div>
 
