@@ -1310,7 +1310,9 @@ function Study({ cards, onResult, goAdd }) {
     if (!running || !voiceOn) return;
     const c = queue[pos];
     if (!c) return;
-    speakJa(c.reading || c.term, 0.9);
+    speakJa(c.reading || c.term, 0.88);   // match SpeakBtn's rate so this hits the same cache entry
+    const next = queue[pos + 1];          // warm the cache for the next card while this one's up
+    if (next) prefetchJa(next.reading || next.term, 0.88);
     return stopJa;
   }, [running, voiceOn, pos, queue]);
   const flip = useCallback(() => {
@@ -2660,6 +2662,16 @@ function speakJaFallback(text, rate) {
     window.speechSynthesis.speak(u);
   } catch (e) {}
 }
+function prefetchJa(text, rate, voice) {
+  // Fire-and-forget: warms the browser's own HTTP cache for this exact URL (TTS responses
+  // are served with a long immutable max-age) so that when speakJa() actually plays this
+  // same card/line later, it's served instantly from disk — no network round-trip at all.
+  // Plain unauthenticated GET on purpose: on a cache hit this is free and instant; on a
+  // cache miss it just 401s harmlessly (never forces a real Google TTS generation call).
+  if (!text) return;
+  const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
+  try { fetch(url, { cache: "force-cache" }).catch(() => {}); } catch (e) {}
+}
 let _ttsAudioEl = null;
 let _ttsObjectUrl = null;
 let _ttsToken = 0;   // invalidates stale/superseded calls so a slow fallback can't play over a newer request
@@ -2752,6 +2764,8 @@ function Scripts() {
     if (!line) return;
     const mine = part !== "read" && (part === "both" || line.speaker === part);
     if (!mine || revealed) speakJa(lineText(line.tokens), slow ? 0.68 : 0.9);
+    const nextLine = active.lines && active.lines[idx + 1];   // warm the cache for the next line
+    if (nextLine) prefetchJa(lineText(nextLine.tokens), slow ? 0.68 : 0.9);
     return stopJa;
   }, [view, active, idx, revealed, part, voiceOn, slow]);
 
