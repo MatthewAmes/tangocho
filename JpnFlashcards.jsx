@@ -4285,3 +4285,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-root :is(button,[role="tab"]):focus-visible{outline:2px solid var(--shu-soft);outline-offset:2px;border-radius:inherit;}
 @media (prefers-reduced-motion:reduce){.tc-root *{transition:none !important;animation:none !important;}}
 `;
+
+/* ── mount ── */
+import ReactDOM from "react-dom/client";
+ReactDOM.createRoot(document.getElementById("root")).render(<JpnFlashcards />);
