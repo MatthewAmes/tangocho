@@ -2654,40 +2654,52 @@ function speakJaFallback(text, rate) {
 }
 let _ttsAudioEl = null;
 let _ttsObjectUrl = null;
+let _ttsToken = 0;   // invalidates stale/superseded calls so a slow fallback can't play over a newer request
 function speakJa(text, rate, voice) {
   if (!text) return;
+  const myToken = ++_ttsToken;
   const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
+  let fallbackFired = false;   // onerror and play().catch() can BOTH fire for one call — only escalate once
+  const escalate = () => {
+    if (fallbackFired || myToken !== _ttsToken) return;
+    fallbackFired = true;
+    speakJaAuthed(url, text, rate, myToken);
+  };
   try {
     if (!_ttsAudioEl) _ttsAudioEl = new Audio();
     // Cached clips play instantly and need no auth. A cache miss (brand-new
     // word) 401s here — retry it authenticated, since generating new audio
     // costs real Google API usage and is gated to a signed-in session.
-    _ttsAudioEl.onerror = () => speakJaAuthed(url, text, rate);
+    _ttsAudioEl.onerror = escalate;
     _ttsAudioEl.src = url;
     const p = _ttsAudioEl.play();
-    if (p && p.catch) p.catch(() => speakJaAuthed(url, text, rate));
+    if (p && p.catch) p.catch(escalate);
   } catch (e) {
-    speakJaAuthed(url, text, rate);
+    escalate();
   }
 }
-async function speakJaAuthed(url, text, rate) {
+async function speakJaAuthed(url, text, rate, myToken) {
+  const stillCurrent = () => myToken === _ttsToken;
   const session = loadSession();
-  if (!session) { speakJaFallback(text, rate); return; }
+  if (!session) { if (stillCurrent()) speakJaFallback(text, rate); return; }
   try {
     const res = await fetch(url, { headers: { authorization: "Bearer " + session }, cache: "no-store" });
+    if (!stillCurrent()) return;
     if (!res.ok) { speakJaFallback(text, rate); return; }
     const blob = await res.blob();
+    if (!stillCurrent()) return;
     if (_ttsObjectUrl) URL.revokeObjectURL(_ttsObjectUrl);
     _ttsObjectUrl = URL.createObjectURL(blob);
     if (!_ttsAudioEl) _ttsAudioEl = new Audio();
     _ttsAudioEl.onerror = null;
     _ttsAudioEl.src = _ttsObjectUrl;
-    _ttsAudioEl.play().catch(() => speakJaFallback(text, rate));
+    _ttsAudioEl.play().catch(() => { if (stillCurrent()) speakJaFallback(text, rate); });
   } catch (e) {
-    speakJaFallback(text, rate);
+    if (stillCurrent()) speakJaFallback(text, rate);
   }
 }
 function stopJa() {
+  _ttsToken++;   // invalidate any in-flight fallback chain from the call being stopped
   try { if (_ttsAudioEl) _ttsAudioEl.pause(); } catch (e) {}
   if (TTS_OK) { try { window.speechSynthesis.cancel(); } catch (e) {} }
 }
