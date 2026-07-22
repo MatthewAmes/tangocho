@@ -1117,54 +1117,50 @@ export default function JpnFlashcards() {
     })();
   }, []);
 
-  // ── load + seed-merge ──
-  useEffect(() => {
-    (async () => {
-      try { await pullAndMergeCloud(); } catch (e) { /* offline — proceed with whatever's local */ }
-      const rawCards = await sGet(STORE_KEY);
-      const rawVer = await sGet(SEED_KEY);
-      let list = null;
-      try { list = rawCards ? JSON.parse(rawCards) : null; } catch (e) { list = null; }
-      const ver = rawVer ? Number(rawVer) : 0;
+  // ── load, cloud-merge, seed-merge, THEN push — strictly in that order ──
+  // Two separate effects used to do this uncoordinated (one pushed local state to the
+  // cloud while the other was still pulling), so a device with stale local data could
+  // race ahead and blindly overwrite genuinely newer cloud progress before ever pulling
+  // it down (the server just overwrites on POST — all merging is client-side, so pull
+  // MUST complete and be written to local storage before any push happens). Now it's one
+  // serial chain: pull+merge cloud -> seed-merge -> push the final result once.
+  const loadCardsAndSync = useCallback(async () => {
+    try { await pullAndMergeCloud(); } catch (e) { /* offline — proceed with whatever's local */ }
+    const rawCards = await sGet(STORE_KEY);
+    const rawVer = await sGet(SEED_KEY);
+    let list = null;
+    try { list = rawCards ? JSON.parse(rawCards) : null; } catch (e) { list = null; }
+    const ver = rawVer ? Number(rawVer) : 0;
 
-      if (!list) {
-        list = SEED.map((c) => ({ id: uid(), seen: 0, correct: 0, ...c }));
-        await sSet(STORE_KEY, JSON.stringify(list));
-        await sSet(SEED_KEY, String(SEED_VERSION));
-      } else if (ver < SEED_VERSION) {
-        // safety net: snapshot the pre-merge deck in backup format before touching anything
-        try { await sSet("jpn101:snapshot", JSON.stringify({ app: "tangocho", v: 2, date: new Date().toISOString(), note: "auto-snapshot before v" + SEED_VERSION + " merge", deck: list })); } catch (e) {}
-        const byTerm = new Map(list.map((c) => [c.term, c]));
-        SEED.forEach((s) => {
-          const ex = byTerm.get(s.term);
-          if (ex) Object.assign(ex, { reading: s.reading, romaji: s.romaji, meaning: s.meaning, kind: s.kind, emoji: s.emoji, pitch: s.pitch, lesson: s.lesson });
-          else { const nc = { id: uid(), seen: 0, correct: 0, ...s }; list.push(nc); byTerm.set(s.term, nc); }
-        });
-        await sSet(STORE_KEY, JSON.stringify(list));
-        await sSet(SEED_KEY, String(SEED_VERSION));
-      }
-      setCards(list);
-      setReady(true);
-      scheduleCloudPush();   // baseline safety net: make sure whatever's local lands in the cloud even before any edits happen this session
-    })();
+    if (!list) {
+      list = SEED.map((c) => ({ id: uid(), seen: 0, correct: 0, ...c }));
+      await sSet(STORE_KEY, JSON.stringify(list));
+      await sSet(SEED_KEY, String(SEED_VERSION));
+    } else if (ver < SEED_VERSION) {
+      // safety net: snapshot the pre-merge deck in backup format before touching anything
+      try { await sSet("jpn101:snapshot", JSON.stringify({ app: "tangocho", v: 2, date: new Date().toISOString(), note: "auto-snapshot before v" + SEED_VERSION + " merge", deck: list })); } catch (e) {}
+      const byTerm = new Map(list.map((c) => [c.term, c]));
+      SEED.forEach((s) => {
+        const ex = byTerm.get(s.term);
+        if (ex) Object.assign(ex, { reading: s.reading, romaji: s.romaji, meaning: s.meaning, kind: s.kind, emoji: s.emoji, pitch: s.pitch, lesson: s.lesson });
+        else { const nc = { id: uid(), seen: 0, correct: 0, ...s }; list.push(nc); byTerm.set(s.term, nc); }
+      });
+      await sSet(STORE_KEY, JSON.stringify(list));
+      await sSet(SEED_KEY, String(SEED_VERSION));
+    }
+    setCards(list);
+    setReady(true);
+    await pushCloudNow();   // push the final merged+seeded result once, now that it's genuinely up to date
   }, []);
 
-  // ── cloud sync: if already signed in (persistent session from a prior visit), ──
-  // sync right away — no Google involvement needed. If not signed in yet, wait for
-  // a sign-in click. Either way: push whatever's already local FIRST (so a device
-  // with real progress doesn't sit un-backed-up waiting for the next study action),
-  // then pull+merge in case another device is further ahead.
+  useEffect(() => { loadCardsAndSync(); }, [loadCardsAndSync]);
+
+  // Not signed in yet on this device? Re-run the exact same pull->merge->push chain
+  // once sign-in completes, so a fresh device pulls real cloud progress before anything
+  // could push a blank/local-only deck over it.
   useEffect(() => {
-    const doSyncFlow = async () => {
-      await pushCloudNow();
-      const merged = await pullAndMergeCloud();
-      if (merged) {
-        try { const raw = await sGet(STORE_KEY); const list = raw ? JSON.parse(raw) : null; if (list) setCards(list); } catch (e) {}
-      }
-    };
-    if (loadSession()) doSyncFlow();
-    else initGoogleAuth(doSyncFlow);
-  }, []);
+    if (!loadSession()) initGoogleAuth(loadCardsAndSync);
+  }, [loadCardsAndSync]);
 
   const persist = useCallback((next) => {
     setCards(next);
