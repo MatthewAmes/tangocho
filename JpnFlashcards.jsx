@@ -2109,15 +2109,34 @@ const KANA_GROUPS = [
   ["mark", "marks",    KANA_MARK_ROWS],
   ["ext",  "extended", KANA_EXT_ROWS],
 ];
+const KANA_LENGTHS = [10, 20, 40, "all"];
+const KANA_REQUEUE_GAP = 3, KANA_REQUEUE_CAP = 2;
+const fmtSecs = (ms) => {
+  const s = Math.round(ms / 1000);
+  return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+};
+
 function Kana() {
   const [script, setScript] = useState("hira");     // hira | kata
   const [sets, setSets] = useState(() => new Set(["base"]));   // any mix of KANA_GROUPS keys
-  const [mode, setMode] = useState("drill");        // drill | chart
+  const [view, setView] = useState("setup");        // setup | session | summary | chart
+  const [sessionLen, setSessionLen] = useState(20);
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
-  const [currentId, setCurrentId] = useState(null);
   const [revealed, setRevealed] = useState(false);
   const [guide, setGuide] = useState(false);
+  // session state — mirrors Study so both tabs behave the same way
+  const [queue, setQueue] = useState([]);
+  const [pos, setPos] = useState(0);
+  const [poolSize, setPoolSize] = useState(0);
+  const [passed, setPassed] = useState(() => new Set());
+  const [firstTry, setFirstTry] = useState(() => new Set());
+  const [struggled, setStruggled] = useState(() => new Set());
+  const missRef = useRef({});
+  const shownRef = useRef(0);        // when the current kana appeared
+  const thinkRef = useRef(null);     // ms from shown → Check (think time)
+  const sessionStartRef = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => { (async () => {
     try { const r = await sGet(KANA_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
@@ -2157,20 +2176,47 @@ function Kana() {
     if (!(st.streak || 0)) s += 0.8;                        // missed it last time
     return s;
   };
-  const chooseNext = (m, exclude) => {
+  // neediest first, with jitter so repeat sessions aren't an identical loop
+  const byNeed = useCallback((pool) => {
     const now = Date.now();
-    let best = null, bestK = -Infinity;
-    list.forEach((x) => {
-      if (x.id === exclude && list.length > 1) return;
-      const k = needK(getS(m, x.id), now) + Math.random() * 1.2;   // jitter so it's not a fixed loop
-      if (k > bestK) { bestK = k; best = x.id; }
-    });
-    return best;
-  };
+    return pool
+      .map((x) => ({ x, k: needK(getS(statsRef.current, x.id), now) + Math.random() * 1.2 }))
+      .sort((a, b) => b.k - a.k)
+      .map((o) => o.x);
+  }, []);
+
+  const startSession = useCallback((subset) => {
+    const ordered = byNeed(subset && subset.length ? subset : list);
+    const pool = sessionLen === "all" ? ordered : ordered.slice(0, sessionLen);
+    if (!pool.length) return;
+    setQueue(pool); setPos(0); setPoolSize(pool.length);
+    setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
+    missRef.current = {};
+    sessionStartRef.current = Date.now();
+    setElapsed(0);
+    setRevealed(false); setGuide(false);
+    setView("session");
+  }, [list, sessionLen, byNeed]);
+
+  const cur = queue[pos] || null;
+  const sessionDone = view === "session" && pos >= queue.length && queue.length > 0;
+
+  // start the clock on each new kana, and freeze total elapsed when the session ends
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
   useEffect(() => {
-    if (!list.some((x) => x.id === currentId)) setCurrentId(chooseNext(statsRef.current, null));
-  }, [list]);          // eslint-disable-line
-  const cur = list.find((x) => x.id === currentId) || null;
+    if (sessionDone) { setElapsed(Date.now() - sessionStartRef.current); setView("summary"); }
+  }, [sessionDone]);
+
+  // weakest kana in the current selection — drives the setup preview and the "drill weakest" button
+  const weakest = useMemo(() => {
+    const now = Date.now();
+    return list
+      .filter((x) => (getS(stats, x.id).seen || 0) > 0)
+      .map((x) => ({ x, st: getS(stats, x.id), k: needK(getS(stats, x.id), now) }))
+      .sort((a, b) => b.k - a.k)
+      .slice(0, 6);
+  }, [list, stats]);
+  const untouched = useMemo(() => list.filter((x) => !(getS(stats, x.id).seen || 0)).length, [list, stats]);
 
   /* drawing pad */
   const canvasRef = useRef(null);
@@ -2188,14 +2234,14 @@ function Kana() {
     ctx.strokeStyle = "#2b2620";
     ctx.clearRect(0, 0, rect.width, rect.height);
   }, []);
-  useEffect(() => { if (mode === "drill") setup(); }, [currentId, mode, setup]);
+  useEffect(() => { if (view === "session") setup(); }, [pos, view, setup]);
   useEffect(() => {                                   // iOS: stop the page panning while drawing
     const cv = canvasRef.current; if (!cv) return;
     const block = (e) => e.preventDefault();
     cv.addEventListener("touchmove", block, { passive: false });
     cv.addEventListener("touchstart", block, { passive: false });
     return () => { cv.removeEventListener("touchmove", block); cv.removeEventListener("touchstart", block); };
-  }, [mode]);
+  }, [view]);
   useEffect(() => {
     const onResize = () => setup();
     window.addEventListener("resize", onResize);
@@ -2217,14 +2263,31 @@ function Kana() {
     if (!cur) return;
     const m = statsRef.current;
     const s0 = getS(m, cur.id);
+    const think = thinkRef.current;
     const ns = { ...s0, seen: s0.seen + 1, correct: s0.correct + (got ? 1 : 0),
       level: got ? Math.min(5, s0.level + 1) : Math.max(0, s0.level - 2),
-      streak: got ? (s0.streak || 0) + 1 : 0, last: Date.now() };
+      streak: got ? (s0.streak || 0) + 1 : 0, last: Date.now(),
+      ms: (s0.ms || 0) + (think || 0), msN: (s0.msN || 0) + (think ? 1 : 0) };
     const nx = { ...m, [cur.id]: ns };
     statsRef.current = nx; setStats(nx); sSet(KANA_KEY, JSON.stringify(nx));
+
+    // session bookkeeping: passed once, and missed ones come back later in the same session
+    if (got) {
+      if (!missRef.current[cur.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(cur.id); return n; });
+      setPassed((prev) => { const n = new Set(prev); n.add(cur.id); return n; });
+      setQueue((prev) => prev.filter((x, idx) => idx <= pos || x.id !== cur.id));   // drop later duplicates
+    } else {
+      setStruggled((prev) => { const n = new Set(prev); n.add(cur.id); return n; });
+      const n = (missRef.current[cur.id] || 0) + 1;
+      missRef.current[cur.id] = n;
+      if (n <= KANA_REQUEUE_CAP) {
+        setQueue((prev) => { const next = prev.slice(); next.splice(Math.min(pos + 1 + KANA_REQUEUE_GAP, next.length), 0, cur); return next; });
+      }
+    }
     setRevealed(false); setGuide(false);
-    setCurrentId(chooseNext(nx, cur.id));
+    setPos((p) => p + 1);
   };
+  const avgSecs = (st) => (st.msN ? (st.ms / st.msN / 1000).toFixed(1) + "s" : "—");
 
   const mastered = list.filter((x) => getS(stats, x.id).level >= 4).length;
   const cellClass = (id) => {
@@ -2234,6 +2297,81 @@ function Kana() {
     if (st.correct / st.seen < 0.5 || st.level < 2) return " kn-weak";
     return " kn-mid";
   };
+
+  // ── mid-session: just the progress bar and the pad, no set chips to fiddle with ──
+  if (view === "session" && cur) {
+    return (
+      <div className="tc-kana">
+        <div className="tc-progress">
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
+          <span className="tc-progtext">{passed.size} / {poolSize}</span>
+          <button className="tc-fchip" onClick={() => setView("setup")}>Quit</button>
+        </div>
+        <div className="tc-card2 tc-kanadrill">
+          <p className="tc-eyebrow">write this kana</p>
+          <p className="tc-kanaprompt">{cur.r}{cur.note ? <span className="tc-kananote"> {cur.note}</span> : null}</p>
+          <div className="tc-canvaswrap">
+            {(guide || revealed) && <div className={"kn-ghost" + (revealed ? " kn-ghost-strong" : "")}>{cur.ch}</div>}
+            <canvas ref={canvasRef} className="tc-canvas"
+              onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up} onPointerCancel={up} />
+          </div>
+          <div className="tc-rehnav">
+            <button className="tc-btn tc-btn-sm" onClick={clearPad}>Clear</button>
+            {!revealed && <button className="tc-btn tc-btn-sm" onClick={() => setGuide((v) => !v)}>{guide ? "Hide hint" : "Hint"}</button>}
+            {!revealed
+              ? <button className="tc-btn tc-btn-primary" onClick={() => { thinkRef.current = Date.now() - shownRef.current; setRevealed(true); }}>Check</button>
+              : (
+                <>
+                  <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => record(true)}>Got it ✓</button>
+                  <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => record(false)}>Missed ✗</button>
+                </>
+              )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── session summary ──
+  if (view === "summary") {
+    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    const missed = list.filter((x) => struggled.has(x.id));
+    const graded = passed.size || 1;
+    return (
+      <div className="tc-kana">
+        <div className="tc-done">
+          <p className="tc-eyebrow">Session complete</p>
+          <div className="tc-bignum">{pct}<span>%</span></div>
+          <p className="tc-donesub">
+            {firstTry.size} nailed first try{missed.length > 0 ? ` · ${missed.length} missed` : ""} · {poolSize} kana
+          </p>
+          <p className="tc-donesub">{fmtSecs(elapsed)} total · {(elapsed / graded / 1000).toFixed(1)}s per kana</p>
+          {missed.length > 0 && (
+            <div className="tc-kanaweak">
+              <p className="tc-eyebrow">needs the most work</p>
+              {missed.slice(0, 6).map((x) => {
+                const st = getS(stats, x.id);
+                return (
+                  <div key={x.id} className="tc-kanaweakrow">
+                    <span className="tc-kanaweakch">{x.ch}</span>
+                    <span className="tc-kanaweakr">{x.r}</span>
+                    <span className="tc-kanaweakmeta">{st.seen ? Math.round((st.correct / st.seen) * 100) + "%" : "—"} · {avgSecs(st)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="tc-donebtns">
+            {missed.length > 0 && (
+              <button className="tc-btn tc-btn-primary" onClick={() => startSession(missed)}>Review the {missed.length} you missed</button>
+            )}
+            <button className="tc-btn" onClick={() => startSession()}>Go again</button>
+            <button className="tc-btn" onClick={() => setView("setup")}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="tc-kana">
@@ -2255,8 +2393,8 @@ function Kana() {
           </button>
         </div>
         <div className="tc-kanaseg">
-          <button className={"tc-fchip" + (mode === "drill" ? " is-on" : "")} onClick={() => setMode("drill")}>Drill</button>
-          <button className={"tc-fchip" + (mode === "chart" ? " is-on" : "")} onClick={() => setMode("chart")}>Chart</button>
+          <button className={"tc-fchip" + (view === "setup" ? " is-on" : "")} onClick={() => setView("setup")}>Practice</button>
+          <button className={"tc-fchip" + (view === "chart" ? " is-on" : "")} onClick={() => setView("chart")}>Chart</button>
         </div>
       </div>
       <p className="tc-kanaprog">
@@ -2275,15 +2413,17 @@ function Kana() {
             <button className="tc-btn tc-btn-sm" onClick={() => setSets(new Set(["base"]))}>Back to base 46</button>
           </div>
         </div>
-      ) : mode === "chart" ? (
+      ) : view === "chart" ? (
         <div className="tc-kanagrid">
           {rows.map((row, ri) => (
             <div key={ri} className="tc-kanarow">
               {row.map(([h, k, r]) => {
                 const id = (script === "hira" ? "h-" : "k-") + h;
+                const one = list.find((x) => x.id === id);
                 return (
                   <button key={id} className={"tc-kanacell" + cellClass(id)}
-                    onClick={() => { setCurrentId(id); setMode("drill"); setRevealed(false); setGuide(false); }}>
+                    title={`${r} · ${getS(stats, id).seen ? Math.round((getS(stats, id).correct / getS(stats, id).seen) * 100) + "% · " + avgSecs(getS(stats, id)) : "not drilled yet"}`}
+                    onClick={() => one && startSession([one])}>
                     <span className="tc-kanach">{script === "hira" ? h : k}</span>
                     <span className="tc-kanar">{r}</span>
                   </button>
@@ -2292,29 +2432,50 @@ function Kana() {
             </div>
           ))}
         </div>
-      ) : cur ? (
-        <div className="tc-card2 tc-kanadrill">
-          <p className="tc-eyebrow">write this kana</p>
-          <p className="tc-kanaprompt">{cur.r}{cur.note ? <span className="tc-kananote"> {cur.note}</span> : null}</p>
-          <div className="tc-canvaswrap">
-            {(guide || revealed) && <div className={"kn-ghost" + (revealed ? " kn-ghost-strong" : "")}>{cur.ch}</div>}
-            <canvas ref={canvasRef} className="tc-canvas"
-              onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up} onPointerCancel={up} />
+      ) : (
+        <div className="tc-study-setup">
+          <div className="tc-hero">
+            <div className="tc-heronum">{mastered}</div>
+            <p className="tc-herolabel">of {list.length} mastered</p>
+            <p className="tc-herosub">{untouched > 0 ? `${untouched} never drilled` : "every kana in this set has been drilled"}</p>
           </div>
-          <div className="tc-rehnav">
-            <button className="tc-btn tc-btn-sm" onClick={clearPad}>Clear</button>
-            {!revealed && <button className="tc-btn tc-btn-sm" onClick={() => setGuide((v) => !v)}>{guide ? "Hide hint" : "Hint"}</button>}
-            {!revealed
-              ? <button className="tc-btn tc-btn-primary" onClick={() => setRevealed(true)}>Check</button>
-              : (
-                <>
-                  <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => record(true)}>Got it ✓</button>
-                  <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => record(false)}>Missed ✗</button>
-                </>
-              )}
+
+          <div className="tc-kanaseg tc-kanalen">
+            <span className="tc-kanalenlabel">session</span>
+            {KANA_LENGTHS.map((n) => (
+              <button key={n} className={"tc-fchip" + (sessionLen === n ? " is-on" : "")} onClick={() => setSessionLen(n)}>
+                {n === "all" ? `all ${list.length}` : n}
+              </button>
+            ))}
           </div>
+
+          <button className="tc-btn tc-btn-primary tc-start" onClick={() => startSession()}>
+            Start · {sessionLen === "all" ? list.length : Math.min(sessionLen, list.length)} kana
+          </button>
+          <p className="tc-smarthint">
+            {untouched > 0
+              ? `New kana first, then whichever you've been missing most.`
+              : `Ordered by what you get wrong, how long you take, and how long since you last saw it.`}
+          </p>
+
+          {weakest.length > 0 && (
+            <div className="tc-kanaweak">
+              <p className="tc-eyebrow">needs the most work</p>
+              {weakest.map(({ x, st }) => (
+                <div key={x.id} className="tc-kanaweakrow">
+                  <span className="tc-kanaweakch">{x.ch}</span>
+                  <span className="tc-kanaweakr">{x.r}</span>
+                  <span className="tc-kanaweakmeta">{Math.round((st.correct / st.seen) * 100)}% · {avgSecs(st)} · seen {st.seen}×</span>
+                </div>
+              ))}
+              <button className="tc-btn tc-btn-sm" onClick={() => startSession(weakest.map((w) => w.x))}>
+                Drill these {weakest.length}
+              </button>
+            </div>
+          )}
+          <p className="tc-hintline">Tap a cell in Chart to drill just that one kana.</p>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
@@ -4274,6 +4435,13 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kanaprompt{font-size:44px;font-weight:600;color:#fff;margin:2px 0 12px;letter-spacing:.02em;}
 .tc-kananote{font-size:15px;font-weight:400;color:rgba(255,255,255,.55);}
 .tc-kanaempty{font-size:16px;line-height:1.5;color:var(--washi,#efeae2);margin:2px 0 14px;max-width:34ch;}
+.tc-kanalen{align-items:center;margin:0 0 12px;}
+.tc-kanalenlabel{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut-2);margin-right:2px;}
+.tc-kanaweak{margin-top:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;}
+.tc-kanaweakrow{display:flex;align-items:center;gap:10px;}
+.tc-kanaweakch{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:24px;line-height:1;min-width:2.2ch;color:#fff;}
+.tc-kanaweakr{font-size:14px;color:var(--washi,#efeae2);min-width:4.5ch;}
+.tc-kanaweakmeta{margin-left:auto;font-size:12px;color:var(--mut-2);font-variant-numeric:tabular-nums;}
 .kn-ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px;line-height:1;color:rgba(31,45,84,.15);pointer-events:none;user-select:none;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .kn-ghost-strong{color:rgba(216,72,47,.5);}
 .tc-build{font-size:11px;font-weight:600;color:var(--mut-2);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);padding:2px 7px;border-radius:99px;vertical-align:middle;letter-spacing:.04em;}
