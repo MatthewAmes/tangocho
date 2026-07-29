@@ -2056,9 +2056,61 @@ const KANA_DAKU_ROWS = [
   [["ば","バ","ba"],["び","ビ","bi"],["ぶ","ブ","bu"],["べ","ベ","be"],["ぼ","ボ","bo"]],
   [["ぱ","パ","pa"],["ぴ","ピ","pi"],["ぷ","プ","pu"],["ぺ","ペ","pe"],["ぽ","ポ","po"]],
 ];
+// 拗音 yōon — the "modified"/contracted kana: a full-size consonant kana + a SMALL ゃゅょ.
+// These are what trip people up (byu / pyo / hya …) and they never appear in the base 46
+// or dakuten charts, so they need their own drillable set.
+const KANA_YOON_ROWS = [
+  [["きゃ","キャ","kya"],["きゅ","キュ","kyu"],["きょ","キョ","kyo"]],
+  [["しゃ","シャ","sha"],["しゅ","シュ","shu"],["しょ","ショ","sho"]],
+  [["ちゃ","チャ","cha"],["ちゅ","チュ","chu"],["ちょ","チョ","cho"]],
+  [["にゃ","ニャ","nya"],["にゅ","ニュ","nyu"],["にょ","ニョ","nyo"]],
+  [["ひゃ","ヒャ","hya"],["ひゅ","ヒュ","hyu"],["ひょ","ヒョ","hyo"]],
+  [["みゃ","ミャ","mya"],["みゅ","ミュ","myu"],["みょ","ミョ","myo"]],
+  [["りゃ","リャ","rya"],["りゅ","リュ","ryu"],["りょ","リョ","ryo"]],
+  [["ぎゃ","ギャ","gya"],["ぎゅ","ギュ","gyu"],["ぎょ","ギョ","gyo"]],
+  [["じゃ","ジャ","ja"],["じゅ","ジュ","ju"],["じょ","ジョ","jo"]],
+  [["びゃ","ビャ","bya"],["びゅ","ビュ","byu"],["びょ","ビョ","byo"]],
+  [["ぴゃ","ピャ","pya"],["ぴゅ","ピュ","pyu"],["ぴょ","ピョ","pyo"]],
+];
+// The modifier marks themselves. Not syllables — but you can't read or write real words
+// without them (きって, コーヒー, きょう), and they appear in no standard kana chart.
+// Row entries are [hiragana, katakana, romaji, note, kataOnly].
+const KANA_MARK_ROWS = [
+  [["っ","ッ","small tsu","— doubles the next consonant: きって kitte"],
+   ["ー","ー","long mark","— lengthens the vowel: コーヒー kōhī", 1],
+   ["ゃ","ャ","small ya","— builds combos: きゃ kya"],
+   ["ゅ","ュ","small yu","— builds combos: きゅ kyu"],
+   ["ょ","ョ","small yo","— builds combos: きょ kyo"]],
+  [["ぁ","ァ","small a","— builds ファ fa"],
+   ["ぃ","ィ","small i","— builds ティ ti"],
+   ["ぅ","ゥ","small u","— builds トゥ tu"],
+   ["ぇ","ェ","small e","— builds フェ fe"],
+   ["ぉ","ォ","small o","— builds フォ fo"]],
+];
+// Katakana-only extended sounds for loanwords. These are all over this app's own vocab
+// (カフェ, オフィス, フォント, マーケティング, ジェ…) and exist in no gojūon/dakuten chart.
+// hiragana slot just mirrors the katakana — it's only the stable stats id; kataOnly=1
+// keeps these out of hiragana mode entirely, since they have no hiragana spelling.
+const KANA_EXT_ROWS = [
+  [["ファ","ファ","fa",null,1],["フィ","フィ","fi",null,1],["フェ","フェ","fe",null,1],["フォ","フォ","fo",null,1],["フュ","フュ","fyu",null,1]],
+  [["ヴァ","ヴァ","va",null,1],["ヴィ","ヴィ","vi",null,1],["ヴ","ヴ","vu",null,1],["ヴェ","ヴェ","ve",null,1],["ヴォ","ヴォ","vo",null,1]],
+  [["ティ","ティ","ti",null,1],["トゥ","トゥ","tu",null,1],["ディ","ディ","di",null,1],["ドゥ","ドゥ","du",null,1]],
+  [["シェ","シェ","she",null,1],["ジェ","ジェ","je",null,1],["チェ","チェ","che",null,1]],
+  [["ツァ","ツァ","tsa",null,1],["ツィ","ツィ","tsi",null,1],["ツェ","ツェ","tse",null,1],["ツォ","ツォ","tso",null,1]],
+  [["ウィ","ウィ","wi",null,1],["ウェ","ウェ","we",null,1],["ウォ","ウォ","wo",null,1]],
+  [["クァ","クァ","kwa",null,1],["クィ","クィ","kwi",null,1],["クェ","クェ","kwe",null,1],["クォ","クォ","kwo",null,1],["グァ","グァ","gwa",null,1]],
+];
+// Independently toggleable so you can drill everything at once or isolate one weak set.
+const KANA_GROUPS = [
+  ["base", "base 46",  KANA_BASE_ROWS],
+  ["daku", "dakuten",  KANA_DAKU_ROWS],
+  ["yoon", "combos",   KANA_YOON_ROWS],
+  ["mark", "marks",    KANA_MARK_ROWS],
+  ["ext",  "extended", KANA_EXT_ROWS],
+];
 function Kana() {
   const [script, setScript] = useState("hira");     // hira | kata
-  const [withDaku, setWithDaku] = useState(false);  // start with the base 46
+  const [sets, setSets] = useState(() => new Set(["base"]));   // any mix of KANA_GROUPS keys
   const [mode, setMode] = useState("drill");        // drill | chart
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
@@ -2070,20 +2122,47 @@ function Kana() {
     try { const r = await sGet(KANA_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
   })(); }, []);
 
-  const rows = useMemo(() => (withDaku ? [...KANA_BASE_ROWS, ...KANA_DAKU_ROWS] : KANA_BASE_ROWS), [withDaku]);
+  // Rows for whichever groups are switched on, dropping katakana-only entries (ー, ファ …)
+  // when hiragana is selected, and any row those leave empty.
+  const rows = useMemo(() => {
+    const keep = (e) => !(e[4] && script !== "kata");
+    return KANA_GROUPS
+      .filter(([key]) => sets.has(key))
+      .flatMap(([, , groupRows]) => groupRows.map((row) => row.filter(keep)))
+      .filter((row) => row.length);
+  }, [sets, script]);
   const list = useMemo(() => rows.flat().map(([h, k, r, note]) => ({
     id: (script === "hira" ? "h-" : "k-") + h,       // char-keyed: stable & collision-free
     ch: script === "hira" ? h : k, r, note,
   })), [rows, script]);
+  const toggleSet = (key) => setSets((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next.size ? next : new Set(["base"]);      // never leave nothing to drill
+  });
+  const allOn = KANA_GROUPS.every(([key]) => sets.has(key));
 
   const getS = (m, id) => m[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
+  // Pick whichever kana needs work MOST (highest score wins). The old version only looked
+  // at level + times-seen, so a kana you kept getting wrong was treated the same as one you
+  // nailed every time. Now accuracy, a broken streak, and how long it's been all count.
+  const needK = (st, now) => {
+    const seen = st.seen || 0;
+    if (!seen) return 6 + Math.random();                  // never drilled → straight to the front
+    const acc = (st.correct || 0) / seen;
+    let s = (5 - (st.level || 0)) * 1.2;                   // weak mastery
+    s += (1 - acc) * 3;                                    // getting it wrong matters most
+    s += Math.min(2.5, (now - (st.last || 0)) / 86400000);  // overdue, capped so it can't dominate
+    if (!(st.streak || 0)) s += 0.8;                        // missed it last time
+    return s;
+  };
   const chooseNext = (m, exclude) => {
-    let best = null, bestK = Infinity;
+    const now = Date.now();
+    let best = null, bestK = -Infinity;
     list.forEach((x) => {
       if (x.id === exclude && list.length > 1) return;
-      const st = getS(m, x.id);
-      const k = st.level * 10 + Math.min(st.seen, 6) + Math.random() * 3;
-      if (k < bestK) { bestK = k; best = x.id; }
+      const k = needK(getS(m, x.id), now) + Math.random() * 1.2;   // jitter so it's not a fixed loop
+      if (k > bestK) { bestK = k; best = x.id; }
     });
     return best;
   };
@@ -2163,17 +2242,38 @@ function Kana() {
           <button className={"tc-fchip" + (script === "kata" ? " is-on" : "")} onClick={() => setScript("kata")}>カタカナ</button>
         </div>
         <div className="tc-kanaseg">
-          <button className={"tc-fchip" + (!withDaku ? " is-on" : "")} onClick={() => setWithDaku(false)}>46 base</button>
-          <button className={"tc-fchip" + (withDaku ? " is-on" : "")} onClick={() => setWithDaku(true)}>+ dakuten</button>
+          {KANA_GROUPS.map(([key, label]) => (
+            <button key={key} className={"tc-fchip" + (sets.has(key) ? " is-on" : "")}
+              aria-pressed={sets.has(key)} onClick={() => toggleSet(key)}
+              title={key === "ext" ? "katakana-only loanword sounds" : undefined}>{label}</button>
+          ))}
+          <button className={"tc-fchip" + (allOn ? " is-on" : "")}
+            onClick={() => setSets(allOn ? new Set(["base"]) : new Set(KANA_GROUPS.map(([k]) => k)))}>
+            {allOn ? "reset" : "everything"}
+          </button>
         </div>
         <div className="tc-kanaseg">
           <button className={"tc-fchip" + (mode === "drill" ? " is-on" : "")} onClick={() => setMode("drill")}>Drill</button>
           <button className={"tc-fchip" + (mode === "chart" ? " is-on" : "")} onClick={() => setMode("chart")}>Chart</button>
         </div>
       </div>
-      <p className="tc-kanaprog">{mastered}/{list.length} mastered · {script === "hira" ? "hiragana" : "katakana"}{withDaku ? " + dakuten" : ""}</p>
+      <p className="tc-kanaprog">
+        {mastered}/{list.length} mastered · {script === "hira" ? "hiragana" : "katakana"} · {KANA_GROUPS.filter(([k]) => sets.has(k)).map(([, l]) => l).join(" + ")}
+        {sets.has("ext") && script !== "kata" ? " · extended sounds are katakana-only" : ""}
+      </p>
 
-      {mode === "chart" ? (
+      {!list.length ? (
+        // only reachable with extended-only selected in hiragana mode — those sounds have
+        // no hiragana spelling, so there's genuinely nothing to draw. Offer a way out.
+        <div className="tc-card2 tc-kanadrill">
+          <p className="tc-eyebrow">nothing to drill</p>
+          <p className="tc-kanaempty">The extended loanword sounds (ファ, ヴィ, ティ…) only exist in katakana.</p>
+          <div className="tc-rehnav">
+            <button className="tc-btn tc-btn-primary" onClick={() => setScript("kata")}>Switch to カタカナ</button>
+            <button className="tc-btn tc-btn-sm" onClick={() => setSets(new Set(["base"]))}>Back to base 46</button>
+          </div>
+        </div>
+      ) : mode === "chart" ? (
         <div className="tc-kanagrid">
           {rows.map((row, ri) => (
             <div key={ri} className="tc-kanarow">
@@ -4171,6 +4271,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kanadrill{text-align:center;}
 .tc-kanaprompt{font-size:44px;font-weight:600;color:#fff;margin:2px 0 12px;letter-spacing:.02em;}
 .tc-kananote{font-size:15px;font-weight:400;color:rgba(255,255,255,.55);}
+.tc-kanaempty{font-size:16px;line-height:1.5;color:var(--washi,#efeae2);margin:2px 0 14px;max-width:34ch;}
 .kn-ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px;line-height:1;color:rgba(31,45,84,.15);pointer-events:none;user-select:none;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .kn-ghost-strong{color:rgba(216,72,47,.5);}
 .tc-build{font-size:11px;font-weight:600;color:var(--mut-2);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);padding:2px 7px;border-radius:99px;vertical-align:middle;letter-spacing:.04em;}
