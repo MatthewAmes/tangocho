@@ -2101,8 +2101,9 @@ const KANA_EXT_ROWS = [
   [["クァ","クァ","kwa",null,1],["クィ","クィ","kwi",null,1],["クェ","クェ","kwe",null,1],["クォ","クォ","kwo",null,1],["グァ","グァ","gwa",null,1]],
 ];
 // Independently toggleable so you can drill everything at once or isolate one weak set.
+// labels stay short on purpose — six of these plus script/mode chips have to fit a phone
 const KANA_GROUPS = [
-  ["base", "base 46",  KANA_BASE_ROWS],
+  ["base", "46",       KANA_BASE_ROWS],
   ["daku", "dakuten",  KANA_DAKU_ROWS],
   ["yoon", "combos",   KANA_YOON_ROWS],
   ["mark", "marks",    KANA_MARK_ROWS],
@@ -2248,8 +2249,9 @@ function Kana() {
               title={key === "ext" ? "katakana-only loanword sounds" : undefined}>{label}</button>
           ))}
           <button className={"tc-fchip" + (allOn ? " is-on" : "")}
+            title={allOn ? "back to base 46 only" : "select every set"}
             onClick={() => setSets(allOn ? new Set(["base"]) : new Set(KANA_GROUPS.map(([k]) => k)))}>
-            {allOn ? "reset" : "everything"}
+            {allOn ? "only 46" : "all"}
           </button>
         </div>
         <div className="tc-kanaseg">
@@ -2258,8 +2260,8 @@ function Kana() {
         </div>
       </div>
       <p className="tc-kanaprog">
-        {mastered}/{list.length} mastered · {script === "hira" ? "hiragana" : "katakana"} · {KANA_GROUPS.filter(([k]) => sets.has(k)).map(([, l]) => l).join(" + ")}
-        {sets.has("ext") && script !== "kata" ? " · extended sounds are katakana-only" : ""}
+        {mastered}/{list.length} mastered · {script === "hira" ? "hiragana" : "katakana"} · {allOn ? "all sets" : KANA_GROUPS.filter(([k]) => sets.has(k)).map(([, l]) => l).join(" + ")}
+        {sets.has("ext") && script !== "kata" ? " · extended = katakana only" : ""}
       </p>
 
       {!list.length ? (
@@ -4256,7 +4258,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-coachai{border-color:rgba(216,72,47,.35);}
 .tc-pre{white-space:pre-wrap;}
 .tc-kanabar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
-.tc-kanaseg{display:flex;gap:6px;}
+.tc-kanaseg{display:flex;gap:6px;flex-wrap:wrap;}   /* must wrap: the set row is 6 chips and overflowed the screen on phones */
 .tc-kanaprog{margin:0 0 12px;font-size:12.5px;color:var(--mut-2);}
 .tc-kanagrid{display:flex;flex-direction:column;gap:6px;}
 .tc-kanarow{display:flex;gap:6px;}
@@ -4303,7 +4305,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sum-need b{color:var(--shu-soft);}
 .tc-sum-new b{color:#e6a23c;}
 .tc-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
-.tc-fchip{appearance:none;border:0;background:rgba(255,255,255,.07);color:rgba(255,255,255,.75);font:inherit;font-size:13.5px;font-weight:500;min-height:36px;padding:6px 14px;border-radius:999px;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .1s;}
+.tc-fchip{appearance:none;border:0;background:rgba(255,255,255,.07);color:rgba(255,255,255,.75);font:inherit;font-size:13.5px;font-weight:500;min-height:36px;padding:6px 14px;border-radius:999px;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,transform .1s;}
+@media (max-width:460px){.tc-fchip{font-size:12.5px;padding:6px 11px;}.tc-kanabar{gap:7px;}}
 .tc-fchip:active{transform:scale(.95);}
 .tc-fchip.is-on{background:var(--shu);border-color:var(--shu);color:#fff;}
 .tc-fchip-sort{margin-left:auto;}
