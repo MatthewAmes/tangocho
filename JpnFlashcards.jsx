@@ -8,7 +8,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
-const SEED_VERSION = 29; // bump this each time I add/update words
+const SEED_VERSION = 30; // bump this each time I add/update words
 
 // Matthew's JPN 101 vocabulary. New batches get appended here with the version bumped.
 const SEED = [
@@ -800,6 +800,61 @@ const SEED = [
   { term: "〜に聞く", reading: "〜にきく", romaji: "~ni kiku", meaning: "ask ~ (about something)", kind: "kanji", emoji: "❓", lesson: 46, sec: "6-6" },
   { term: "〜に／と相談する", reading: "〜に／とそうだんする", romaji: "~ni/to sōdan suru", meaning: "consult with ~", kind: "kanji", emoji: "🗣️", lesson: 46, sec: "6-6" },
   { term: "〜に報告する", reading: "〜にほうこくする", romaji: "~ni hōkoku suru", meaning: "make a report to ~", kind: "kanji", emoji: "📢", lesson: 46, sec: "6-6" },
+
+  // ── class notes, by study date ──
+  { term: "会長", reading: "かいちょう", romaji: "kaichō", meaning: "chairman; president (of a society)", kind: "kanji", emoji: "🎩", lesson: 48, sec: "7/20" },
+  { term: "部長", reading: "ぶちょう", romaji: "buchō", meaning: "department head; manager", kind: "kanji", emoji: "👔", lesson: 48, sec: "7/20" },
+  { term: "鳥", reading: "とり", romaji: "tori", meaning: "bird", kind: "kanji", emoji: "🐦", lesson: 48, sec: "7/20" },
+  { term: "ダチョウ", reading: "ダチョウ", romaji: "dachō", meaning: "ostrich", kind: "katakana", emoji: "🦤", lesson: 48, sec: "7/20" },
+  { term: "おじいちゃん", reading: "おじいちゃん", romaji: "ojiichan", meaning: "grandpa (affectionate)", kind: "hiragana", emoji: "👴", lesson: 48, sec: "7/20" },
+  { term: "おばあちゃん", reading: "おばあちゃん", romaji: "obaachan", meaning: "grandma (affectionate)", kind: "hiragana", emoji: "👵", lesson: 48, sec: "7/20" },
+  { term: "太っている", reading: "ふとっている", romaji: "futotte iru", meaning: "to be overweight (state, from 太る futoru)", kind: "kanji", emoji: "🧸", lesson: 48, sec: "7/20" },
+  { term: "働く", reading: "はたらく", romaji: "hataraku", meaning: "to work (u-verb; polite 働きます hatarakimasu)", kind: "kanji", emoji: "💼", lesson: 48, sec: "7/20" },
+
+  { term: "十字架", reading: "じゅうじか", romaji: "jūjika", meaning: "cross (crucifix)", kind: "kanji", emoji: "✝️", lesson: 49, sec: "7/22" },
+  { term: "闇", reading: "やみ", romaji: "yami", meaning: "darkness", kind: "kanji", emoji: "🌑", lesson: 49, sec: "7/22" },
+  { term: "夢", reading: "ゆめ", romaji: "yume", meaning: "dream", kind: "kanji", emoji: "💭", lesson: 49, sec: "7/22" },
+  { term: "一つ", reading: "ひとつ", romaji: "hitotsu", meaning: "one (thing) — native counter", kind: "kanji", emoji: "1️⃣", lesson: 49, sec: "7/22" },
+  { term: "二つ", reading: "ふたつ", romaji: "futatsu", meaning: "two (things)", kind: "kanji", emoji: "2️⃣", lesson: 49, sec: "7/22" },
+  { term: "三つ", reading: "みっつ", romaji: "mittsu", meaning: "three (things)", kind: "kanji", emoji: "3️⃣", lesson: 49, sec: "7/22" },
+  { term: "四つ", reading: "よっつ", romaji: "yottsu", meaning: "four (things)", kind: "kanji", emoji: "4️⃣", lesson: 49, sec: "7/22" },
+  { term: "五つ", reading: "いつつ", romaji: "itsutsu", meaning: "five (things)", kind: "kanji", emoji: "5️⃣", lesson: 49, sec: "7/22" },
+  { term: "六つ", reading: "むっつ", romaji: "muttsu", meaning: "six (things)", kind: "kanji", emoji: "6️⃣", lesson: 49, sec: "7/22" },
+  { term: "七つ", reading: "ななつ", romaji: "nanatsu", meaning: "seven (things)", kind: "kanji", emoji: "7️⃣", lesson: 49, sec: "7/22" },
+  { term: "八つ", reading: "やっつ", romaji: "yattsu", meaning: "eight (things)", kind: "kanji", emoji: "8️⃣", lesson: 49, sec: "7/22" },
+  { term: "九つ", reading: "ここのつ", romaji: "kokonotsu", meaning: "nine (things)", kind: "kanji", emoji: "9️⃣", lesson: 49, sec: "7/22" },
+  { term: "十", reading: "とお", romaji: "tō", meaning: "ten (things) — note: とお, not じゅう, in this counter", kind: "kanji", emoji: "🔟", lesson: 49, sec: "7/22" },
+
+  { term: "風", reading: "かぜ", romaji: "kaze", meaning: "wind", kind: "kanji", emoji: "🌬️", lesson: 50, sec: "7/23" },
+  { term: "美しい", reading: "うつくしい", romaji: "utsukushii", meaning: "beautiful (い-adj)", kind: "kanji", emoji: "🌸", lesson: 50, sec: "7/23" },
+  { term: "蝶々", reading: "ちょうちょう", romaji: "chōchō", meaning: "butterfly", kind: "kanji", emoji: "🦋", lesson: 50, sec: "7/23" },
+  { term: "目", reading: "め", romaji: "me", meaning: "eye; eyes", kind: "kanji", emoji: "👁️", lesson: 50, sec: "7/23" },
+  { term: "命", reading: "いのち", romaji: "inochi", meaning: "life", kind: "kanji", emoji: "🌱", lesson: 50, sec: "7/23" },
+  { term: "でしょう", reading: "でしょう", romaji: "deshō", meaning: "probably; right? — rising = asking, falling = fairly sure", kind: "hiragana", emoji: "🤔", lesson: 50, sec: "7/23" },
+  { term: "どのぐらい", reading: "どのぐらい", romaji: "dono gurai", meaning: "how much; how long", kind: "hiragana", emoji: "📏", lesson: 50, sec: "7/23" },
+  { term: "〜く", reading: "〜く", romaji: "~ku", meaning: "makes an い-adjective adverbial: 早い → 早く 'quickly'", kind: "hiragana", emoji: "⚙️", lesson: 50, sec: "7/23" },
+
+  { term: "お気に入り", reading: "おきにいり", romaji: "okiniiri", meaning: "favorite", kind: "kanji", emoji: "⭐", lesson: 51, sec: "7/24" },
+  { term: "問題ない", reading: "もんだいない", romaji: "mondai nai", meaning: "no problem", kind: "kanji", emoji: "👌", lesson: 51, sec: "7/24" },
+
+  { term: "草", reading: "くさ", romaji: "kusa", meaning: "grass", kind: "kanji", emoji: "🌿", lesson: 52, sec: "7/27" },
+  { term: "花", reading: "はな", romaji: "hana", meaning: "flower", kind: "kanji", emoji: "🌸", lesson: 52, sec: "7/27" },
+
+  { term: "幸せに", reading: "しあわせに", romaji: "shiawase ni", meaning: "happily (from 幸せ shiawase 'happiness')", kind: "kanji", emoji: "😊", lesson: 53, sec: "7/29" },
+  { term: "教え", reading: "おしえ", romaji: "oshie", meaning: "teaching; doctrine", kind: "kanji", emoji: "📖", lesson: 53, sec: "7/29" },
+  { term: "正義", reading: "せいぎ", romaji: "seigi", meaning: "justice; righteousness", kind: "kanji", emoji: "⚖️", lesson: 53, sec: "7/29" },
+  { term: "福音", reading: "ふくいん", romaji: "fukuin", meaning: "gospel", kind: "kanji", emoji: "📜", lesson: 53, sec: "7/29" },
+  { term: "忘れず", reading: "わすれず", romaji: "wasurezu", meaning: "without forgetting (from 忘れる wasureru)", kind: "kanji", emoji: "🧠", lesson: 53, sec: "7/29" },
+
+  { term: "夜", reading: "よる", romaji: "yoru", meaning: "night", kind: "kanji", emoji: "🌙", lesson: 54, sec: "7/30" },
+  { term: "悲しみ", reading: "かなしみ", romaji: "kanashimi", meaning: "sorrow; grief", kind: "kanji", emoji: "😢", lesson: 54, sec: "7/30" },
+  { term: "救い", reading: "すくい", romaji: "sukui", meaning: "salvation; rescue", kind: "kanji", emoji: "🙏", lesson: 54, sec: "7/30" },
+  { term: "雲", reading: "くも", romaji: "kumo", meaning: "cloud", kind: "kanji", emoji: "☁️", lesson: 54, sec: "7/30" },
+  { term: "力", reading: "ちから", romaji: "chikara", meaning: "strength; power", kind: "kanji", emoji: "💪", lesson: 54, sec: "7/30" },
+  { term: "贖い", reading: "あがない", romaji: "aganai", meaning: "atonement; redemption", kind: "kanji", emoji: "✝️", lesson: 54, sec: "7/30" },
+  { term: "王", reading: "おう", romaji: "ō", meaning: "king", kind: "kanji", emoji: "👑", lesson: 54, sec: "7/30" },
+  { term: "喜び", reading: "よろこび", romaji: "yorokobi", meaning: "joy; delight", kind: "kanji", emoji: "🎉", lesson: 54, sec: "7/30" },
+  { term: "我", reading: "われ", romaji: "ware", meaning: "I; we (literary/formal — 我々 wareware = 'we')", kind: "kanji", emoji: "🙋", lesson: 54, sec: "7/30" },
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
