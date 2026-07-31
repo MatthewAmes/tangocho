@@ -1065,21 +1065,70 @@ function syncRequestOptions(extra) {
   return { url: SYNC_ENDPOINT + "?code=" + encodeURIComponent(getSyncCode()), opts };
 }
 
-async function pushCloudNow() {   // immediate, non-debounced — used right after sign-in so existing local progress uploads without waiting on the next study action
+// ── saving progress to the cloud ──
+// Progress is the one thing in here that can't be regenerated, so a failed save must
+// never be silent. Three things this guards against, all of which were live bugs:
+//   1. fetch() resolves for a 401/500 too — an unchecked response counted a rejected
+//      write as a success, so the app believed it had saved when it hadn't.
+//   2. A failure had no retry: the data sat local-only forever with no indication.
+//   3. The 2.5s debounce meant answering a card and closing the tab within 2.5s
+//      dropped that save entirely.
+const SYNC_PENDING_KEY = "jpn101:syncPending";
+let _syncState = "idle";            // idle | saving | saved | pending
+const _syncWatchers = new Set();
+function setSyncState(s) {
+  _syncState = s;
+  _syncWatchers.forEach((fn) => { try { fn(s); } catch (e) {} });
+}
+function watchSyncState(fn) { _syncWatchers.add(fn); return () => _syncWatchers.delete(fn); }
+function syncStateNow() { return _syncState; }
+function markSyncPending() { try { window.localStorage.setItem(SYNC_PENDING_KEY, String(Date.now())); } catch (e) {} }
+function clearSyncPending() { try { window.localStorage.removeItem(SYNC_PENDING_KEY); } catch (e) {} }
+function hasSyncPending() { try { return !!window.localStorage.getItem(SYNC_PENDING_KEY); } catch (e) { return false; } }
+
+let _retryTimer = null;
+async function pushCloudNow({ attempt = 0, keepalive = false } = {}) {
+  if (_cloudPushTimer) { clearTimeout(_cloudPushTimer); _cloudPushTimer = null; }
+  setSyncState("saving");
   try {
     const { url, opts } = syncRequestOptions({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
+      keepalive,                        // lets the request outlive the page on pagehide
     });
-    await fetch(url, opts);
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error("save rejected: HTTP " + res.status);
+    clearSyncPending();
+    setSyncState("saved");
     return true;
-  } catch (e) { return false; /* offline or endpoint unreachable — local data is still safe */ }
+  } catch (e) {
+    // keep a durable flag so a failure survives a reload and gets retried later
+    markSyncPending();
+    setSyncState("pending");
+    if (attempt < 5) {
+      const wait = Math.min(30000, 1000 * Math.pow(2, attempt));   // 1s,2s,4s,8s,16s
+      clearTimeout(_retryTimer);
+      _retryTimer = setTimeout(() => pushCloudNow({ attempt: attempt + 1 }), wait);
+    }
+    return false;
+  }
 }
 let _cloudPushTimer = null;
 function scheduleCloudPush() {
   if (_cloudPushTimer) clearTimeout(_cloudPushTimer);
-  _cloudPushTimer = setTimeout(pushCloudNow, 2500);
+  _cloudPushTimer = setTimeout(() => pushCloudNow(), 2500);
+}
+if (typeof window !== "undefined") {
+  // retry the moment there's any reason to think it might work now
+  window.addEventListener("online", () => { if (hasSyncPending()) pushCloudNow(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && hasSyncPending()) pushCloudNow();
+  });
+  // flush a debounced-but-not-yet-sent save before the page goes away
+  window.addEventListener("pagehide", () => {
+    if (_cloudPushTimer || hasSyncPending()) pushCloudNow({ keepalive: true });
+  });
 }
 async function pullAndMergeCloud() {
   try {
@@ -3400,7 +3449,17 @@ function Write({ cards, onResult }) {
   );
 }
 
+// how each save state reads to the user — never leave a failure looking like success
+const SYNC_UI = {
+  idle:    { dot: "#3ddc84", label: "Synced automatically." },
+  saving:  { dot: "#ffd166", label: "Saving…" },
+  saved:   { dot: "#3ddc84", label: "All changes saved to your account." },
+  pending: { dot: "#ff8a7a", label: "⚠ Not saved yet — your progress is safe on this device and will upload automatically." },
+};
+
 function Browse({ cards, onRemove, onClear, onRestore }) {
+  const [syncState, setSyncState] = useState(syncStateNow);
+  useEffect(() => watchSyncState(setSyncState), []);
   const [showMore, setShowMore] = useState(false);
   const [showRestore, setShowRestore] = useState(false);
   const [restoreText, setRestoreText] = useState("");
@@ -3543,10 +3602,18 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
         {googleEmail ? (
-          <p style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3ddc84", display: "inline-block", boxShadow: "0 0 6px #3ddc84" }} />
-            Signed in as <b>{googleEmail}</b> — synced automatically.
-          </p>
+          <>
+            <p style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: SYNC_UI[syncState].dot, display: "inline-block", boxShadow: "0 0 6px " + SYNC_UI[syncState].dot }} />
+              Signed in as <b>{googleEmail}</b>
+            </p>
+            <p style={{ margin: "6px 0 0", fontSize: 12.5, color: SYNC_UI[syncState].dot }}>
+              {SYNC_UI[syncState].label}
+            </p>
+            {syncState === "pending" && (
+              <button className="tc-btn tc-btn-sm" style={{ marginTop: 8 }} onClick={() => pushCloudNow()}>Retry now</button>
+            )}
+          </>
         ) : (
           <>
             <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Sign in once per device to keep your progress synced everywhere.</p>
