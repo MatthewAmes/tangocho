@@ -3,10 +3,12 @@
 // Ported from the two Netlify Functions. Three things had to change:
 //   node:crypto        -> Web Crypto (HMAC + RS256 verify are async here)
 //   Buffer/base64      -> atob/btoa with Uint8Array helpers
-//   @netlify/blobs     -> KV for the sync JSON, R2 for the TTS audio cache
+//   @netlify/blobs     -> KV, one namespace for sync JSON and one for the audio cache
 //
-// R2 rather than KV for audio on purpose: KV's free tier allows ~1k writes/day and
-// pre-warming the vocab is ~1.2k clips, which would need spreading over two days.
+// R2 would suit blobs better, but enabling it needs a dashboard opt-in and a card on
+// file. KV is fine here — clips are ~15KB against a 25MB per-value ceiling. Its ~1k
+// writes/day free-tier cap only bites during bulk pre-warming; normal study writes one
+// clip per genuinely new word.
 //
 // The API paths are deliberately still /.netlify/functions/* as well as /api/*, so the
 // exact same built index.html runs on Netlify and here. That makes the cutover
@@ -162,8 +164,8 @@ async function handleTts(req, env) {
   const key = await sha256Hex(voiceName + "|" + rate + "|" + text);
   const audioHeaders = { "content-type": "audio/mpeg", "cache-control": "public, max-age=31536000, immutable" };
 
-  const hit = await env.TTS.get(key);
-  if (hit) return new Response(hit.body, { headers: audioHeaders });
+  const hit = await env.TTS.get(key, { type: "arrayBuffer" });
+  if (hit) return new Response(hit, { headers: audioHeaders });
 
   // Cache miss = a real billable Google call, so it needs a signed-in session (or the
   // admin token used once to pre-warm the whole library).

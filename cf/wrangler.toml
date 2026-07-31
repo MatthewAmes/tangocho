@@ -2,24 +2,27 @@ name = "tangocho"
 main = "src/index.js"
 compatibility_date = "2026-07-30"
 
-# The built index.html is copied here by tools/build.mjs. Everything that isn't an API
+# The built index.html is copied here by tools/build.mjs. Anything that isn't an API
 # route falls through to this.
 [assets]
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
-# Sync payloads are small JSON and written rarely — KV is the right fit.
+# Sync payloads: small JSON, written rarely.
 [[kv_namespaces]]
 binding = "SYNC"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "ba175d82f8fb41e4b60d5dad6d2d4543"
 
-# Audio cache goes in R2, not KV: pre-warming the vocab is ~1,200 clips and KV's free
-# tier caps writes near 1k/day.
-[[r2_buckets]]
+# TTS audio cache. R2 would be the more natural fit for blobs, but enabling R2 needs a
+# dashboard opt-in and a card on file, and KV is perfectly adequate here: clips are
+# ~15KB against KV's 25MB per-value ceiling. The one real constraint is KV's ~1k
+# writes/day on the free tier, which only matters when bulk pre-warming — normal study
+# writes one clip per genuinely new word.
+[[kv_namespaces]]
 binding = "TTS"
-bucket_name = "tangocho-tts"
+id = "65cb9739891549aeb8ac804b87b8b799"
 
-# Secrets are NOT set here — they're uploaded with `wrangler secret put`, so they never
-# land in git. Required: SESSION_SECRET (must match the existing one or every device is
-# signed out), GOOGLE_TTS_API_KEY, ADMIN_WARM_TOKEN.
+# Secrets are NOT here — they go in via `wrangler secret put`, so they never land in git.
+# Required: SESSION_SECRET (must match the existing one or every device is signed out),
+# GOOGLE_TTS_API_KEY, ADMIN_WARM_TOKEN.
