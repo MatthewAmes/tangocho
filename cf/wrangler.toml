@@ -1,0 +1,25 @@
+name = "tangocho"
+main = "src/index.js"
+compatibility_date = "2026-07-30"
+
+# The built index.html is copied here by tools/build.mjs. Everything that isn't an API
+# route falls through to this.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Sync payloads are small JSON and written rarely — KV is the right fit.
+[[kv_namespaces]]
+binding = "SYNC"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Audio cache goes in R2, not KV: pre-warming the vocab is ~1,200 clips and KV's free
+# tier caps writes near 1k/day.
+[[r2_buckets]]
+binding = "TTS"
+bucket_name = "tangocho-tts"
+
+# Secrets are NOT set here — they're uploaded with `wrangler secret put`, so they never
+# land in git. Required: SESSION_SECRET (must match the existing one or every device is
+# signed out), GOOGLE_TTS_API_KEY, ADMIN_WARM_TOKEN.

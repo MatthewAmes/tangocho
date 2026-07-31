@@ -77,5 +77,11 @@ if (!/<div id="root"><\/div>\s*<script>$/.test(head)) {
 const out = head + code + tail;
 fs.writeFileSync(HTML, out, "utf8");
 
+// Cloudflare Worker serves its static assets from cf/public, so mirror the same single
+// artifact there. One build, both hosts — which is what makes the cutover reversible.
+const CF_PUBLIC = path.join(ROOT, "cf", "public");
+fs.mkdirSync(CF_PUBLIC, { recursive: true });
+fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
+
 const kb = (n) => (n / 1024).toFixed(1) + "kb";
-console.log(`ok  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}`);
+console.log(`ok  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public)`);
