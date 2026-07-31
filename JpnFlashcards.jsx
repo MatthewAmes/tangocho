@@ -3750,12 +3750,14 @@ function Add({ onAdd, count }) {
    い-adjectives, and nouns/な-adjectives. Rules per sensei's board:
    ① drop る + ない · ⑤ shift to "a" row + ない · Adj: 〜い → くない ·
    Noun/なAdj: + じゃない · Polite: ます→ません OR ない+です      */
+// Rules describe how the STEM is formed, not one specific ending — the drill asks for
+// all 8 cells now, so a negative-only rule ("drop る, add ない") was wrong on 7 of them.
 const CONJ_TYPES = {
-  ichidan:   { chip: "① ichidan", rule: "iru/eru verb → drop る, add ない" },
-  godan:     { chip: "⑤ godan", rule: "shift the last sound to the あ row, add ない" },
-  irregular: { chip: "irregular", rule: "no pattern — just memorize this one" },
-  iadj:      { chip: "い-adj", rule: "drop the final い, add くない" },
-  na:        { chip: "noun / な-adj", rule: "add じゃない after the word" },
+  ichidan:   { chip: "① ichidan", rule: "iru/eru verb → drop る, then add the ending (ます・ない・た・なかった)" },
+  godan:     { chip: "⑤ godan", rule: "shift the last sound across the あいうえお rows: ～い+ます, ～あ+ない, past is 音便" },
+  irregular: { chip: "irregular", rule: "no pattern — する and くる have to be memorised" },
+  iadj:      { chip: "い-adj", rule: "drop the final い → ～く for negatives, ～かった for past" },
+  na:        { chip: "noun / な-adj", rule: "だ・です, じゃない for negatives, だった・でした for past" },
 };
 const CONJ_BANK = [
   // ① ichidan — drop る + ない
@@ -3799,124 +3801,277 @@ const CONJ_BANK = [
 ];
 const CONJ_FILTERS = [["all", "All"], ["ichidan", "① る"], ["godan", "⑤ う"], ["irregular", "Irreg"], ["iadj", "い-adj"], ["na", "Noun/な"]];
 
+/* ── conjugation engine ──
+   Class teaches this as rules, not memorised tables (FACT 4-3): godan stems shift across
+   the あいうえお rows, ichidan drops る, する/くる are the two irregulars. So the forms are
+   computed rather than hand-written 8× per word — which also means adding a verb to
+   CONJ_BANK gives you all 8 cells for free.
+   Validated against the 33 hand-authored negatives already in CONJ_BANK: all 33 match. */
+const CONJ_KEY = "jpn101:conj";
+// godan last kana -> [い-row stem, あ-row stem, plain-past ending (音便)]
+const GODAN_ROWS = {
+  "う": ["い", "わ", "った"], "つ": ["ち", "た", "った"], "る": ["り", "ら", "った"],
+  "む": ["み", "ま", "んだ"], "ぶ": ["び", "ば", "んだ"], "ぬ": ["に", "な", "んだ"],
+  "く": ["き", "か", "いた"], "ぐ": ["ぎ", "が", "いだ"], "す": ["し", "さ", "した"],
+};
+function conjugate(dict, type) {
+  const F = (a, b, c, d, e, f, g, h) => ({ formal: { presPos: a, presNeg: b, pastPos: c, pastNeg: d },
+                                           plain:  { presPos: e, presNeg: f, pastPos: g, pastNeg: h } });
+  if (type === "iadj") {
+    const s = dict === "いい" ? "よ" : dict.slice(0, -1);   // いい is the one irregular stem
+    return F(dict + "です", s + "くないです", s + "かったです", s + "くなかったです",
+             dict, s + "くない", s + "かった", s + "くなかった");
+  }
+  if (type === "na") {
+    return F(dict + "です", dict + "じゃないです", dict + "でした", dict + "じゃなかったです",
+             dict + "だ", dict + "じゃない", dict + "だった", dict + "じゃなかった");
+  }
+  if (type === "irregular") {
+    if (dict === "する") return F("します", "しません", "しました", "しませんでした", "する", "しない", "した", "しなかった");
+    if (dict === "くる") return F("きます", "きません", "きました", "きませんでした", "くる", "こない", "きた", "こなかった");
+    if (dict === "ある") return F("あります", "ありません", "ありました", "ありませんでした", "ある", "ない", "あった", "なかった");
+  }
+  if (type === "ichidan") {
+    const s = dict.slice(0, -1);
+    return F(s + "ます", s + "ません", s + "ました", s + "ませんでした", dict, s + "ない", s + "た", s + "なかった");
+  }
+  const g = GODAN_ROWS[dict.slice(-1)];
+  if (!g) return null;
+  const stem = dict.slice(0, -1), [i, a, ta] = g;
+  const past = dict === "いく" ? "った" : ta;      // 行く is the classic exception, not いいた
+  return F(stem + i + "ます", stem + i + "ません", stem + i + "ました", stem + i + "ませんでした",
+           dict, stem + a + "ない", stem + past, stem + a + "なかった");
+}
+// the 8 cells of the class's grid — each is one drillable prompt
+const CONJ_FORMS = [
+  { id: "f-pp", pol: "formal", key: "presPos", chip: "polite", ask: "polite present" },
+  { id: "f-pn", pol: "formal", key: "presNeg", chip: "polite", ask: "polite negative" },
+  { id: "f-ap", pol: "formal", key: "pastPos", chip: "polite", ask: "polite past" },
+  { id: "f-an", pol: "formal", key: "pastNeg", chip: "polite", ask: "polite past negative" },
+  { id: "p-pp", pol: "plain",  key: "presPos", chip: "plain",  ask: "dictionary form" },
+  { id: "p-pn", pol: "plain",  key: "presNeg", chip: "plain",  ask: "plain negative" },
+  { id: "p-ap", pol: "plain",  key: "pastPos", chip: "plain",  ask: "plain past" },
+  { id: "p-an", pol: "plain",  key: "pastNeg", chip: "plain",  ask: "plain past negative" },
+];
+const CONJ_LENGTHS = [10, 20, 40, "all"];
+
 function ConjDrill() {
   const [filter, setFilter] = useState("all");
-  const [polite, setPolite] = useState(false);   // ask for plain or polite negative
+  const [forms, setForms] = useState(() => new Set(CONJ_FORMS.map((f) => f.id)));   // whole grid by default
+  const [len, setLen] = useState(20);
+  const [view, setView] = useState("setup");     // setup | session | summary
+  const [stats, setStats] = useState({});
+  const statsRef = useRef({});
   const [queue, setQueue] = useState([]);
   const [pos, setPos] = useState(0);
+  const [poolSize, setPoolSize] = useState(0);
   const [flipped, setFlipped] = useState(false);
-  const [right, setRight] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [best, setBest] = useState(0);
-  const [running, setRunning] = useState(false);
+  const [passed, setPassed] = useState(() => new Set());
+  const [firstTry, setFirstTry] = useState(() => new Set());
+  const [struggled, setStruggled] = useState(() => new Set());
+  const missRef = useRef({});
+  const shownRef = useRef(0);
+  const thinkRef = useRef(null);
+  const startedRef = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
 
-  const pool = useMemo(
+  useEffect(() => { (async () => {
+    try { const r = await sGet(CONJ_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
+  })(); }, []);
+
+  const words = useMemo(
     () => (filter === "all" ? CONJ_BANK : CONJ_BANK.filter((w) => w.type === filter)),
     [filter]
   );
+  // every (word × selected form) pair is its own drillable item with its own history
+  const items = useMemo(() => {
+    const out = [];
+    words.forEach((w) => {
+      const c = conjugate(w.reading, w.type);
+      if (!c) return;
+      CONJ_FORMS.forEach((f) => {
+        if (!forms.has(f.id)) return;
+        out.push({ id: w.reading + "|" + f.id, w, f, answer: c[f.pol][f.key] });
+      });
+    });
+    return out;
+  }, [words, forms]);
 
-  const start = useCallback(() => {
-    const q = [...pool].sort(() => Math.random() - 0.5);
-    setQueue(q); setPos(0); setFlipped(false);
-    setRight(0); setTotal(0); setStreak(0); setBest(0);
-    setRunning(true);
-  }, [pool]);
-
-  const grade = (ok) => {
-    setTotal((t) => t + 1);
-    if (ok) {
-      setRight((r) => r + 1);
-      setStreak((s) => { const n = s + 1; setBest((b) => Math.max(b, n)); return n; });
-    } else {
-      setStreak(0);
-      // missed → re-drill it near the end of the queue
-      setQueue((q) => [...q, q[pos]]);
-    }
-    setFlipped(false);
-    setPos((p) => p + 1);
+  const getS = (m, id) => m[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
+  const needC = (st, now) => {
+    const seen = st.seen || 0;
+    if (!seen) return 6 + Math.random();
+    const acc = (st.correct || 0) / seen;
+    let s = (5 - (st.level || 0)) * 1.2 + (1 - acc) * 3;
+    s += Math.min(2.5, (now - (st.last || 0)) / 86400000);
+    if (!(st.streak || 0)) s += 0.8;
+    return s;
   };
 
-  if (!running) {
+  const startSession = useCallback((subset) => {
+    const now = Date.now();
+    const pool0 = subset && subset.length ? subset : items;
+    if (!pool0.length) return;
+    const ordered = pool0
+      .map((x) => ({ x, k: needC(getS(statsRef.current, x.id), now) + Math.random() * 1.2 }))
+      .sort((a, b) => b.k - a.k).map((o) => o.x);
+    const pool = len === "all" ? ordered : ordered.slice(0, len);
+    setQueue(pool); setPos(0); setPoolSize(pool.length);
+    setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
+    missRef.current = {}; startedRef.current = Date.now(); setElapsed(0);
+    setFlipped(false); setView("session");
+  }, [items, len]);
+
+  const cur = queue[pos] || null;
+  const done = view === "session" && queue.length > 0 && pos >= queue.length;
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
+  useEffect(() => { if (done) { setElapsed(Date.now() - startedRef.current); setView("summary"); } }, [done]);
+
+  const grade = (ok) => {
+    if (!cur) return;
+    const m = statsRef.current, s0 = getS(m, cur.id), think = thinkRef.current;
+    const ns = { ...s0, seen: s0.seen + 1, correct: s0.correct + (ok ? 1 : 0),
+      level: ok ? Math.min(5, s0.level + 1) : Math.max(0, s0.level - 2),
+      streak: ok ? (s0.streak || 0) + 1 : 0, last: Date.now(),
+      ms: (s0.ms || 0) + (think || 0), msN: (s0.msN || 0) + (think ? 1 : 0) };
+    const nx = { ...m, [cur.id]: ns };
+    statsRef.current = nx; setStats(nx); sSet(CONJ_KEY, JSON.stringify(nx));
+    if (ok) {
+      if (!missRef.current[cur.id]) setFirstTry((p) => { const n = new Set(p); n.add(cur.id); return n; });
+      setPassed((p) => { const n = new Set(p); n.add(cur.id); return n; });
+      setQueue((q) => q.filter((x, i) => i <= pos || x.id !== cur.id));
+    } else {
+      setStruggled((p) => { const n = new Set(p); n.add(cur.id); return n; });
+      const c = (missRef.current[cur.id] || 0) + 1;
+      missRef.current[cur.id] = c;
+      if (c <= 2) setQueue((q) => { const n = q.slice(); n.splice(Math.min(pos + 4, n.length), 0, cur); return n; });
+    }
+    setFlipped(false); setPos((p) => p + 1);
+  };
+
+  const toggleForm = (id) => setForms((prev) => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n.size ? n : new Set(["p-pn"]);        // never leave nothing to ask
+  });
+  const mastered = items.filter((x) => getS(stats, x.id).level >= 4).length;
+  const avgSecs = (st) => (st.msN ? (st.ms / st.msN / 1000).toFixed(1) + "s" : "—");
+
+  // ── session ──
+  if (view === "session" && cur) {
+    const meta = CONJ_TYPES[cur.w.type];
     return (
       <div className="tc-conj">
-        <div className="tc-conjintro">
-          <h2 className="tc-conjtitle">Negative form drill</h2>
-          <p className="tc-conjsub">See a word, say its negative out loud, flip, and grade yourself.
-            ① ichidan: drop る + ない · ⑤ godan: shift to the あ row + ない ·
-            い-adj: 〜くない · noun/な-adj: 〜じゃない</p>
-          <div className="tc-conjchips" role="group" aria-label="Word type filter">
-            {CONJ_FILTERS.map(([id, label]) => (
-              <button key={id} className={"tc-conjchip" + (filter === id ? " is-on" : "")}
-                onClick={() => setFilter(id)}>{label}</button>
-            ))}
+        <div className="tc-progress">
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
+          <span className="tc-progtext">{passed.size} / {poolSize}</span>
+          <button className="tc-fchip" onClick={() => setView("setup")}>Quit</button>
+        </div>
+        <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={() => setFlipped((f) => !f)}
+             role="button" tabIndex={0} aria-label="Conjugation card, click to flip">
+          <div className="tc-card-inner">
+            <div className="tc-face tc-front">
+              <span className="tc-kindchip">{meta.chip}</span>
+              <div className="tc-term">{cur.w.dict}</div>
+              <div className="tc-reading-front">{cur.w.reading} · {cur.w.meaning}</div>
+              <div className="tc-conjask">→ {cur.f.ask}?</div>
+              <span className="tc-flipcue">tap to flip</span>
+            </div>
+            <div className="tc-face tc-back">
+              <div className="tc-conjanswer">{cur.answer} <SpeakBtn text={cur.answer} /></div>
+              <div className="tc-conjhow">{cur.f.ask}</div>
+              <div className="tc-conjrule">{meta.rule}</div>
+              {cur.w.note && <p className="tc-conjnote">⚠️ {cur.w.note}</p>}
+            </div>
           </div>
-          <button className={"tc-rpill tc-conjmode" + (polite ? " is-on" : "")} aria-pressed={polite}
-            onClick={() => setPolite((v) => !v)}>
-            {polite ? "Polite negative (〜ません / ないです)" : "Plain negative (〜ない)"}
-          </button>
-          <button className="tc-btn tc-btn-wide" onClick={start}>Start · {pool.length} words</button>
+        </div>
+        <div className="tc-grade">
+          {!flipped ? (
+            <button type="button" className="tc-btn tc-btn-wide"
+              onClick={(e) => { e.stopPropagation(); thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Reveal answer</button>
+          ) : (
+            <>
+              <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
+              <button type="button" className="tc-btn tc-btn-got" onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it</button>
+            </>
+          )}
         </div>
       </div>
     );
   }
 
-  if (pos >= queue.length) {
-    const pct = total ? Math.round((right / total) * 100) : 0;
+  // ── summary ──
+  if (view === "summary") {
+    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    const missed = items.filter((x) => struggled.has(x.id));
     return (
-      <div className="tc-summary">
-        <h2>ドリル終了！</h2>
-        <div className="tc-sumgrid">
-          <div className="tc-sumitem"><b>{pct}%</b><span>accuracy</span></div>
-          <div className="tc-sumitem"><b>{right}/{total}</b><span>correct</span></div>
-          <div className="tc-sumitem"><b>{best}</b><span>best streak</span></div>
-        </div>
-        <div className="tc-gradebtns">
-          <button className="tc-btn" onClick={start}>Go again</button>
-          <button className="tc-btn" onClick={() => setRunning(false)}>Change setup</button>
+      <div className="tc-conj">
+        <div className="tc-done">
+          <p className="tc-eyebrow">Session complete</p>
+          <div className="tc-bignum">{pct}<span>%</span></div>
+          <p className="tc-donesub">{firstTry.size} nailed first try{missed.length ? ` · ${missed.length} missed` : ""} · {poolSize} prompts</p>
+          <p className="tc-donesub">{fmtSecs(elapsed)} total · {(elapsed / (passed.size || 1) / 1000).toFixed(1)}s each</p>
+          {missed.length > 0 && (
+            <div className="tc-kanaweak">
+              <p className="tc-eyebrow">needs the most work</p>
+              {missed.slice(0, 6).map((x) => {
+                const st = getS(stats, x.id);
+                return (
+                  <div key={x.id} className="tc-kanaweakrow">
+                    <span className="tc-kanaweakch" style={{ fontSize: 18 }}>{x.w.dict}</span>
+                    <span className="tc-kanaweakr">{x.f.ask}</span>
+                    <span className="tc-kanaweakmeta">{st.seen ? Math.round((st.correct / st.seen) * 100) + "%" : "—"} · {avgSecs(st)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="tc-donebtns">
+            {missed.length > 0 && <button className="tc-btn tc-btn-primary" onClick={() => startSession(missed)}>Review the {missed.length} you missed</button>}
+            <button className="tc-btn" onClick={() => startSession()}>Go again</button>
+            <button className="tc-btn" onClick={() => setView("setup")}>Done</button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const w = queue[pos];
-  const meta = CONJ_TYPES[w.type];
+  // ── setup ──
   return (
     <div className="tc-conj">
-      <div className="tc-progress">
-        <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${(pos / queue.length) * 100}%` }} /></div>
-        <span className="tc-progtext">{pos + 1} / {queue.length} · 🔥 {streak}</span>
-      </div>
-
-      <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={() => setFlipped((f) => !f)}
-           role="button" tabIndex={0} aria-label="Conjugation card, click to flip">
-        <div className="tc-card-inner">
-          <div className="tc-face tc-front">
-            <span className="tc-kindchip">{meta.chip}</span>
-            <div className="tc-term">{w.dict}</div>
-            <div className="tc-reading-front">{w.reading} · {w.meaning}</div>
-            <div className="tc-conjask">{polite ? "→ polite negative?" : "→ plain negative?"}</div>
-            <span className="tc-flipcue">tap to flip</span>
-          </div>
-          <div className="tc-face tc-back">
-            <div className="tc-conjanswer">{polite ? w.polite : w.neg} <SpeakBtn text={polite ? w.polite.split(" / ")[0] : w.negR || w.neg} /></div>
-            {!polite && w.negR !== w.neg && <div className="tc-romaji">{w.negR}</div>}
-            <div className="tc-conjhow">{w.how}</div>
-            <div className="tc-conjrule">{meta.rule}</div>
-            {w.note && <p className="tc-conjnote">⚠️ {w.note}</p>}
-          </div>
+      <div className="tc-conjintro">
+        <h2 className="tc-conjtitle">Conjugation</h2>
+        <p className="tc-conjsub">The full grid from class — present/past × positive/negative, polite and plain.
+          ① ichidan: drop る · ⑤ godan: shift across the あいうえお rows ·
+          い-adj: 〜く〜 · noun/な-adj: 〜じゃ〜</p>
+        <div className="tc-conjchips" role="group" aria-label="Word type">
+          {CONJ_FILTERS.map(([id, label]) => (
+            <button key={id} className={"tc-conjchip" + (filter === id ? " is-on" : "")}
+              onClick={() => setFilter(id)}>{label}</button>
+          ))}
         </div>
-      </div>
-
-      <div className="tc-grade">
-        {!flipped ? (
-          <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); setFlipped(true); }}>Reveal answer</button>
-        ) : (
-          <>
-            <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
-            <button type="button" className="tc-btn tc-btn-got" onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it</button>
-          </>
-        )}
+        <div className="tc-conjchips" role="group" aria-label="Which forms to drill">
+          {CONJ_FORMS.map((f) => (
+            <button key={f.id} className={"tc-conjchip" + (forms.has(f.id) ? " is-on" : "")}
+              aria-pressed={forms.has(f.id)} onClick={() => toggleForm(f.id)}>{f.ask}</button>
+          ))}
+          <button className="tc-conjchip"
+            onClick={() => setForms(forms.size === CONJ_FORMS.length ? new Set(["p-pn"]) : new Set(CONJ_FORMS.map((f) => f.id)))}>
+            {forms.size === CONJ_FORMS.length ? "just one" : "all 8"}
+          </button>
+        </div>
+        <div className="tc-kanaseg tc-kanalen">
+          <span className="tc-kanalenlabel">session</span>
+          {CONJ_LENGTHS.map((n) => (
+            <button key={n} className={"tc-fchip" + (len === n ? " is-on" : "")} onClick={() => setLen(n)}>
+              {n === "all" ? `all ${items.length}` : n}
+            </button>
+          ))}
+        </div>
+        <button className="tc-btn tc-btn-wide" onClick={() => startSession()}>
+          Start · {len === "all" ? items.length : Math.min(len, items.length)} prompts
+        </button>
+        <p className="tc-conjsub">{mastered}/{items.length} mastered · {words.length} words × {forms.size} form{forms.size === 1 ? "" : "s"}</p>
       </div>
     </div>
   );
