@@ -1376,7 +1376,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "入力"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -3932,10 +3932,10 @@ const INPUT_CATALOG = [
    evidence; 40 minutes is strong), with a decaying learning rate so the level settles
    instead of oscillating. Listening and reading never share updates. */
 const INPUT_VERDICTS = {
-  too_easy:   { user: +4, item: -3, label: "簡単すぎ", en: "too easy" },
-  just_right: { user: +1, item: null, label: "ちょうどいい", en: "just right" },
-  too_hard:   { user: -2, item: +3, label: "難しい", en: "too hard" },
-  lost:       { user: -4, item: +6, label: "わからなかった", en: "lost" },
+  too_easy:   { user: +4, item: -3, en: "Too easy",   ja: "簡単すぎ" },
+  just_right: { user: +1, item: null, en: "Just right", ja: "ちょうどいい" },
+  too_hard:   { user: -2, item: +3, en: "Hard",       ja: "難しい" },
+  lost:       { user: -4, item: +6, en: "Lost me",    ja: "わからなかった" },
 };
 const clamp100 = (n) => Math.max(0, Math.min(100, n));
 // weak evidence below ~4 min, full weight by ~20 min
@@ -4090,21 +4090,26 @@ function coverageAgainstDeck(text, cards) {
    Comprehensible input: the tab answers "what should I watch or read right now"
    and then learns from the answer. Deliberately shows no raw difficulty numbers —
    a number invites arguing with it, dots just say "harder than you / about right". */
+/* Every control is labelled in English first with the Japanese underneath. The tab is
+   about Japanese, not written in it — a button you can't read is a button you don't press. */
+const Bi = ({ en, ja }) => <span className="tc-bi">{en}<small>{ja}</small></span>;
 const INPUT_PLANS = [
-  { id: "listen",  label: "聞く",   en: "listen",  mode: "active",  medium: "listening" },
-  { id: "read",    label: "読む",   en: "read",    mode: "active",  medium: "reading" },
-  { id: "passive", label: "ながら", en: "passive", mode: "passive", medium: "listening" },
+  { id: "listen",  label: "Listen",     ja: "聞く",   mode: "active",  medium: "listening" },
+  { id: "read",    label: "Read",       ja: "読む",   mode: "active",  medium: "reading" },
+  { id: "passive", label: "Background", ja: "ながら", mode: "passive", medium: "listening" },
 ];
 const INPUT_TIMES = [5, 15, 30, 60];
-const INPUT_BANDS = ["入門", "初級", "初中級", "中級", "中上級", "上級"];
-function bandName(level) { return INPUT_BANDS[Math.min(INPUT_BANDS.length - 1, Math.floor(level / 17))]; }
+const INPUT_BANDS = [["Starter", "入門"], ["Beginner", "初級"], ["Upper beginner", "初中級"],
+                     ["Intermediate", "中級"], ["Upper intermediate", "中上級"], ["Advanced", "上級"]];
+function band(level) { return INPUT_BANDS[Math.min(INPUT_BANDS.length - 1, Math.floor(level / 17))]; }
+function bandName(level) { return band(level)[0]; }
 // difficulty shown only relative to where you are — never as a score
 function relDots(diff, level) {
   const d = diff - level;
-  if (d <= -8) return { n: 1, label: "らく" };
-  if (d <= 4) return { n: 2, label: "ちょうどいい" };
-  if (d <= 12) return { n: 3, label: "すこし上" };
-  return { n: 4, label: "むずかしい" };
+  if (d <= -8) return { n: 1, label: "easy for you", ja: "らく" };
+  if (d <= 4) return { n: 2, label: "right where you are", ja: "ちょうどいい" };
+  if (d <= 12) return { n: 3, label: "a stretch", ja: "すこし上" };
+  return { n: 4, label: "probably too hard", ja: "むずかしい" };
 }
 const MEDIUM_CHIP = { video: "📺", audio: "🎧", reading: "📖" };
 function blankInput(cards) {
@@ -4130,6 +4135,7 @@ function Input({ cards }) {
     let o = null;
     try { const r = await sGet(INPUT_KEY); if (r) o = JSON.parse(r); } catch (e) {}
     if (!o || !o.levels) o = blankInput(cards);
+    else if (!(o.counts?.listening || 0) && !(o.counts?.reading || 0)) o.levels = seedLevelsFromDeck(cards);
     o.pending = o.pending || []; o.history = o.history || []; o.custom = o.custom || [];
     o.items = o.items || {}; o.tagScores = o.tagScores || {}; o.hidden = o.hidden || [];
     o.counts = o.counts || { listening: 0, reading: 0 };
@@ -4206,7 +4212,7 @@ function Input({ cards }) {
       counts: { ...st.counts, [cfg.medium]: r.ratingCount },
       history: [{ ...entry, verdict, ratedAt: Date.now() }, ...st.history].slice(0, 400),
     });
-    setLogText(""); setPanel(""); flash("記録しました · logged " + logMin + " min");
+    setLogText(""); setPanel(""); flash("Logged " + logMin + " min");
   };
 
   const addLink = () => {
@@ -4220,7 +4226,7 @@ function Input({ cards }) {
     };
     save({ ...st, custom: [it, ...st.custom.filter((c) => c.url !== url)] });
     setLinkUrl(""); setLinkTitle(""); setPanel(""); setPicks(null);
-    flash("追加しました · added to your sources");
+    flash("Added to your sources");
   };
 
   const coverage = useMemo(() => (coverText.trim() ? coverageAgainstDeck(coverText, cards) : null), [coverText, cards]);
@@ -4256,7 +4262,7 @@ function Input({ cards }) {
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {}
     try { navigator.clipboard.writeText(lines); } catch (e) {}
-    flash("書き出しました · downloaded + copied");
+    flash("Downloaded and copied to the clipboard");
   };
 
   if (!st) return <div className="tc-empty">Loading…</div>;
@@ -4265,7 +4271,7 @@ function Input({ cards }) {
     <div className="tc-input">
       {st.pending.length > 0 && (
         <div className="tc-inrate">
-          <p className="tc-eyebrow">どうだった？ · rate what you opened</p>
+          <p className="tc-eyebrow">How was it? · どうだった？</p>
           {st.pending.map((p) => (
             <div key={p.itemId + p.at} className="tc-inrateitem">
               <div className="tc-inraterow1">
@@ -4274,7 +4280,7 @@ function Input({ cards }) {
               </div>
               <div className="tc-inverdicts">
                 {Object.entries(INPUT_VERDICTS).map(([k, v]) => (
-                  <button key={k} className="tc-fchip" onClick={() => rate(p, k)}>{v.label}</button>
+                  <button key={k} className="tc-fchip" onClick={() => rate(p, k)}><Bi en={v.en} ja={v.ja} /></button>
                 ))}
               </div>
             </div>
@@ -4283,30 +4289,30 @@ function Input({ cards }) {
       )}
 
       <div className="tc-inlevels">
-        {[["listening", "聞く"], ["reading", "読む"]].map(([m, label]) => (
+        {[["listening", "Listening", "聞く"], ["reading", "Reading", "読む"]].map(([m, en, ja]) => (
           <div key={m} className="tc-inlevel">
-            <span className="tc-inlevlabel">{label}</span>
+            <span className="tc-inlevlabel">{en} <i>{ja}</i></span>
             <div className="tc-inbar"><div className="tc-inbarfill" style={{ width: `${st.levels[m]}%` }} /></div>
-            <span className="tc-inband">{bandName(st.levels[m])}</span>
+            <span className="tc-inband">{band(st.levels[m])[0]} <i>{band(st.levels[m])[1]}</i></span>
           </div>
         ))}
       </div>
 
       <div className="tc-kanaseg">
         {INPUT_PLANS.map((p) => (
-          <button key={p.id} className={"tc-fchip" + (plan === p.id ? " is-on" : "")} onClick={() => setPlan(p.id)}>{p.label}</button>
+          <button key={p.id} className={"tc-fchip" + (plan === p.id ? " is-on" : "")} onClick={() => setPlan(p.id)}><Bi en={p.label} ja={p.ja} /></button>
         ))}
       </div>
       <div className="tc-kanaseg tc-kanalen">
-        <span className="tc-kanalenlabel">時間</span>
+        <span className="tc-kanalenlabel">Time</span>
         {INPUT_TIMES.map((n) => (
-          <button key={n} className={"tc-fchip" + (minutes === n ? " is-on" : "")} onClick={() => setMinutes(n)}>{n === 60 ? "60+" : n}分</button>
+          <button key={n} className={"tc-fchip" + (minutes === n ? " is-on" : "")} onClick={() => setMinutes(n)}>{n === 60 ? "60+" : n} min</button>
         ))}
       </div>
 
       {!picks ? (
         <button className="tc-btn tc-btn-primary tc-start" onClick={suggest}>
-          {cfg.mode === "passive" ? "ながら用を出す" : "おすすめを出す"} · {minutes} min
+          {cfg.mode === "passive" ? "Find something to have on" : "Show me 3 things"} · {minutes} min
         </button>
       ) : (
         <>
@@ -4323,40 +4329,40 @@ function Input({ cards }) {
                     </span>
                     <span className="tc-indotlabel">{d.label}</span>
                   </div>
-                  <p className="tc-inpicktitle">{it.titleJa || it.title}</p>
+                  <p className="tc-inpicktitle">{it.title}{it.titleJa && it.titleJa !== it.title ? <i className="tc-inpickja">{it.titleJa}</i> : null}</p>
                   <p className="tc-inpickmeta">
                     {it.channel || it.source}
                     {it.durationSec ? ` · ~${Math.round(it.durationSec / 60)} min` : ""}
-                    {it.hasFurigana ? " · ふりがな" : ""}
-                    {it.hasSubsJa ? " · 日本語字幕" : ""}
+                    {it.hasFurigana ? " · furigana" : ""}
+                    {it.hasSubsJa ? " · JP subtitles" : ""}
                   </p>
                   {it.note && <p className="tc-inpicknote">{it.note}</p>}
                   <div className="tc-rehnav">
-                    <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={() => open(it)}>開く · open</button>
-                    <button className="tc-btn tc-btn-sm" onClick={() => save({ ...st, hidden: [...st.hidden, it.id] })}>興味なし</button>
+                    <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={() => open(it)}>Open</button>
+                    <button className="tc-btn tc-btn-sm" onClick={() => save({ ...st, hidden: [...st.hidden, it.id] })}>Not for me</button>
                   </div>
                 </div>
               );
             })}
           </div>
           <div className="tc-rehnav">
-            <button className="tc-btn tc-btn-sm" onClick={reroll}>ほかのを見る · reroll</button>
-            <button className="tc-btn tc-btn-sm" onClick={() => setPicks(null)}>戻る</button>
+            <button className="tc-btn tc-btn-sm" onClick={reroll}>Show me others</button>
+            <button className="tc-btn tc-btn-sm" onClick={() => setPicks(null)}>Back</button>
           </div>
         </>
       )}
 
       <p className="tc-smarthint">
         {week.mins > 0
-          ? `この7日 · ${week.mins} min of input over ${week.rows.length} session${week.rows.length === 1 ? "" : "s"}.`
+          ? `This week · ${week.mins} min of input over ${week.rows.length} session${week.rows.length === 1 ? "" : "s"}.`
           : "Nothing logged this week yet. Even 10 minutes of something you mostly understand beats 60 minutes of something you don't."}
       </p>
 
       <div className="tc-kanaseg tc-intools">
-        {[["log", "記録"], ["link", "リンク追加"], ["cover", "カバー率"]].map(([k, label]) => (
-          <button key={k} className={"tc-fchip" + (panel === k ? " is-on" : "")} onClick={() => setPanel(panel === k ? "" : k)}>{label}</button>
+        {[["log", "Log", "記録"], ["link", "Add link", "リンク追加"], ["cover", "Coverage", "カバー率"]].map(([k, en, ja]) => (
+          <button key={k} className={"tc-fchip" + (panel === k ? " is-on" : "")} onClick={() => setPanel(panel === k ? "" : k)}><Bi en={en} ja={ja} /></button>
         ))}
-        <button className="tc-fchip" onClick={exportWeek} disabled={!week.rows.length}>書き出し</button>
+        <button className="tc-fchip" onClick={exportWeek} disabled={!week.rows.length}><Bi en="Export" ja="書き出し" /></button>
       </div>
       {note && <p className="tc-innote">{note}</p>}
 
@@ -4367,12 +4373,12 @@ function Input({ cards }) {
             placeholder="anime, a podcast, a conversation…" />
           <div className="tc-kanaseg">
             {INPUT_TIMES.map((n) => (
-              <button key={n} className={"tc-fchip" + (logMin === n ? " is-on" : "")} onClick={() => setLogMin(n)}>{n}分</button>
+              <button key={n} className={"tc-fchip" + (logMin === n ? " is-on" : "")} onClick={() => setLogMin(n)}>{n} min</button>
             ))}
           </div>
           <div className="tc-inverdicts">
             {Object.entries(INPUT_VERDICTS).map(([k, v]) => (
-              <button key={k} className="tc-fchip" disabled={!logText.trim()} onClick={() => logOffline(k)}>{v.label}</button>
+              <button key={k} className="tc-fchip" disabled={!logText.trim()} onClick={() => logOffline(k)}><Bi en={v.en} ja={v.ja} /></button>
             ))}
           </div>
         </div>
@@ -4384,7 +4390,7 @@ function Input({ cards }) {
           <input className="tc-sentinput" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://…" />
           <input className="tc-sentinput" value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} placeholder="what is it? (optional)" />
           <p className="tc-smarthint">It starts at your current level and moves as you rate it, same as everything else.</p>
-          <div className="tc-rehnav"><button className="tc-btn tc-btn-sm tc-btn-primary" onClick={addLink}>追加</button></div>
+          <div className="tc-rehnav"><button className="tc-btn tc-btn-sm tc-btn-primary" onClick={addLink}>Add</button></div>
         </div>
       )}
 
@@ -5483,6 +5489,10 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-inlevels{display:flex;gap:10px;}
 .tc-inlevel{flex:1;display:flex;flex-direction:column;gap:5px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px 12px;}
 .tc-inlevlabel{font-size:12px;color:var(--mut-2);}
+.tc-inlevlabel i,.tc-inband i{font-style:normal;opacity:.55;font-size:.85em;}
+.tc-bi{display:inline-flex;flex-direction:column;align-items:center;line-height:1.15;gap:1px;}
+.tc-bi small{font-size:10px;opacity:.6;font-weight:400;letter-spacing:.02em;}
+.tc-inpickja{display:block;font-style:normal;font-size:13px;font-weight:400;color:var(--mut-2);margin-top:2px;}
 .tc-inbar{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;}
 .tc-inbarfill{height:100%;background:linear-gradient(90deg,var(--shu-soft,#ff8a7a),var(--shu));border-radius:999px;transition:width .4s ease;}
 .tc-inband{font-size:13.5px;color:#fff;font-weight:500;}
