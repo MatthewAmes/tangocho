@@ -56,6 +56,10 @@ for (const [what, re] of must) {
   }
 }
 
+// The feed source list is split across the app and the Worker for good reasons (see
+// check-feeds.mjs); a mismatch fails quietly at runtime, so catch it at build time.
+await import("./check-feeds.mjs");
+
 // ── splice into index.html ────────────────────────────────────────────────────
 // The <head> has an attributed <script src="…gsi/client" …> tag; matching the exact
 // string "<script>" skips it, and lastIndexOf("</script>") lands on the body one.

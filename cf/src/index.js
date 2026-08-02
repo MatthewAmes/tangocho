@@ -97,9 +97,9 @@ async function verifyGoogleIdToken(token) {
   return payload;
 }
 
-const json = (obj, status) => new Response(JSON.stringify(obj), {
+const json = (obj, status, extraHeaders) => new Response(JSON.stringify(obj), {
   status: status || 200,
-  headers: { "content-type": "application/json", "cache-control": "no-store" },
+  headers: { "content-type": "application/json", "cache-control": "no-store", ...(extraHeaders || {}) },
 });
 
 /* ── sync ── */
@@ -192,12 +192,179 @@ async function handleTts(req, env) {
   return new Response(bytes, { headers: audioHeaders });
 }
 
+/* ── item-level feeds for the Input tab ──
+   The browser can't fetch these directly: none of them send CORS headers. Fetching them
+   here also means one shared cache instead of every device hammering the same feeds.
+
+   The URL list lives HERE, not in a query parameter, on purpose — taking a URL from the
+   client would turn this Worker into an open proxy that anyone could point at anything,
+   including internal addresses. The client sends a source id and nothing else. */
+const FEEDS = {
+  // listening — YouTube channels, resolved from each channel's own RSS autodiscovery link
+  "ci-natural":     "https://www.youtube.com/feeds/videos.xml?channel_id=UCXo8kuCtqLjL1EH6m4FJJNA",
+  "ci-tanaka":      "https://www.youtube.com/feeds/videos.xml?channel_id=UCvryaJCRHcTVjOC_DcuYxGg",
+  "ci-peppa":       "https://www.youtube.com/feeds/videos.xml?channel_id=UCldXjuJ7Qg8wTNktOnVXkGw",
+  "ci-shun":        "https://www.youtube.com/feeds/videos.xml?channel_id=UCu6sZrHyl4hSS2PvlUo2XZA",
+  "yt-sayuri":      "https://www.youtube.com/feeds/videos.xml?channel_id=UCqMY-cp1He6IAi1cIz-gX1g",
+  "yt-akane":       "https://www.youtube.com/feeds/videos.xml?channel_id=UCh-GhnQ7qDQmS6Bz3pGc1Mw",
+  "yt-miku":        "https://www.youtube.com/feeds/videos.xml?channel_id=UCSbH_BPR_AoARW6RDYLlLog",
+  "yt-onomappu":    "https://www.youtube.com/feeds/videos.xml?channel_id=UCLuymDHiOySsAQ9Nc-4NoEQ",
+  "yt-gamegengo":   "https://www.youtube.com/feeds/videos.xml?channel_id=UCsXJuG5tSNRr9IwfjMbNvqQ",
+  "yt-yuyu":        "https://www.youtube.com/feeds/videos.xml?channel_id=UCCyQwSS6m2mVB0-H2FOFJtw",
+  "pod-yuyu":       "https://www.youtube.com/feeds/videos.xml?channel_id=UC8dWfySP_cKDMFj6aFfQbFA",
+  "yt-sambon":      "https://www.youtube.com/feeds/videos.xml?channel_id=UC0ujXryUUwILURRKt9Eh7Nw",
+  "pod-teppei-beg": "https://nihongoconteppei.com/feed/",
+  // reading
+  "rd-nhkeasier":   "https://nhkeasier.com/feed/",
+  "rd-yomujp":      "https://yomujp.com/feed/",
+  "rd-watanoc":     "http://watanoc.com/feed/",
+  "rd-crunchy":     "https://crunchynihongo.com/feed/",
+};
+const FEED_TTL = 6 * 3600;      // seconds; these publish daily at most
+// Bump whenever the parsed item shape changes. Cached JSON outlives a deploy, so without
+// this a new field (like the video id needed for durations) is simply absent for hours
+// and the feature looks broken for reasons nothing in the code explains.
+const FEED_SCHEMA = 2;
+
+function unent(s) {
+  return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&amp;/g, "&").trim();
+}
+const tag = (block, name) => {
+  const m = block.match(new RegExp("<" + name + "[^>]*>([\\s\\S]*?)</" + name + ">"));
+  return m ? unent(m[1]) : "";
+};
+
+// Atom (YouTube) and RSS 2.0 differ in element names but carry the same three things we
+// need: a title, a link, and a date.
+function parseFeed(xml, limit) {
+  const atom = xml.includes("<entry>");
+  const blocks = xml.split(atom ? "<entry>" : "<item>").slice(1, limit + 1);
+  const items = [];
+  for (const b of blocks) {
+    const title = tag(b, "title");
+    let url = "";
+    if (atom) {
+      const vid = tag(b, "yt:videoId");
+      url = vid ? "https://www.youtube.com/watch?v=" + vid : (b.match(/<link[^>]*href="([^"]+)"/) || [])[1] || "";
+    } else {
+      url = tag(b, "link") || (b.match(/<link[^>]*>([^<]+)</) || [])[1] || "";
+    }
+    if (!title || !url) continue;
+    const at = Date.parse(tag(b, atom ? "published" : "pubDate")) || 0;
+    const it = { title: title.slice(0, 180), url, at };
+    if (atom) it.vid = tag(b, "yt:videoId");
+    const dur = tag(b, "itunes:duration");          // podcasts often carry it; YouTube never does
+    if (dur) {
+      const p = dur.split(":").map(Number);
+      const s = p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p.length === 2 ? p[0] * 60 + p[1] : p[0];
+      if (s > 0) it.sec = s;
+    }
+    items.push(it);
+  }
+  return items;
+}
+
+/* Real video lengths.
+   Guessing from a channel's typical length is how a one-hour Peppa Pig special gets
+   advertised as five minutes, which breaks the one promise this tab makes.
+
+   Two ways to get the true number, one of which does not work:
+     - scraping the watch page: the number is in there, but YouTube answers Cloudflare's
+       egress IPs with HTTP 429, consistently, however slowly you ask. Dead end.
+     - the official Data API: one call covers 50 videos and costs 1 unit of a 10,000/day
+       quota. It needs YouTube Data API v3 switched on for the Google Cloud project.
+
+   So this calls the API with the key that's already here and does nothing if it isn't
+   enabled — the moment that project setting is switched on, durations start appearing
+   with no redeploy. When there's no duration the UI says nothing rather than guessing. */
+function iso8601ToSeconds(d) {
+  const m = /^P(?:(d+)D)?T(?:(d+)H)?(?:(d+)M)?(?:(d+)S)?$/.exec(d || "");
+  if (!m) return 0;
+  return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0);
+}
+async function ytDurations(ids, env) {
+  const out = {};
+  if (!ids.length) return out;
+
+  const missing = [];
+  await Promise.all(ids.map(async (id) => {
+    const hit = await env.TTS.get("dur:" + id);
+    if (hit) out[id] = Number(hit); else missing.push(id);
+  }));
+  if (!missing.length || !env.GOOGLE_TTS_API_KEY) return out;
+
+  // Don't re-ask on every single request while the API is switched off.
+  if (await env.TTS.get("dur:disabled")) return out;
+
+  try {
+    const r = await fetch("https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id="
+      + missing.slice(0, 50).join(",") + "&key=" + env.GOOGLE_TTS_API_KEY);
+    if (r.status === 403) { await env.TTS.put("dur:disabled", "1", { expirationTtl: 3600 }); return out; }
+    if (!r.ok) return out;
+    const { items } = await r.json();
+    await Promise.all((items || []).map(async (v) => {
+      const sec = iso8601ToSeconds(v.contentDetails && v.contentDetails.duration);
+      if (!sec) return;
+      out[v.id] = sec;
+      await env.TTS.put("dur:" + v.id, String(sec));   // no TTL: a video's length is forever
+    }));
+  } catch (e) { /* leave durations unknown rather than wrong */ }
+  return out;
+}
+
+async function handleFeed(req, env) {
+  const url = new URL(req.url);
+  const ids = (url.searchParams.get("src") || "").split(",").map((s) => s.trim()).filter((s) => FEEDS[s]).slice(0, 8);
+  if (!ids.length) return json({ error: "unknown source" }, 400);
+  const limit = Math.min(30, Math.max(1, parseInt(url.searchParams.get("n") || "15", 10)));
+
+  const out = {};
+  await Promise.all(ids.map(async (id) => {
+    const key = `feed:v${FEED_SCHEMA}:${id}:${limit}`;
+    const hit = await env.TTS.get(key, { type: "json" });          // same namespace, distinct prefix
+    if (hit) { out[id] = hit; return; }
+    try {
+      const r = await fetch(FEEDS[id], {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; tangocho/1.0)", accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" },
+        cf: { cacheTtl: 1800, cacheEverything: true },
+      });
+      if (!r.ok) { out[id] = []; return; }
+      // Teppei's feed is ~1.4MB of 1,558 episodes; only the head is ever needed.
+      const xml = (await r.text()).slice(0, 900000);
+      const items = parseFeed(xml, limit);
+      out[id] = items;
+      if (items.length) await env.TTS.put(key, JSON.stringify(items), { expirationTtl: FEED_TTL });
+    } catch (e) { out[id] = []; }
+  }));
+
+  // Resolve real lengths for the first few YouTube items of each source. Bounded on
+  // purpose: enough for the client to find something that fits the time asked for,
+  // without turning one tap into fifty page fetches.
+  if (url.searchParams.get("dur") === "1") {
+    const wanted = [];
+    for (const id of ids) for (const it of (out[id] || []).slice(0, 8)) if (it.vid && !it.sec) wanted.push(it.vid);
+    const secs = await ytDurations(wanted, env);
+    let got = 0;
+    for (const id of ids) for (const it of (out[id] || [])) if (it.vid && secs[it.vid]) { it.sec = secs[it.vid]; got++; }
+    // write the enriched copy back so the next visitor gets the lengths for free
+    if (got) await Promise.all(ids.map((id) => (out[id] || []).length
+      ? env.TTS.put(`feed:v${FEED_SCHEMA}:${id}:${limit}`, JSON.stringify(out[id]), { expirationTtl: FEED_TTL })
+      : null));
+  }
+  return json({ feeds: out });
+}
+
 export default {
   async fetch(req, env) {
     const { pathname } = new URL(req.url);
     // both path shapes so one build of index.html runs on Netlify and here
     if (pathname === "/api/sync" || pathname === "/.netlify/functions/sync") return handleSync(req, env);
     if (pathname === "/api/tts" || pathname === "/.netlify/functions/tts") return handleTts(req, env);
+    if (pathname === "/api/feed" || pathname === "/.netlify/functions/feed") return handleFeed(req, env);
     return env.ASSETS.fetch(req);
   },
 };

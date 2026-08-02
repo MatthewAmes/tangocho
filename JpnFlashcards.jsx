@@ -3849,6 +3849,16 @@ const CONJ_FILTERS = [["all", "All"], ["ichidan", "① る"], ["godan", "⑤ う
    which is how Onomappu first resolved to a Polish travel vlog. Ids below come from each
    page's own RSS autodiscovery link and were confirmed against the feed's author name. */
 const INPUT_KEY = "jpn101:input";
+// Same shape as the sync/TTS endpoints so one build runs on either host.
+const FEED_ENDPOINT = "/.netlify/functions/feed";
+// Which sources the Worker can resolve to individual episodes. Kept in step with FEEDS
+// in cf/src/index.js — the ids must match or the source silently falls back to its
+// channel link. tools/check-feeds.mjs fails the build if they drift.
+const FEED_SOURCES = new Set([
+  "ci-natural", "ci-tanaka", "ci-peppa", "ci-shun", "yt-sayuri", "yt-akane", "yt-miku",
+  "yt-onomappu", "yt-gamegengo", "yt-yuyu", "pod-yuyu", "yt-sambon", "pod-teppei-beg",
+  "rd-nhkeasier", "rd-yomujp", "rd-watanoc", "rd-crunchy",
+]);
 const INPUT_CATALOG = [
   // ── listening: absolute beginner comprehensible input ──
   { id: "ci-natural", title: "Natural Japanese (NIJ)", titleJa: "コンプリヘンシブル日本語", medium: "video", source: "youtube",
@@ -3910,8 +3920,11 @@ const INPUT_CATALOG = [
   { id: "rd-hukumusume", title: "ふくむすめ童話集", titleJa: "ふくむすめ童話集", medium: "reading", source: "web",
     url: "http://hukumusume.com/douwa/", difficulty: 26, difficultyConfidence: 0.6, wordCount: 500,
     tags: ["folktale", "story", "audio"], hasFurigana: true, addedBy: "seed", note: "Folk tales with furigana and audio. HTTP only." },
-  { id: "rd-nhkeasy", title: "NHK News Web Easy", titleJa: "NEWS WEB EASY", medium: "reading", source: "web",
-    url: "https://www3.nhk.or.jp/news/easy/", difficulty: 30, difficultyConfidence: 0.8, wordCount: 350,
+  // NHK's own Easy site moved behind a token-gated JSON index and no longer exposes a
+  // usable article list, so this points at the long-running mirror, which does publish a
+  // feed and carries the same articles with optional furigana.
+  { id: "rd-nhkeasier", title: "NHK News Web Easy", titleJa: "やさしい日本語のニュース", medium: "reading", source: "web",
+    url: "https://nhkeasier.com/", difficulty: 30, difficultyConfidence: 0.8, wordCount: 350,
     tags: ["news", "daily"], hasFurigana: true, addedBy: "seed", note: "New articles daily — good for a repeatable habit." },
   { id: "rd-todai", title: "Todai Easy Japanese", medium: "reading", source: "web",
     url: "https://easyjapanese.net/", difficulty: 32, difficultyConfidence: 0.5, wordCount: 400,
@@ -3985,7 +3998,7 @@ function seededShuffle(arr, seed) {
   return a;
 }
 
-function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay }) {
+function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay, preferred }) {
   const now = Date.now();
   const recent = new Set((history || []).filter((h) => now - h.at < 14 * 86400000).map((h) => h.itemId));
   let pool = catalog.filter((it) => {
@@ -3996,16 +4009,29 @@ function recommend({ catalog, level, mode, medium, minutes, history, tagScores, 
   });
   if (!pool.length) pool = catalog.filter((it) => (medium === "reading" ? it.medium === "reading" : it.medium !== "reading"));
 
-  const band = (lo, hi) => pool.filter((it) => it.difficulty >= level + lo && it.difficulty <= level + hi);
-  let ranked;
-  if (mode === "passive") {
-    ranked = pool.filter((it) => it.difficulty >= level - 10 && it.difficulty <= level + 4);
-    // passive wants length and things already known to sit well
-    ranked.sort((a, b) => (b.durationSec || 0) - (a.durationSec || 0));
-  } else {
+  const pick = (from) => {
+    const band = (lo, hi) => from.filter((it) => it.difficulty >= level + lo && it.difficulty <= level + hi);
+    if (mode === "passive") {
+      // passive wants length and things already known to sit well
+      return from.filter((it) => it.difficulty >= level - 10 && it.difficulty <= level + 4)
+        .sort((a, b) => (b.durationSec || 0) - (a.durationSec || 0));
+    }
     const core = band(-3, 6), stretch = band(6, 14), comfort = band(-12, -3);
-    ranked = [...seededShuffle(core, seed), ...seededShuffle(stretch, seed + 1).slice(0, Math.max(1, Math.round(core.length * 0.3))),
-              ...seededShuffle(comfort, seed + 2).slice(0, 1)];
+    return [...seededShuffle(core, seed),
+            ...seededShuffle(stretch, seed + 1).slice(0, Math.max(1, Math.round(core.length * 0.3))),
+            ...seededShuffle(comfort, seed + 2).slice(0, 1)];
+  };
+
+  /* Sources that resolve to a specific episode get first refusal on all three slots.
+     A source with no feed can only offer "here's a whole website, go dig" — which is the
+     work this tab exists to remove. Doing this as a score bonus AFTER banding was not
+     enough: banding had already spent the slots, so the bonus only reordered whatever
+     survived. Feedless sources still fill in when the level genuinely has nothing else. */
+  const feedFirst = preferred ? pool.filter((it) => preferred.has(it.id)) : pool;
+  let ranked = pick(feedFirst);
+  if (ranked.length < 3) {
+    const rest = pick(pool.filter((it) => !feedFirst.includes(it)));
+    ranked = [...ranked, ...rest.filter((it) => !ranked.includes(it))];
   }
   if (!ranked.length) ranked = seededShuffle(pool, seed);
 
@@ -4112,6 +4138,15 @@ function relDots(diff, level) {
   return { n: 4, label: "probably too hard", ja: "むずかしい" };
 }
 const MEDIUM_CHIP = { video: "📺", audio: "🎧", reading: "📖" };
+function agoLabel(at) {
+  const d = Math.floor((Date.now() - at) / 86400000);
+  if (d <= 0) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 7) return d + " days ago";
+  if (d < 30) return Math.floor(d / 7) + "w ago";
+  if (d < 365) return Math.floor(d / 30) + "mo ago";
+  return Math.floor(d / 365) + "y ago";
+}
 function blankInput(cards) {
   return { v: 1, levels: seedLevelsFromDeck(cards), counts: { listening: 0, reading: 0 },
            items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [] };
@@ -4139,10 +4174,21 @@ function Input({ cards }) {
     o.pending = o.pending || []; o.history = o.history || []; o.custom = o.custom || [];
     o.items = o.items || {}; o.tagScores = o.tagScores || {}; o.hidden = o.hidden || [];
     o.counts = o.counts || { listening: 0, reading: 0 };
+    stRef.current = o;
     setSt(o);
   })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = useCallback((next) => { setSt(next); sSet(INPUT_KEY, JSON.stringify(next)); }, []);
+  /* Writes go through the ref, not through `st`. Two taps in the same tick both close
+     over the same render's state, so the second silently discards the first — which for a
+     pending rating means the thing you just opened never gets rated. Accepts an updater
+     so every call site sees the newest state. */
+  const stRef = useRef(null);
+  const save = useCallback((next) => {
+    const value = typeof next === "function" ? next(stRef.current) : next;
+    stRef.current = value;
+    setSt(value);
+    sSet(INPUT_KEY, JSON.stringify(value));
+  }, []);
   const flash = (m) => { setNote(m); setTimeout(() => setNote((v) => (v === m ? "" : v)), 2600); };
 
   const cfg = INPUT_PLANS.find((p) => p.id === plan);
@@ -4158,59 +4204,113 @@ function Input({ cards }) {
   }, [st]);
 
   const level = st ? st.levels[cfg.medium] : 0;
-  const suggest = () => setPicks(recommend({
-    catalog, level, mode: cfg.mode, medium: cfg.medium, minutes,
-    history: st.history, tagScores: st.tagScores, seed,
-  }));
-  const reroll = () => { setSeed((s) => s + 7); setPicks(null); setTimeout(suggest, 0); };
+
+  /* Resolve each recommended source down to one actual episode or article. A link to a
+     channel just hands the searching back to you, which was the whole thing this tab was
+     supposed to take off your plate. Feeds come through our own Worker because none of
+     these sites send CORS headers. If a feed is down the source still opens as before,
+     so a dead feed degrades to the old behaviour rather than an error. */
+  const [loading, setLoading] = useState(false);
+  const seenUrls = useMemo(() => new Set((st?.history || []).map((h) => h.url).filter(Boolean)), [st]);
+
+  const suggest = useCallback(async () => {
+    const sources = recommend({
+      catalog, level, mode: cfg.mode, medium: cfg.medium, minutes,
+      history: st.history, tagScores: st.tagScores, seed, preferred: FEED_SOURCES,
+    });
+    setLoading(true);
+    setPicks(sources.map((s) => ({ source: s, item: null })));
+    let feeds = {};
+    try {
+      const ids = sources.map((s) => s.id).filter((id) => FEED_SOURCES.has(id));
+      if (ids.length) {
+        const r = await fetch(FEED_ENDPOINT + "?src=" + ids.join(",") + "&n=20&dur=1", { cache: "no-store" });
+        // Check the type: a cache or proxy serving the app's own HTML under this URL would
+        // otherwise throw inside r.json() and look identical to "every feed is down".
+        if (r.ok && (r.headers.get("content-type") || "").includes("json")) feeds = (await r.json()).feeds || {};
+      }
+    } catch (e) { /* offline or feed down — fall through to the source link */ }
+    const budget = minutes * 60 * 1.25;      // a little over is fine; double is not
+    setPicks(sources.map((s, i) => {
+      const list = (feeds[s.id] || []).filter((x) => !seenUrls.has(x.url));
+      // Prefer episodes whose real length fits the time asked for. Unknown lengths are
+      // allowed through rather than discarded — better an unlabelled 12-minute video than
+      // nothing — but anything known to blow the budget is dropped.
+      // Shorts fit any budget and teach nothing. Length is the reliable test, but it isn't
+      // always available (see ytDurations in the Worker), so fall back to the tag creators
+      // put in the title themselves.
+      const isShort = (x) => /#shorts?/i.test(x.title) || (x.sec && x.sec < 60);
+      const fits = list.filter((x) => !isShort(x) && (!x.sec || x.sec <= budget));
+      const pool = fits.length ? fits : list;
+      // vary by seed so a reroll moves through the feed instead of re-offering episode 1
+      const item = pool.length ? pool[(seed * 3 + i * 7) % pool.length] : null;
+      return { source: s, item };
+    }));
+    setLoading(false);
+  }, [catalog, level, cfg, minutes, st, seed, seenUrls]);
+
+  const reroll = () => setSeed((s) => s + 7);
   useEffect(() => { setPicks(null); }, [plan, minutes]);
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return; }
+    if (st) suggest();
+  }, [seed]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // opening something creates a pending rating that survives a reload — the rating is
   // the only thing that teaches the engine, so it must not evaporate when the tab closes
-  const open = (it) => {
-    const entry = { itemId: it.id, at: Date.now(), medium: cfg.medium, mode: cfg.mode,
-                    minutes, title: it.title, url: it.url };
-    save({ ...st, pending: [entry, ...st.pending.filter((p) => p.itemId !== it.id)].slice(0, 6) });
-    try { window.open(it.url, "_blank", "noopener,noreferrer"); } catch (e) {}
+  // The rating still teaches the SOURCE (itemId), because that's what has a difficulty
+  // worth learning; the episode title and url ride along so the rating row and the log
+  // name the thing you actually watched.
+  const open = (pick) => {
+    const s = pick.source, ep = pick.item;
+    const entry = { itemId: s.id, at: Date.now(), medium: cfg.medium, mode: cfg.mode, minutes,
+                    title: ep ? ep.title : s.title, source: s.title, url: ep ? ep.url : s.url };
+    save((s0) => ({ ...s0, pending: [entry, ...s0.pending.filter((p) => p.url !== entry.url)].slice(0, 6) }));
+    try { window.open(entry.url, "_blank", "noopener,noreferrer"); } catch (e) {}
   };
 
   const rate = (entry, verdict) => {
     const med = entry.medium;
     const it = catalog.find((x) => x.id === entry.itemId);
-    const cur = st.items[entry.itemId] || { difficulty: it ? it.difficulty : level, confidence: it ? (it.difficultyConfidence || 0.3) : 0.2, ratings: 0 };
-    const r = applyRating({
-      level: st.levels[med], ratingCount: st.counts[med] || 0,
-      itemDifficulty: cur.difficulty, itemConfidence: cur.confidence,
-      verdict, minutes: entry.minutes,
-    });
-    const tagScores = { ...st.tagScores };
-    if (it && verdict !== "lost") {
-      const bump = verdict === "just_right" ? 1 : verdict === "too_easy" ? 0.2 : -0.3;
-      (it.tags || []).forEach((t) => { tagScores[t] = Math.round(((tagScores[t] || 0) + bump) * 10) / 10; });
-    }
-    save({
-      ...st,
-      levels: { ...st.levels, [med]: r.level, updatedAt: Date.now() },
-      counts: { ...st.counts, [med]: r.ratingCount },
-      items: { ...st.items, [entry.itemId]: { difficulty: r.itemDifficulty, confidence: r.itemConfidence, ratings: (cur.ratings || 0) + 1 } },
-      history: [{ ...entry, verdict, ratedAt: Date.now() }, ...st.history].slice(0, 400),
-      pending: st.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)),
-      tagScores,
+    save((s0) => {
+      const cur = s0.items[entry.itemId] || { difficulty: it ? it.difficulty : s0.levels[med], confidence: it ? (it.difficultyConfidence || 0.3) : 0.2, ratings: 0 };
+      const r = applyRating({
+        level: s0.levels[med], ratingCount: s0.counts[med] || 0,
+        itemDifficulty: cur.difficulty, itemConfidence: cur.confidence,
+        verdict, minutes: entry.minutes,
+      });
+      const tagScores = { ...s0.tagScores };
+      if (it && verdict !== "lost") {
+        const bump = verdict === "just_right" ? 1 : verdict === "too_easy" ? 0.2 : -0.3;
+        (it.tags || []).forEach((t) => { tagScores[t] = Math.round(((tagScores[t] || 0) + bump) * 10) / 10; });
+      }
+      return {
+        ...s0,
+        levels: { ...s0.levels, [med]: r.level, updatedAt: Date.now() },
+        counts: { ...s0.counts, [med]: r.ratingCount },
+        items: { ...s0.items, [entry.itemId]: { difficulty: r.itemDifficulty, confidence: r.itemConfidence, ratings: (cur.ratings || 0) + 1 } },
+        history: [{ ...entry, verdict, ratedAt: Date.now() }, ...s0.history].slice(0, 400),
+        pending: s0.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)),
+        tagScores,
+      };
     });
   };
-  const dismiss = (entry) => save({ ...st, pending: st.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)) });
+  const dismiss = (entry) => save((s0) => ({ ...s0, pending: s0.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)) }));
 
   const logOffline = (verdict) => {
     const title = logText.trim();
     if (!title) return;
     const entry = { itemId: "offline:" + title.slice(0, 40), at: Date.now(), medium: cfg.medium,
                     mode: cfg.mode, minutes: logMin, title, offline: true };
-    const r = applyRating({ level: st.levels[cfg.medium], ratingCount: st.counts[cfg.medium] || 0,
-                            itemDifficulty: level, itemConfidence: 0, verdict, minutes: logMin });
-    save({ ...st,
-      levels: { ...st.levels, [cfg.medium]: r.level, updatedAt: Date.now() },
-      counts: { ...st.counts, [cfg.medium]: r.ratingCount },
-      history: [{ ...entry, verdict, ratedAt: Date.now() }, ...st.history].slice(0, 400),
+    save((s0) => {
+      const r = applyRating({ level: s0.levels[cfg.medium], ratingCount: s0.counts[cfg.medium] || 0,
+                              itemDifficulty: s0.levels[cfg.medium], itemConfidence: 0, verdict, minutes: logMin });
+      return { ...s0,
+        levels: { ...s0.levels, [cfg.medium]: r.level, updatedAt: Date.now() },
+        counts: { ...s0.counts, [cfg.medium]: r.ratingCount },
+        history: [{ ...entry, verdict, ratedAt: Date.now() }, ...s0.history].slice(0, 400),
+      };
     });
     setLogText(""); setPanel(""); flash("Logged " + logMin + " min");
   };
@@ -4224,7 +4324,7 @@ function Input({ cards }) {
       medium: cfg.medium === "reading" ? "reading" : "video", source: "web", url,
       difficulty: level, difficultyConfidence: 0.15, tags: ["mine"], addedBy: "user", addedAt: Date.now(),
     };
-    save({ ...st, custom: [it, ...st.custom.filter((c) => c.url !== url)] });
+    save((s0) => ({ ...s0, custom: [it, ...s0.custom.filter((c) => c.url !== url)] }));
     setLinkUrl(""); setLinkTitle(""); setPanel(""); setPicks(null);
     flash("Added to your sources");
   };
@@ -4318,8 +4418,9 @@ function Input({ cards }) {
         <>
           <div className="tc-inpicks">
             {picks.length === 0 && <p className="tc-smarthint">Nothing left at this level that you haven't opened in the last two weeks. Reroll or add a link of your own.</p>}
-            {picks.map((it) => {
+            {picks.map(({ source: it, item }, idx) => {
               const d = relDots(it.difficulty, level);
+              const mins = it.durationSec ? Math.round(it.durationSec / 60) : null;
               return (
                 <div key={it.id} className="tc-card2 tc-inpick">
                   <div className="tc-inpicktop">
@@ -4329,17 +4430,36 @@ function Input({ cards }) {
                     </span>
                     <span className="tc-indotlabel">{d.label}</span>
                   </div>
-                  <p className="tc-inpicktitle">{it.title}{it.titleJa && it.titleJa !== it.title ? <i className="tc-inpickja">{it.titleJa}</i> : null}</p>
-                  <p className="tc-inpickmeta">
-                    {it.channel || it.source}
-                    {it.durationSec ? ` · ~${Math.round(it.durationSec / 60)} min` : ""}
-                    {it.hasFurigana ? " · furigana" : ""}
-                    {it.hasSubsJa ? " · JP subtitles" : ""}
-                  </p>
-                  {it.note && <p className="tc-inpicknote">{it.note}</p>}
+                  {item ? (
+                    <>
+                      <p className="tc-inpicktitle">{item.title}</p>
+                      <p className="tc-inpickmeta">
+                        {it.title}
+                        {item.at ? " · " + agoLabel(item.at) : ""}
+                        {/* only claim a length when it's this episode's, not the channel's average */}
+                        {item.sec ? ` · ${Math.max(1, Math.round(item.sec / 60))} min` : ""}
+                        {it.hasFurigana ? " · furigana" : ""}
+                        {it.hasSubsJa ? " · JP subtitles" : ""}
+                      </p>
+                    </>
+                  ) : loading && FEED_SOURCES.has(it.id) ? (
+                    <p className="tc-inpicktitle tc-inloading">finding {it.medium === "reading" ? "an article" : "an episode"}…</p>
+                  ) : (
+                    <>
+                      <p className="tc-inpicktitle">{it.title}{it.titleJa && it.titleJa !== it.title ? <i className="tc-inpickja">{it.titleJa}</i> : null}</p>
+                      <p className="tc-inpickmeta">
+                        {it.channel || it.source}
+                        {mins ? ` · ~${mins} min` : ""}
+                        {it.hasFurigana ? " · furigana" : ""}
+                        {it.hasSubsJa ? " · JP subtitles" : ""}
+                      </p>
+                      {it.note && <p className="tc-inpicknote">{it.note}</p>}
+                    </>
+                  )}
                   <div className="tc-rehnav">
-                    <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={() => open(it)}>Open</button>
-                    <button className="tc-btn tc-btn-sm" onClick={() => save({ ...st, hidden: [...st.hidden, it.id] })}>Not for me</button>
+                    <button className="tc-btn tc-btn-sm tc-btn-primary" disabled={loading && !item}
+                      onClick={() => open(picks[idx])}>{item ? "Play this" : "Open"}</button>
+                    <button className="tc-btn tc-btn-sm" onClick={() => save((s0) => ({ ...s0, hidden: [...s0.hidden, it.id] }))}>Not for me</button>
                   </div>
                 </div>
               );
@@ -5493,6 +5613,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-bi{display:inline-flex;flex-direction:column;align-items:center;line-height:1.15;gap:1px;}
 .tc-bi small{font-size:10px;opacity:.6;font-weight:400;letter-spacing:.02em;}
 .tc-inpickja{display:block;font-style:normal;font-size:13px;font-weight:400;color:var(--mut-2);margin-top:2px;}
+.tc-inloading{color:var(--mut-2);font-weight:400;font-size:15px;}
+.tc-inloading::after{content:"";display:inline-block;width:1em;text-align:left;animation:tc-dots 1.2s steps(4,end) infinite;}
+@keyframes tc-dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 .tc-inbar{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;}
 .tc-inbarfill{height:100%;background:linear-gradient(90deg,var(--shu-soft,#ff8a7a),var(--shu));border-radius:999px;transition:width .4s ease;}
 .tc-inband{font-size:13.5px;color:#fff;font-weight:500;}

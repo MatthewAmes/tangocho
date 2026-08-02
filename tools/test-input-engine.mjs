@@ -244,5 +244,36 @@ t("a realistic sentence scores in a believable range", () => {
   eq(c.unknown.map((u) => u.w).join(","), "難");
 });
 
+// ── recommender: feed-backed sources must win the slots ──
+const RECO = await (async () => {
+  const code2 = [
+    "const clamp100 = (n) => Math.max(0, Math.min(100, n));",
+    grab("seededShuffle", "function"),
+    grab("recommend", "function"),
+    "export { recommend };",
+  ].join("\n");
+  return (await import("data:text/javascript;base64," + Buffer.from(code2).toString("base64"))).recommend;
+})();
+
+console.log("\n=== recommender prefers sources it can resolve to one episode ===");
+const mk = (id, difficulty, feed) => ({ id, difficulty, medium: "reading", tags: [], _feed: feed });
+const CAT = [mk("f1", 20, 1), mk("f2", 24, 1), mk("f3", 28, 1), mk("n1", 21, 0), mk("n2", 25, 0), mk("n3", 29, 0)];
+const PREF = new Set(["f1", "f2", "f3"]);
+t("all three slots go to feed-backed sources when enough exist", () => {
+  const r = recommendWrap({ catalog: CAT, level: 22, preferred: PREF });
+  const feedless = r.filter((x) => !PREF.has(x.id));
+  if (feedless.length) throw new Error("got feedless picks: " + feedless.map((x) => x.id).join(","));
+});
+t("feedless sources still fill in when there aren't enough", () => {
+  const thin = [mk("f1", 20, 1), ...CAT.filter((c) => c.id.startsWith("n"))];
+  const r = recommendWrap({ catalog: thin, level: 22, preferred: new Set(["f1"]) });
+  if (r.length < 2) throw new Error("should still return options, got " + r.length);
+  if (r[0].id !== "f1") throw new Error("the one feed-backed source should lead, got " + r[0].id);
+});
+function recommendWrap({ catalog, level, preferred }) {
+  return RECO({ catalog, level, mode: "active", medium: "reading", minutes: 15,
+                history: [], tagScores: {}, seed: 3, preferred });
+}
+
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} tests passed`);
 process.exit(fail ? 1 : 0);
