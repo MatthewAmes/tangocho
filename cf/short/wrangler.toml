@@ -1,0 +1,5 @@
+# Forwarder only — see src/index.js for why the app isn't just renamed.
+# No KV, no secrets, no assets: this worker knows one URL and nothing else.
+name = "jp"
+main = "src/index.js"
+compatibility_date = "2026-07-30"
