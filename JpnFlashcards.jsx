@@ -1410,10 +1410,16 @@ export default function JpnFlashcards() {
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
         const grade = gradeFromLatency(got, t);
-        const prior = c.fsrs || seedFromHistory(c);
-        const fsrs = fsrsReview(prior, grade, Date.now(), retentionTarget);
+        /* Recognition and production are tracked separately. Being able to read 火曜日 says
+           very little about being able to produce it from "Tuesday", so one shared
+           stability would over-schedule one direction and under-schedule the other. */
+        const isProd = dir === "prod";
+        const prior = isProd ? (c.rfsrs || null) : (c.fsrs || seedFromHistory(c));
+        const nextState = fsrsReview(prior, grade, Date.now(), retentionTarget);
+        const fsrs = isProd ? c.fsrs : nextState;
+        const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
-        const base = { ...c, ease, fsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
+        const base = { ...c, ease, fsrs, rfsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
         if (dir === "prod") {                       // EN→JP recall (production)
           return {
             ...base,
@@ -1520,6 +1526,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [running, setRunning] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
+  const [prodSet, setProdSet] = useState(() => new Set());
   const [combo, setCombo] = useState(0);
   const [bestCombo, setBestCombo] = useState(0);
   const [flash, setFlash] = useState(0);
@@ -1573,9 +1580,26 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       .sort((a, b) => (a.lesson || 0) - (b.lesson || 0));           // earliest untouched lessons first
 
     const newSlots = Math.min(fresh.length, due.length >= 40 ? 3 : due.length >= 15 ? 5 : 8);
-    const reviewSlots = SESSION - newSlots;
-    const review = [...due, ...rest].slice(0, reviewSlots);
-    return [...review, ...fresh.slice(0, newSlots)];
+    // Cards owed a backwards retrieval get their own reserved slots, drawn from the whole
+    // deck rather than from the recognition-due list they will never appear in.
+    const prod = cards.filter((c) => prodDue(c, now)).sort((a, b) => (a.rfsrs?.due || 0) - (b.rfsrs?.due || 0));
+    const prodSlots = Math.min(prod.length, 4);
+    const reviewSlots = SESSION - newSlots - prodSlots;
+    const review = [...due, ...rest].slice(0, Math.max(0, reviewSlots));
+    const chosenProd = prod.slice(0, prodSlots).filter((c) => !review.includes(c));
+
+    /* Spread the production cards through the session instead of appending them as a
+       block. A run of four backwards cards in a row lets you settle into "this is the
+       reverse bit" — and predictability is exactly what interleaving is meant to remove.
+       Mixed in, you cannot tell which direction is coming, so each card requires deciding
+       what kind of retrieval this is before doing it. That extra step is the point. */
+    const body = [...review];
+    const gap = chosenProd.length ? Math.max(1, Math.floor(body.length / (chosenProd.length + 1))) : 0;
+    chosenProd.forEach((c, i) => {
+      const at = Math.min(body.length, gap * (i + 1) + i);
+      body.splice(at, 0, c);
+    });
+    return [...body, ...fresh.slice(0, newSlots)];
   }, [cards]);
   const leeches = useMemo(() => cards.filter(isLeech), [cards]);
 
@@ -1680,12 +1704,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
+    /* Interleave production into the session rather than leaving it on a separate tab you
+       have to remember to visit. Roughly a third of the cards that have earned it get
+       asked backwards — enough that the direction is genuinely unpredictable, which is
+       the point: a block of ten recognition cards lets you settle into one mode, and
+       mixing retrieval types is what makes each retrieval effortful. Capped so a session
+       never becomes mostly production, which is demoralising at this stage. */
+    const nowP = Date.now();
+    const owed = ordered.filter((c) => prodDue(c, nowP));
+    setProdSet(new Set(owed.slice(0, 6).map((c) => c.id)));
     missRef.current = {};
     setHook(null); setDebrief(null);
     setFlipped(false); setRunning(true);
   }, [cards, coverage]);
 
   const card = queue[pos];
+  const isProd = !!(card && prodSet.has(card.id));
   const done = running && pos >= queue.length;
 
   useEffect(() => {                                   // auto-debrief when a session ends with misses
@@ -1709,7 +1743,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
       setFlash(Date.now());
     } else if (!got) setCombo(0);
-    onResult(c.id, got, undefined, thinkRef.current || undefined);
+    onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined);
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       setPassed((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -1934,18 +1968,36 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
            role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
         <div className="tc-card-inner">
-          {/* FRONT — Japanese: kanji + kana (+ rōmaji if on) */}
+          {/* FRONT — normally the Japanese; on a production card, the English, and you
+              have to come up with the Japanese yourself. No reading, no rōmaji and no
+              audio button here: every one of those would hand you the answer. */}
           <div className="tc-face tc-front">
-            <span className="tc-kindchip">{KIND_LABEL[card.kind] || ""}</span>
-            <div className="tc-term">{card.term}</div>
-            <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
-            {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
-            <span className="tc-flipcue">tap to flip</span>
+            {isProd ? (
+              <>
+                <span className="tc-kindchip tc-prodchip">→ 日本語</span>
+                {card.emoji && <div className="tc-emoji">{card.emoji}</div>}
+                <div className="tc-prodprompt">{card.meaning}</div>
+                <span className="tc-flipcue">say it, then tap</span>
+              </>
+            ) : (
+              <>
+                <span className="tc-kindchip">{KIND_LABEL[card.kind] || ""}</span>
+                <div className="tc-term">{card.term}</div>
+                <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
+                {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
+                <span className="tc-flipcue">tap to flip</span>
+              </>
+            )}
           </div>
           {/* BACK — meaning + picture + pronunciation (rōmaji always shown) */}
           <div className="tc-face tc-back">
-            {card.emoji && <div className="tc-emoji">{card.emoji}</div>}
-            <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
+            {isProd ? (
+              <div className="tc-term tc-prodanswer">{card.term}</div>
+            ) : (
+              card.emoji && <div className="tc-emoji">{card.emoji}</div>
+            )}
+            {!isProd && <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>}
+            {isProd && <div className="tc-reading-front">{card.reading}</div>}
             <div className="tc-romaji">{showPitch && card.pitch ? card.pitch : card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
             {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen || 0}× · {card.seen ? Math.round(((card.correct || 0) / card.seen) * 100) : 0}%</span>}
             {isLeech(card) && (
@@ -2005,8 +2057,16 @@ function masteryScore(c) {            // higher = stronger; seen cards only
 // ── spaced repetition ──
 const DAY = 86400000;
 const REVIEW_INTERVALS = [0.007 * DAY, 1 * DAY, 3 * DAY, 7 * DAY, 16 * DAY, 35 * DAY]; // per mastery level (L0…L5)
-function recallUnlocked(c) {          // EN→JP mode retired — cards always show Japanese first
-  return false;
+/* Production (EN→JP) unlocks once recognition is solid — stability of a week or more.
+   Asking you to produce a word you can't yet recognise is just failure with extra steps;
+   asking only ever to recognise leaves you able to read Japanese and unable to speak it.
+   Recognition reliably precedes production in L2 acquisition, so this gates on the
+   recognition state and then starts building the harder direction on top. */
+const PROD_UNLOCK_STABILITY = 7;    // days
+function recallUnlocked(c) {
+  if (!((c.seen || 0) > 0)) return false;
+  const st = c.fsrs || seedFromHistory(c);
+  return !!(st && st.S >= PROD_UNLOCK_STABILITY);
 }
 function effLevel(c) {                // true strength = weakest direction once recall unlocks
   const lvl = Math.min(5, c.level || 0);
@@ -2056,6 +2116,18 @@ function statNeed(st, now = Date.now()) {
   // 1 - r is "how much of this memory has decayed". A card at 50% recall outranks one at
   // 95% no matter how many times each has been seen, which is the whole point.
   return (1 - r) * 8 + (st.streak ? 0 : 0.6);
+}
+
+/* Production is scheduled on its own clock. This matters more than it looks: a card only
+   unlocks production once recognition is STABLE, and a stable card is by definition not due
+   for recognition. Selecting the session purely on recognition due-ness therefore surfaces
+   production almost never — the feature would have looked wired up and quietly done nothing.
+   A card is production-due if it has earned the direction and either has never been asked
+   backwards, or its production memory has decayed to the target. */
+function prodDue(c, now) {
+  if (!recallUnlocked(c)) return false;
+  if (!c.rfsrs || !(c.rfsrs.S > 0)) return true;
+  return (c.rfsrs.due || 0) <= now;
 }
 
 /** Probability you'd recall this card right now — used for the UI, not the schedule. */
@@ -5750,6 +5822,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-smart-btn:hover{filter:brightness(1.12);}
 .tc-smarthint{margin:8px 0 0;font-size:12px;color:var(--mut-2);line-height:1.5;text-align:center;}
 .tc-kind-prod{background:rgba(216,72,47,.16);border-color:rgba(216,72,47,.4);color:var(--shu-soft);}
+/* Production cards read as a different exercise on purpose — the visual break is part of
+   what stops the session settling into one mode. */
+.tc-prodchip{background:rgba(124,92,255,.2);border-color:rgba(124,92,255,.45);color:#c9b8ff;}
+.tc-prodprompt{font-size:26px;font-weight:600;line-height:1.3;color:#fff;text-align:center;padding:0 14px;max-width:340px;}
+.tc-prodanswer{color:#c9b8ff;}
 .tc-retention{display:flex;flex-direction:column;gap:7px;align-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 12px;}
 .tc-retlabel{font-size:12px;color:var(--mut-2);letter-spacing:.04em;text-transform:uppercase;}
 .tc-retention .tc-smarthint{margin:0;}
