@@ -1371,7 +1371,15 @@ export default function JpnFlashcards() {
       const next = prev.map((c) => {
         if (c.id !== id) return c;
         const firstProdTry = dir === "prod" && (c.rseen || 0) === 0;   // first attempt at producing = learning, not a lapse
-        const delta = got ? 0.05 : firstProdTry ? 0 : -0.15;
+        /* Hesitation predicts failure. In this deck, answers given in under 3 seconds
+            are 87% correct and answers taking over 6 seconds are 71% correct — so a slow
+            "got it" is much weaker evidence than a fast one, and treating them the same
+            is why 503 studied cards produced only ten at level 4.
+            Fast+right now advances two levels, slow+right advances one, and a right answer
+            that took more than 10 seconds holds level instead of advancing. */
+        const fast = got && t > 0 && t < 3000;
+        const crawl = got && t >= 10000;
+        const delta = got ? (fast ? 0.08 : crawl ? 0 : 0.05) : firstProdTry ? 0 : -0.15;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
         const base = { ...c, ease, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
         if (dir === "prod") {                       // EN→JP recall (production)
@@ -1380,7 +1388,7 @@ export default function JpnFlashcards() {
             rseen: (c.rseen || 0) + 1,
             rcorrect: (c.rcorrect || 0) + (got ? 1 : 0),
             rms: (c.rms || 0) + t, rmsN: (c.rmsN || 0) + (t ? 1 : 0),
-            rlevel: got ? Math.min(5, (c.rlevel || 0) + 1) : Math.max(0, (c.rlevel || 0) - 2),
+            rlevel: got ? Math.min(5, (c.rlevel || 0) + (fast ? 2 : crawl ? 0 : 1)) : Math.max(0, (c.rlevel || 0) - 2),
           };
         }
         return {                                    // JP→EN recognition
@@ -1388,7 +1396,7 @@ export default function JpnFlashcards() {
           seen: (c.seen || 0) + 1,
           correct: (c.correct || 0) + (got ? 1 : 0),
           ms: (c.ms || 0) + t, msN: (c.msN || 0) + (t ? 1 : 0),
-          level: got ? Math.min(5, (c.level || 0) + 1) : Math.max(0, (c.level || 0) - 2),
+          level: got ? Math.min(5, (c.level || 0) + (fast ? 2 : crawl ? 0 : 1)) : Math.max(0, (c.level || 0) - 2),
         };
       });
       sSet(STORE_KEY, JSON.stringify(next));
@@ -1480,6 +1488,9 @@ function Study({ cards, onResult, goAdd }) {
   const [running, setRunning] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [flash, setFlash] = useState(0);
   const shownRef = useRef(0);          // when the current card appeared
   const thinkRef = useRef(null);       // ms from shown → first reveal (think time)
   useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, running]);
@@ -1600,11 +1611,17 @@ function Study({ cards, onResult, goAdd }) {
     return batches.slice().sort((a, b) => a.rate - b.rate)[0];
   }, [batches]);
 
-  const start = useCallback((subset, preordered) => {
+  const lastPool = useRef(null);
+  const start = useCallback((subset, preordered, opts) => {
     const pool0 = (subset && subset.length) ? subset : cards;
-    // leech throttle: drilling stuck words harder doesn't work — cap them per session
-    const leeches = pool0.filter(isLeech);
-    const pool = leeches.length > 3 ? pool0.filter((c) => !isLeech(c)).concat(leeches.slice(0, 3)) : pool0;
+    lastPool.current = { subset: (subset && subset.length) ? subset : null, preordered, opts };
+    /* Leech throttle: drilling stuck words harder doesn't work, so a normal session gets
+       at most three. It must NOT apply when the session IS the stuck words — that turned
+       "Trouble words · 62 stuck" into the same three cards forever. */
+    const stuck = pool0.filter(isLeech);
+    const pool = (opts && opts.leechSession) || stuck.length <= 3
+      ? pool0
+      : pool0.filter((c) => !isLeech(c)).concat(stuck.slice(0, 3));
     const ordered = (preordered ? [...pool] : pool
       .map((c) => ({ c, k: masteryScore(c) + Math.random() * 0.3 }))  // weakest (lowest) first; small stable jitter
       .sort((a, b) => a.k - b.k)
@@ -1612,6 +1629,7 @@ function Study({ cards, onResult, goAdd }) {
     setQueue(ordered);
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
+    setCombo(0); setBestCombo(0);
     missRef.current = {};
     setHook(null); setDebrief(null);
     setFlipped(false); setRunning(true);
@@ -1634,6 +1652,13 @@ function Study({ cards, onResult, goAdd }) {
     const c = queue[pos];
     if (!c) return;
     setHook(null);
+    const think = thinkRef.current || 0;
+    // The combo counts instant recall, not merely correct answers — it rewards the thing
+    // that actually correlates with remembering the word tomorrow.
+    if (got && think > 0 && think < 3000) {
+      setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
+      setFlash(Date.now());
+    } else if (!got) setCombo(0);
     onResult(c.id, got, undefined, thinkRef.current || undefined);
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -1723,7 +1748,7 @@ function Study({ cards, onResult, goAdd }) {
             same drill — it needs to be looked at deliberately, and it shouldn't be taxing
             sessions that are otherwise going fine. */}
         {leeches.length > 0 && (
-          <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12))}>
+          <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12), false, { leechSession: true })}>
             🩹 Trouble words · {leeches.length} stuck
           </button>
         )}
@@ -1793,6 +1818,9 @@ function Study({ cards, onResult, goAdd }) {
         <p className="tc-eyebrow">Session complete</p>
         <div className="tc-bignum">{pct}<span>%</span></div>
         <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {poolSize} cards</p>
+        {bestCombo >= 2 && (
+          <p className="tc-donecombo">best run: <b>{bestCombo}</b> instant recalls back to back</p>
+        )}
         {debrief && debrief.busy && <p className="tc-debrief tc-debrief-busy">✨ Coach is looking at what you missed…</p>}
         {debrief && debrief.text && <p className="tc-debrief">✨ {debrief.text}</p>}
         {debrief && debrief.err && missedCards.length > 0 && (
@@ -1802,7 +1830,10 @@ function Study({ cards, onResult, goAdd }) {
           {missedCards.length > 0 && (
             <button className="tc-btn tc-btn-primary" onClick={() => start(missedCards)}>Review the {missedCards.length} you missed</button>
           )}
-          <button className="tc-btn" onClick={() => start()}>Go again</button>
+          <button className="tc-btn" onClick={() => {
+            const L = lastPool.current;
+            start(L && L.subset ? L.subset : smartPool, L ? L.preordered : true, L ? L.opts : undefined);
+          }}>Go again</button>
           <button className="tc-btn" onClick={() => setRunning(false)}>Done</button>
         </div>
       </div>
@@ -1814,6 +1845,11 @@ function Study({ cards, onResult, goAdd }) {
       <div className="tc-progress">
         <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
         <span className="tc-progtext">{passed.size} / {poolSize}</span>
+        {combo >= 2 && (
+          <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
+            {combo}<i>×</i>
+          </span>
+        )}
         <button className={"tc-rpill" + (showRomaji ? " is-on" : "")}
           aria-pressed={showRomaji} onClick={() => setShowRomaji((v) => !v)}>
           Rōmaji {showRomaji ? "on" : "off"}
@@ -5779,6 +5815,16 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-conjnote{margin:6px 12px 0;font-size:12.5px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.08);border:1px solid rgba(255,190,90,.2);padding:8px 12px;border-radius:8px;}
 /* ── study buddy ── */
 .tc-buddy{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:12px 14px;margin:0 0 12px;}
+/* Combo counts instant recalls, not correct answers — under 3 seconds means the word is
+   actually there, and that is what predicts remembering it tomorrow. */
+.tc-combo{margin-left:auto;font-size:15px;font-weight:700;color:#8fd6a0;font-variant-numeric:tabular-nums;animation:tc-pop .28s cubic-bezier(.3,1.4,.5,1);}
+.tc-combo i{font-style:normal;font-size:11px;opacity:.7;margin-left:1px;}
+.tc-combo.is-warm{color:#ffd76e;}
+.tc-combo.is-hot{color:#ff9a6e;text-shadow:0 0 12px rgba(255,154,110,.55);}
+@keyframes tc-pop{0%{transform:scale(.6);opacity:.3}60%{transform:scale(1.22)}100%{transform:scale(1);opacity:1}}
+.tc-donecombo{margin:6px 0 0;font-size:13px;color:var(--mut-2);}
+.tc-donecombo b{color:#8fd6a0;font-size:15px;}
+@media (prefers-reduced-motion:reduce){.tc-combo{animation:none;}}
 .tc-mascot{flex:none;image-rendering:pixelated;image-rendering:crisp-edges;filter:drop-shadow(0 4px 8px rgba(0,0,0,.35));user-select:none;}
 .tc-buddytext{min-width:0;display:flex;flex-direction:column;gap:7px;}
 .tc-buddyline{margin:0;font-size:14px;line-height:1.45;color:var(--washi,#efeae2);}
