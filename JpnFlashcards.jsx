@@ -3851,6 +3851,64 @@ const CONJ_FILTERS = [["all", "All"], ["ichidan", "① る"], ["godan", "⑤ う
 const INPUT_KEY = "jpn101:input";
 // Same shape as the sync/TTS endpoints so one build runs on either host.
 const FEED_ENDPOINT = "/.netlify/functions/feed";
+
+/* ── the indexed video library ──
+   ~950 individual videos across 35 channels, built by tools/yt-index.mjs and shipped as a
+   separate asset. Each becomes an ordinary catalog entry, so the recommender and the
+   rating engine need no special case: a video is just a source that happens to already be
+   one specific thing. Cached in localStorage keyed on the index's build time, so a
+   refreshed index replaces the old one and an unchanged one costs no network at all.
+
+   Difficulty on these rows is ESTIMATED, not measured — YouTube does not expose subtitle
+   text (see tools/yt-index.mjs). Every row carries its own confidence, which feeds the
+   same damping the rest of the engine uses, so low-confidence guesses move fast once
+   they're rated and high-confidence ones hold their ground. */
+const VIDEOS_URL = "/videos.json";
+const VIDEOS_CACHE = "jpn101:videoIndex";
+let _videoPromise = null;
+function loadVideoIndex() {
+  if (_videoPromise) return _videoPromise;
+  _videoPromise = (async () => {
+    let cached = null;
+    try { cached = JSON.parse(window.localStorage.getItem(VIDEOS_CACHE) || "null"); } catch (e) {}
+    try {
+      const r = await fetch(VIDEOS_URL, { cache: "no-cache" });
+      if (r.ok && (r.headers.get("content-type") || "").includes("json")) {
+        const data = await r.json();
+        if (data && data.videos) {
+          try { window.localStorage.setItem(VIDEOS_CACHE, JSON.stringify(data)); } catch (e) { /* quota */ }
+          return unpackVideos(data);
+        }
+      }
+    } catch (e) { /* offline — the cached copy below is the point */ }
+    return cached ? unpackVideos(cached) : [];
+  })();
+  return _videoPromise;
+}
+function unpackVideos(data) {
+  const chans = data.channels || [];
+  return (data.videos || []).map(([id, title, ci, sec, day, d, conf, cc, views]) => {
+    const c = chans[ci] || ["", "unknown", "adult", ""];
+    return {
+      id: "yt:" + id,
+      title,
+      channel: c[1],
+      channelId: c[0],
+      url: "https://www.youtube.com/watch?v=" + id,
+      medium: "video",
+      source: "youtube",
+      difficulty: d,
+      difficultyConfidence: (conf || 25) / 100,
+      durationSec: sec,
+      publishedAt: day * 86400000,
+      audience: c[2],
+      hasSubsJa: !!cc,
+      views,
+      tags: (c[3] || "").split(" ").filter(Boolean),
+      indexed: true,
+    };
+  });
+}
 // Which sources the Worker can resolve to individual episodes. Kept in step with FEEDS
 // in cf/src/index.js — the ids must match or the source silently falls back to its
 // channel link. tools/check-feeds.mjs fails the build if they drift.
@@ -4027,7 +4085,9 @@ function recommend({ catalog, level, mode, medium, minutes, history, tagScores, 
      work this tab exists to remove. Doing this as a score bonus AFTER banding was not
      enough: banding had already spent the slots, so the bonus only reordered whatever
      survived. Feedless sources still fill in when the level genuinely has nothing else. */
-  const feedFirst = preferred ? pool.filter((it) => preferred.has(it.id)) : pool;
+  // An indexed video always counts as resolvable — it is already one specific thing.
+  const canResolve = (it) => it.indexed || (preferred && preferred.has(it.id));
+  const feedFirst = preferred ? pool.filter(canResolve) : pool;
   let ranked = pick(feedFirst);
   if (ranked.length < 3) {
     const rest = pick(pool.filter((it) => !feedFirst.includes(it)));
@@ -4039,9 +4099,10 @@ function recommend({ catalog, level, mode, medium, minutes, history, tagScores, 
   const score = (it) => (it.tags || []).reduce((n, t) => n + ((tagScores || {})[t] || 0), 0);
   ranked = ranked.slice().sort((a, b) => score(b) - score(a));
 
-  // fit the time available
+  // Fit the time available. Indexed rows carry real durations from the YouTube API, so
+  // this is now an actual constraint rather than a hint.
   if (minutes) {
-    const fits = ranked.filter((it) => !it.durationSec || it.durationSec <= minutes * 60 * 1.2);
+    const fits = ranked.filter((it) => !it.durationSec || it.durationSec <= minutes * 60 * 1.25);
     if (fits.length >= 3) ranked = fits;
   }
   return ranked.slice(0, 3);
@@ -4192,16 +4253,19 @@ function Input({ cards }) {
   const flash = (m) => { setNote(m); setTimeout(() => setNote((v) => (v === m ? "" : v)), 2600); };
 
   const cfg = INPUT_PLANS.find((p) => p.id === plan);
+  const [videos, setVideos] = useState([]);
+  useEffect(() => { loadVideoIndex().then(setVideos); }, []);
+
   // catalog with whatever we've learned about each item layered on top of the seed
   const catalog = useMemo(() => {
     if (!st) return [];
-    return [...INPUT_CATALOG, ...st.custom]
+    return [...INPUT_CATALOG, ...videos, ...st.custom]
       .filter((it) => !st.hidden.includes(it.id))
       .map((it) => {
         const o = st.items[it.id];
         return o ? { ...it, difficulty: o.difficulty, difficultyConfidence: o.confidence } : it;
       });
-  }, [st]);
+  }, [st, videos]);
 
   const level = st ? st.levels[cfg.medium] : 0;
 
@@ -4218,8 +4282,16 @@ function Input({ cards }) {
       catalog, level, mode: cfg.mode, medium: cfg.medium, minutes,
       history: st.history, tagScores: st.tagScores, seed, preferred: FEED_SOURCES,
     });
+    // An indexed video already IS one specific thing — there's nothing to look up, so it
+    // resolves immediately and never shows the "finding an episode…" state.
+    const resolved = (s) => (s.indexed
+      ? { source: s, item: { title: s.title, url: s.url, at: s.publishedAt, sec: s.durationSec } }
+      : { source: s, item: null });
+
     setLoading(true);
-    setPicks(sources.map((s) => ({ source: s, item: null })));
+    setPicks(sources.map(resolved));
+    if (sources.every((s) => s.indexed)) { setLoading(false); return; }
+
     let feeds = {};
     try {
       const ids = sources.map((s) => s.id).filter((id) => FEED_SOURCES.has(id));
@@ -4232,6 +4304,7 @@ function Input({ cards }) {
     } catch (e) { /* offline or feed down — fall through to the source link */ }
     const budget = minutes * 60 * 1.25;      // a little over is fine; double is not
     setPicks(sources.map((s, i) => {
+      if (s.indexed) return resolved(s);
       const list = (feeds[s.id] || []).filter((x) => !seenUrls.has(x.url));
       // Prefer episodes whose real length fits the time asked for. Unknown lengths are
       // allowed through rather than discarded — better an unlabelled 12-minute video than
@@ -4434,7 +4507,9 @@ function Input({ cards }) {
                     <>
                       <p className="tc-inpicktitle">{item.title}</p>
                       <p className="tc-inpickmeta">
-                        {it.title}
+                        {/* for an indexed video the source IS the item, so name the
+                            channel here instead of repeating the title back */}
+                        {it.indexed ? it.channel : it.title}
                         {item.at ? " · " + agoLabel(item.at) : ""}
                         {/* only claim a length when it's this episode's, not the channel's average */}
                         {item.sec ? ` · ${Math.max(1, Math.round(item.sec / 60))} min` : ""}

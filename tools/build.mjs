@@ -87,5 +87,20 @@ const CF_PUBLIC = path.join(ROOT, "cf", "public");
 fs.mkdirSync(CF_PUBLIC, { recursive: true });
 fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
 
+// The video index ships as a separate asset rather than inside the bundle: it's ~140KB of
+// data that changes on a completely different schedule from the code, and keeping it out
+// means the app still starts instantly if it fails to load.
+const VIDEOS = path.join(ROOT, "data", "videos.json");
+let videoCount = 0;
+if (fs.existsSync(VIDEOS)) {
+  const json = fs.readFileSync(VIDEOS, "utf8");
+  try { videoCount = (JSON.parse(json).videos || []).length; } catch (e) {
+    console.error("BUILD ABORTED — data/videos.json is not valid JSON.");
+    process.exit(1);
+  }
+  fs.writeFileSync(path.join(CF_PUBLIC, "videos.json"), json, "utf8");
+}
+
 const kb = (n) => (n / 1024).toFixed(1) + "kb";
-console.log(`ok  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public)`);
+console.log(`ok  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public`
+  + (videoCount ? `, ${videoCount} videos` : ", NO video index") + ")");

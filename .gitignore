@@ -3,3 +3,7 @@ files.zip
 node_modules/
 cf/public/
 .wrangler/
+.env
+.env.local
+tools/.yt-candidates.json
+tools/.yt-raw.json
