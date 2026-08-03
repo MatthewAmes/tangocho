@@ -1214,55 +1214,66 @@ function streakFrom(days) {
 }
 
 /* ── the mascot ──
-   Drawn inline rather than loaded, because the app is one self-contained file with no
-   external requests. A shiba: the expression is the whole point, so the face carries the
-   state and the body stays still.
-   States are earned, not random — it is asleep when you haven't studied today, worried
-   when overdue reviews pile up, delighted on a streak. If it always looked happy it
-   would stop meaning anything. */
+   A nigiri: rice bed, salmon on top, nori belt. Drawn inline as SVG rather than shipped
+   as a GIF — the app is one self-contained file with no external requests, and SVG also
+   scales cleanly on a phone and respects reduced-motion, which a GIF cannot.
+   States are earned rather than decorative: asleep when you haven't studied, worried when
+   reviews pile up, delighted on a streak. A mascot that always looks happy carries no
+   information. Each state has its own idle animation (see .tc-mascot in the CSS). */
 const MASCOT_STATES = {
-  sleeping: { eyes: "sleep", mouth: "small", blush: false, say: "…zzz" },
-  waiting:  { eyes: "open",  mouth: "small", blush: false, say: "" },
-  worried:  { eyes: "worry", mouth: "flat",  blush: false, say: "" },
-  happy:    { eyes: "happy", mouth: "smile", blush: true,  say: "" },
-  proud:    { eyes: "happy", mouth: "open",  blush: true,  say: "" },
+  sleeping: { eyes: "closed", mouth: "tiny",  blush: false, zzz: true },
+  waiting:  { eyes: "open",   mouth: "tiny",  blush: false },
+  worried:  { eyes: "worry",  mouth: "wavy",  blush: false, sweat: true },
+  happy:    { eyes: "arc",    mouth: "smile", blush: true },
+  proud:    { eyes: "arc",    mouth: "open",  blush: true, sparkle: true },
 };
 function mascotState({ studiedToday, dueCount, streak }) {
   if (!studiedToday) return dueCount > 30 ? "worried" : "sleeping";
   if (streak >= 7) return "proud";
   if (dueCount > 40) return "worried";
-  return studiedToday ? "happy" : "waiting";
+  return "happy";
 }
-function Mascot({ state, size = 92 }) {
+function Mascot({ state, size = 96 }) {
   const s = MASCOT_STATES[state] || MASCOT_STATES.waiting;
   const eye = (cx) => {
-    if (s.eyes === "sleep") return <path d={`M${cx - 5} 52 q5 4 10 0`} stroke="#2b2119" strokeWidth="2.4" fill="none" strokeLinecap="round" />;
-    if (s.eyes === "happy") return <path d={`M${cx - 5} 53 q5 -6 10 0`} stroke="#2b2119" strokeWidth="2.4" fill="none" strokeLinecap="round" />;
-    if (s.eyes === "worry") return <><circle cx={cx} cy="53" r="3.1" fill="#2b2119" /><path d={`M${cx - 6} 46 q6 -2 12 1`} stroke="#2b2119" strokeWidth="1.8" fill="none" strokeLinecap="round" /></>;
-    return <circle cx={cx} cy="52" r="3.4" fill="#2b2119" />;
+    if (s.eyes === "closed") return <path d={`M${cx - 5} 63 q5 4 10 0`} stroke="#3a2c22" strokeWidth="2.6" fill="none" strokeLinecap="round" />;
+    if (s.eyes === "arc")    return <path d={`M${cx - 5} 65 q5 -7 10 0`} stroke="#3a2c22" strokeWidth="2.6" fill="none" strokeLinecap="round" />;
+    if (s.eyes === "worry")  return <><path d={`M${cx - 5} 60 l10 7 M${cx + 5} 60 l-10 7`} stroke="#3a2c22" strokeWidth="2.4" strokeLinecap="round" /></>;
+    return <ellipse cx={cx} cy="63" rx="3.2" ry="3.6" fill="#3a2c22" />;
   };
   return (
-    <svg className={"tc-mascot is-" + state} viewBox="0 0 120 110" width={size} height={size * 110 / 120} role="img"
-         aria-label={"Study buddy, looking " + state}>
-      <ellipse cx="60" cy="103" rx="30" ry="5" fill="rgba(0,0,0,.22)" />
-      {/* ears */}
-      <path d="M28 40 L34 12 L52 30 Z" fill="#dd9a54" />
-      <path d="M92 40 L86 12 L68 30 Z" fill="#dd9a54" />
-      <path d="M33 34 L36 20 L46 30 Z" fill="#f6d5b0" />
-      <path d="M87 34 L84 20 L74 30 Z" fill="#f6d5b0" />
-      {/* head */}
-      <ellipse cx="60" cy="58" rx="34" ry="31" fill="#e8ac68" />
-      <ellipse cx="60" cy="66" rx="23" ry="20" fill="#fdf1e0" />
-      <ellipse cx="42" cy="56" rx="10" ry="9" fill="#fdf1e0" />
-      <ellipse cx="78" cy="56" rx="10" ry="9" fill="#fdf1e0" />
-      {eye(46)}{eye(74)}
-      {s.blush && <><ellipse cx="34" cy="66" rx="6" ry="4" fill="#f08c8c" opacity=".55" /><ellipse cx="86" cy="66" rx="6" ry="4" fill="#f08c8c" opacity=".55" /></>}
-      <path d="M56 66 q4 -4 8 0 q-4 4 -8 0" fill="#2b2119" />
-      {s.mouth === "smile" && <path d="M52 74 q8 7 16 0" stroke="#2b2119" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
-      {s.mouth === "open" && <ellipse cx="60" cy="77" rx="7" ry="6" fill="#c9576b" />}
-      {s.mouth === "flat" && <path d="M53 76 q7 -3 14 0" stroke="#2b2119" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
-      {s.mouth === "small" && <path d="M57 75 q3 3 6 0" stroke="#2b2119" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
-      {state === "sleeping" && <text x="94" y="30" fontSize="15" fill="var(--mut-2, #9aa)">z</text>}
+    <svg className={"tc-mascot is-" + state} viewBox="0 0 120 108" width={size} height={size * 108 / 120}
+         role="img" aria-label={"Study buddy, looking " + state}>
+      <ellipse cx="60" cy="99" rx="31" ry="5" fill="rgba(0,0,0,.25)" />
+      <g className="tc-mascot-body">
+        {/* salmon */}
+        <path d="M24 44 q36 -22 72 0 q3 8 -2 12 q-34 -12 -68 0 q-5 -4 -2 -12 Z" fill="#f4805c" />
+        <path d="M30 42 q30 -14 60 0" stroke="#ffd0bd" strokeWidth="3" fill="none" strokeLinecap="round" opacity=".85" />
+        <path d="M34 49 q26 -9 52 0" stroke="#ffd0bd" strokeWidth="2.4" fill="none" strokeLinecap="round" opacity=".6" />
+        {/* rice */}
+        <path d="M24 52 h72 q6 0 6 10 v16 q0 10 -10 10 h-64 q-10 0 -10 -10 v-16 q0 -10 6 -10 Z" fill="#fdfbf5" />
+        <ellipse cx="38" cy="60" rx="4" ry="3" fill="#fff" opacity=".9" />
+        <ellipse cx="79" cy="59" rx="3.4" ry="2.6" fill="#fff" opacity=".9" />
+        {/* nori belt */}
+        <rect x="49" y="52" width="22" height="36" rx="3" fill="#33413a" />
+        <rect x="52" y="52" width="3" height="36" fill="#46564d" opacity=".7" />
+        {/* face, on the rice either side of the belt */}
+        {eye(38)}{eye(84)}
+        {s.blush && <><ellipse cx="31" cy="71" rx="5.5" ry="3.6" fill="#f4909b" opacity=".6" /><ellipse cx="91" cy="71" rx="5.5" ry="3.6" fill="#f4909b" opacity=".6" /></>}
+        {s.mouth === "smile" && <path d="M55 76 q5 5 10 0" stroke="#3a2c22" strokeWidth="2.4" fill="none" strokeLinecap="round" />}
+        {s.mouth === "open"  && <ellipse cx="60" cy="78" rx="5.5" ry="5" fill="#c9576b" />}
+        {s.mouth === "wavy"  && <path d="M53 78 q3.5 -4 7 0 q3.5 4 7 0" stroke="#3a2c22" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
+        {s.mouth === "tiny"  && <path d="M57 77 q3 3 6 0" stroke="#3a2c22" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
+      </g>
+      {s.zzz && <g className="tc-zzz" fill="#9fb0c6">
+        <text x="92" y="34" fontSize="13" fontWeight="700">z</text>
+        <text x="101" y="22" fontSize="10" fontWeight="700" opacity=".7">z</text>
+      </g>}
+      {s.sweat && <ellipse className="tc-sweat" cx="99" cy="52" rx="4" ry="5.5" fill="#7fc7ea" opacity=".9" />}
+      {s.sparkle && <g className="tc-sparkle" fill="#ffd76e">
+        <path d="M16 34 l2.2 5.4 5.4 2.2 -5.4 2.2 -2.2 5.4 -2.2 -5.4 -5.4 -2.2 5.4 -2.2 Z" />
+        <path d="M104 22 l1.6 4 4 1.6 -4 1.6 -1.6 4 -1.6 -4 -4 -1.6 4 -1.6 Z" opacity=".8" />
+      </g>}
     </svg>
   );
 }
@@ -1744,11 +1755,6 @@ function Study({ cards, onResult, goAdd }) {
             </>
           )}
         </div>
-        {smartBatch && (
-          <button className="tc-btn tc-btn-primary tc-start" onClick={() => start(smartBatch.cards)}>
-            Today's section · {smartBatch.name} ({smartBatch.cards.length})
-          </button>
-        )}
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
             🧠 Smart Review · {smartPool.length} cards{dueCount > 0 ? ` · ${dueCount} due` : ""}
@@ -1764,9 +1770,11 @@ function Study({ cards, onResult, goAdd }) {
           </button>
         )}
         {smartPool.length > 0 && (
-          <p className="tc-smarthint">{coverage
-            ? `Learning new words first (${newCount} untouched left), mixed with review.`
-            : `Your weakest, most-missed & overdue — plus a few new${newCount > 0 ? ` (${newCount} left)` : ""}.`}</p>
+          <p className="tc-smarthint">{
+            dueCount >= 15
+              ? `Mostly catch-up while ${dueCount} are due, plus a few new ones.`
+              : `Your weakest and most overdue, plus new words${newCount > 0 ? ` (${newCount} left)` : ""}.`
+          }</p>
         )}
 
         {ranked.length > 0 && (
@@ -5458,7 +5466,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-card2 .tc-eyebrow{color:rgba(255,255,255,.5);}
 
 /* setup */
-.tc-study-setup{background:transparent;border:0;border-radius:0;padding:6px 2px;}
+.tc-study-setup{background:transparent;border:0;border-radius:0;padding:6px 2px;display:flex;flex-direction:column;gap:10px;}
+.tc-study-setup > *{margin-top:0;margin-bottom:0;}
 .tc-hero{text-align:center;margin:6px 0 22px;}
 .tc-heronum{font-size:96px;font-weight:200;letter-spacing:-.03em;line-height:1;color:#fff;font-family:-apple-system,"SF Pro Display",BlinkMacSystemFont,sans-serif;text-shadow:0 0 44px rgba(124,92,255,.4);}
 .tc-herolabel{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--mut-2);margin:8px 0 0;}
@@ -5626,7 +5635,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* focus + insights */
 .tc-focus-btn{margin-top:10px;border-color:var(--shu);color:var(--shu-soft);}
 .tc-focus-btn:hover{background:rgba(216,72,47,.12);}
-.tc-smart-btn{margin-top:12px;background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
+.tc-smart-btn{background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
 .tc-smart-btn:hover{filter:brightness(1.12);}
 .tc-smarthint{margin:8px 0 0;font-size:12px;color:var(--mut-2);line-height:1.5;text-align:center;}
 .tc-kind-prod{background:rgba(216,72,47,.16);border-color:rgba(216,72,47,.4);color:var(--shu-soft);}
@@ -5812,11 +5821,25 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-conjnote{margin:6px 12px 0;font-size:12.5px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.08);border:1px solid rgba(255,190,90,.2);padding:8px 12px;border-radius:8px;}
 /* ── study buddy ── */
 .tc-buddy{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:12px 14px;margin:0 0 12px;}
-.tc-mascot{flex:none;filter:drop-shadow(0 4px 10px rgba(0,0,0,.3));}
-.tc-mascot.is-sleeping{animation:tc-breathe 3.6s ease-in-out infinite;}
-.tc-mascot.is-proud{animation:tc-bounce 2.4s ease-in-out infinite;}
-@keyframes tc-breathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(1.5px) scale(.995)}}
-@keyframes tc-bounce{0%,100%{transform:translateY(0)}45%{transform:translateY(-4px)}}
+.tc-mascot{flex:none;overflow:visible;filter:drop-shadow(0 5px 12px rgba(0,0,0,.32));}
+/* the body animates, not the whole svg, so sparkles and zzz can move independently */
+.tc-mascot .tc-mascot-body{transform-origin:60px 88px;}
+.tc-mascot.is-sleeping .tc-mascot-body{animation:tc-breathe 3.8s ease-in-out infinite;}
+.tc-mascot.is-happy .tc-mascot-body{animation:tc-bob 2.6s ease-in-out infinite;}
+.tc-mascot.is-proud .tc-mascot-body{animation:tc-hop 1.6s cubic-bezier(.3,.7,.4,1) infinite;}
+.tc-mascot.is-worried .tc-mascot-body{animation:tc-fret 2.8s ease-in-out infinite;}
+.tc-zzz{animation:tc-float 3s ease-in-out infinite;}
+.tc-sweat{animation:tc-drip 2.4s ease-in-out infinite;}
+.tc-sparkle{animation:tc-twinkle 1.8s ease-in-out infinite;transform-origin:60px 40px;}
+@keyframes tc-breathe{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.975) translateY(2px)}}
+@keyframes tc-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
+@keyframes tc-hop{0%,55%,100%{transform:translateY(0) scaleY(1)}
+  18%{transform:translateY(-7px) scaleY(1.04)}
+  40%{transform:translateY(0) scaleY(.93)}}
+@keyframes tc-fret{0%,100%{transform:rotate(-1.6deg)}50%{transform:rotate(1.6deg)}}
+@keyframes tc-float{0%,100%{transform:translateY(0);opacity:.85}50%{transform:translateY(-4px);opacity:.35}}
+@keyframes tc-drip{0%,100%{transform:translateY(0);opacity:.9}60%{transform:translateY(5px);opacity:.35}}
+@keyframes tc-twinkle{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
 .tc-buddytext{min-width:0;display:flex;flex-direction:column;gap:7px;}
 .tc-buddyline{margin:0;font-size:14px;line-height:1.45;color:var(--washi,#efeae2);}
 .tc-buddystats{display:flex;flex-wrap:wrap;gap:6px;}
