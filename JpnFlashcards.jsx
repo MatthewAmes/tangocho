@@ -2035,6 +2035,29 @@ function dueness(c, now) {
   const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1);   // pre-FSRS fallback
   return (now - (c.last || 0)) / interval;
 }
+/* ── shared FSRS plumbing for the mini-decks ──
+   Kana, the conjugation drill and the 10k deck each grew their own scheduler: a hand-tuned
+   priority score over level, accuracy, streak and days-since. They work, but there is no
+   reason kana or verb forms should be scheduled worse than vocabulary, and three
+   near-identical scorers is three places to fix anything. These two functions put every
+   deck in the app on the same memory model. The stat records keep their existing shape —
+   an `fsrs` field is simply added alongside. */
+function statReview(st, ok, ms, now = Date.now()) {
+  const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
+  return fsrsReview(prior, gradeFromLatency(ok, ms), now, retentionTarget);
+}
+/** Higher = drill this sooner. Driven by how far recall has decayed below the target. */
+function statNeed(st, now = Date.now()) {
+  const seen = st && st.seen || 0;
+  if (!seen) return 6;                                    // never drilled → straight to the front
+  const f = st.fsrs || seedFromHistory(st);
+  if (!f || !(f.S > 0)) return 5;
+  const r = retrievability(Math.max(0, (now - (f.last || 0)) / 86400000), f.S);
+  // 1 - r is "how much of this memory has decayed". A card at 50% recall outranks one at
+  // 95% no matter how many times each has been seen, which is the whole point.
+  return (1 - r) * 8 + (st.streak ? 0 : 0.6);
+}
+
 /** Probability you'd recall this card right now — used for the UI, not the schedule. */
 function recallChance(c, now) {
   const st = c.fsrs || seedFromHistory(c);
@@ -2530,16 +2553,8 @@ function Kana() {
   // Pick whichever kana needs work MOST (highest score wins). The old version only looked
   // at level + times-seen, so a kana you kept getting wrong was treated the same as one you
   // nailed every time. Now accuracy, a broken streak, and how long it's been all count.
-  const needK = (st, now) => {
-    const seen = st.seen || 0;
-    if (!seen) return 6 + Math.random();                  // never drilled → straight to the front
-    const acc = (st.correct || 0) / seen;
-    let s = (5 - (st.level || 0)) * 1.2;                   // weak mastery
-    s += (1 - acc) * 3;                                    // getting it wrong matters most
-    s += Math.min(2.5, (now - (st.last || 0)) / 86400000);  // overdue, capped so it can't dominate
-    if (!(st.streak || 0)) s += 0.8;                        // missed it last time
-    return s;
-  };
+  // Same memory model as the vocabulary deck — see statNeed.
+  const needK = (st, now) => statNeed(st, now) + (st.seen ? 0 : Math.random());
   // neediest first, with jitter so repeat sessions aren't an identical loop
   const byNeed = useCallback((pool) => {
     const now = Date.now();
@@ -2631,6 +2646,8 @@ function Kana() {
     const ns = { ...s0, seen: s0.seen + 1, correct: s0.correct + (got ? 1 : 0),
       level: got ? Math.min(5, s0.level + 1) : Math.max(0, s0.level - 2),
       streak: got ? (s0.streak || 0) + 1 : 0, last: Date.now(),
+      // same memory model as the vocabulary deck; the old counters stay for the UI
+      fsrs: statReview(s0, got, think, Date.now()),
       ms: (s0.ms || 0) + (think || 0), msN: (s0.msN || 0) + (think ? 1 : 0) };
     const nx = { ...m, [cur.id]: ns };
     statsRef.current = nx; setStats(nx); sSet(KANA_KEY, JSON.stringify(nx));
@@ -3619,6 +3636,12 @@ function Scripts() {
 function Write({ cards, onResult }) {
   const order = useMemo(() => cards.slice().sort((a, b) => masteryScore(a) - masteryScore(b)), [cards]);
   const [pos, setPos] = useState(0);
+  /* Writing was feeding the scheduler without ever timing the answer, so every card here
+     landed as a middling grade no matter how long it took. Production recall is the
+     harder direction and the more valuable signal — it deserves the same fast/slow
+     distinction the flip cards get. Timed from the card appearing to the reveal. */
+  const shownRef = useRef(0);
+  const thinkRef = useRef(null);
   const [guide, setGuide] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const canvasRef = useRef(null);
@@ -3666,7 +3689,11 @@ function Write({ cards, onResult }) {
   };
   const up = () => { drawingRef.current = false; lastRef.current = null; };
 
-  const next = (got) => { if (card) onResult(card.id, got); setRevealed(false); setGuide(false); setPos((p) => p + 1); };
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos]);
+  const next = (got) => {
+    if (card) onResult(card.id, got, undefined, thinkRef.current || undefined);
+    setRevealed(false); setGuide(false); setPos((p) => p + 1);
+  };
 
   if (!order.length) return <div className="tc-empty"><p>Add some words first, then come here to practice writing them by hand.</p></div>;
   if (!card) return (
@@ -3691,7 +3718,10 @@ function Write({ cards, onResult }) {
         <div className="tc-sentbtns tc-writetools">
           <button className="tc-btn tc-btn-sm" onClick={() => setGuide((g) => !g)}>{guide ? "Hide guide" : "Show guide"}</button>
           <button className="tc-btn tc-btn-sm" onClick={setup}>Clear</button>
-          {!revealed && <button className="tc-btn tc-btn-primary" onClick={() => setRevealed(true)}>Reveal</button>}
+          {!revealed && <button className="tc-btn tc-btn-primary" onClick={() => {
+            if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+            setRevealed(true);
+          }}>Reveal</button>}
         </div>
         {revealed && (
           <div className="tc-writereveal">
@@ -4940,15 +4970,7 @@ function ConjDrill() {
   }, [words, forms]);
 
   const getS = (m, id) => m[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
-  const needC = (st, now) => {
-    const seen = st.seen || 0;
-    if (!seen) return 6 + Math.random();
-    const acc = (st.correct || 0) / seen;
-    let s = (5 - (st.level || 0)) * 1.2 + (1 - acc) * 3;
-    s += Math.min(2.5, (now - (st.last || 0)) / 86400000);
-    if (!(st.streak || 0)) s += 0.8;
-    return s;
-  };
+  const needC = (st, now) => statNeed(st, now) + (st.seen ? 0 : Math.random());
 
   const startSession = useCallback((subset) => {
     const now = Date.now();
@@ -4975,6 +4997,7 @@ function ConjDrill() {
     const ns = { ...s0, seen: s0.seen + 1, correct: s0.correct + (ok ? 1 : 0),
       level: ok ? Math.min(5, s0.level + 1) : Math.max(0, s0.level - 2),
       streak: ok ? (s0.streak || 0) + 1 : 0, last: Date.now(),
+      fsrs: statReview(s0, ok, think, Date.now()),
       ms: (s0.ms || 0) + (think || 0), msN: (s0.msN || 0) + (think ? 1 : 0) };
     const nx = { ...m, [cur.id]: ns };
     statsRef.current = nx; setStats(nx); sSet(CONJ_KEY, JSON.stringify(nx));
@@ -5389,6 +5412,7 @@ function Freq() {
       const ease = Math.max(0.55, Math.min(1.8, (x.ease || 1) + (got ? 0.05 : -0.15)));
       return {
         ...x, ease, last: Date.now(),
+        fsrs: statReview(x, got, t, Date.now()),
         streak: got ? (x.streak || 0) + 1 : 0,
         seen: (x.seen || 0) + 1,
         correct: (x.correct || 0) + (got ? 1 : 0),
