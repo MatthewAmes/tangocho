@@ -1197,6 +1197,76 @@ async function logDay({ ok, ms, deck, fnew }) {
   sSet(DAYS_KEY, JSON.stringify(_days));
 }
 
+/* ── streak ──
+   Counts back from today, and from yesterday if today hasn't been studied yet — so the
+   streak doesn't read as broken at 9am before you've started. A day counts if anything
+   was reviewed at all; the point is showing up, not hitting a number. */
+function streakFrom(days) {
+  if (!days) return 0;
+  const key = (d) => new Date(d).toISOString().slice(0, 10);
+  const has = (d) => { const v = days[key(d)]; return !!(v && (v.rev || 0) > 0); };
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  let cursor = new Date(today);
+  if (!has(cursor)) cursor.setDate(cursor.getDate() - 1);   // grace: today isn't over
+  let n = 0;
+  while (has(cursor) && n < 3650) { n++; cursor.setDate(cursor.getDate() - 1); }
+  return n;
+}
+
+/* ── the mascot ──
+   Drawn inline rather than loaded, because the app is one self-contained file with no
+   external requests. A shiba: the expression is the whole point, so the face carries the
+   state and the body stays still.
+   States are earned, not random — it is asleep when you haven't studied today, worried
+   when overdue reviews pile up, delighted on a streak. If it always looked happy it
+   would stop meaning anything. */
+const MASCOT_STATES = {
+  sleeping: { eyes: "sleep", mouth: "small", blush: false, say: "…zzz" },
+  waiting:  { eyes: "open",  mouth: "small", blush: false, say: "" },
+  worried:  { eyes: "worry", mouth: "flat",  blush: false, say: "" },
+  happy:    { eyes: "happy", mouth: "smile", blush: true,  say: "" },
+  proud:    { eyes: "happy", mouth: "open",  blush: true,  say: "" },
+};
+function mascotState({ studiedToday, dueCount, streak }) {
+  if (!studiedToday) return dueCount > 30 ? "worried" : "sleeping";
+  if (streak >= 7) return "proud";
+  if (dueCount > 40) return "worried";
+  return studiedToday ? "happy" : "waiting";
+}
+function Mascot({ state, size = 92 }) {
+  const s = MASCOT_STATES[state] || MASCOT_STATES.waiting;
+  const eye = (cx) => {
+    if (s.eyes === "sleep") return <path d={`M${cx - 5} 52 q5 4 10 0`} stroke="#2b2119" strokeWidth="2.4" fill="none" strokeLinecap="round" />;
+    if (s.eyes === "happy") return <path d={`M${cx - 5} 53 q5 -6 10 0`} stroke="#2b2119" strokeWidth="2.4" fill="none" strokeLinecap="round" />;
+    if (s.eyes === "worry") return <><circle cx={cx} cy="53" r="3.1" fill="#2b2119" /><path d={`M${cx - 6} 46 q6 -2 12 1`} stroke="#2b2119" strokeWidth="1.8" fill="none" strokeLinecap="round" /></>;
+    return <circle cx={cx} cy="52" r="3.4" fill="#2b2119" />;
+  };
+  return (
+    <svg className={"tc-mascot is-" + state} viewBox="0 0 120 110" width={size} height={size * 110 / 120} role="img"
+         aria-label={"Study buddy, looking " + state}>
+      <ellipse cx="60" cy="103" rx="30" ry="5" fill="rgba(0,0,0,.22)" />
+      {/* ears */}
+      <path d="M28 40 L34 12 L52 30 Z" fill="#dd9a54" />
+      <path d="M92 40 L86 12 L68 30 Z" fill="#dd9a54" />
+      <path d="M33 34 L36 20 L46 30 Z" fill="#f6d5b0" />
+      <path d="M87 34 L84 20 L74 30 Z" fill="#f6d5b0" />
+      {/* head */}
+      <ellipse cx="60" cy="58" rx="34" ry="31" fill="#e8ac68" />
+      <ellipse cx="60" cy="66" rx="23" ry="20" fill="#fdf1e0" />
+      <ellipse cx="42" cy="56" rx="10" ry="9" fill="#fdf1e0" />
+      <ellipse cx="78" cy="56" rx="10" ry="9" fill="#fdf1e0" />
+      {eye(46)}{eye(74)}
+      {s.blush && <><ellipse cx="34" cy="66" rx="6" ry="4" fill="#f08c8c" opacity=".55" /><ellipse cx="86" cy="66" rx="6" ry="4" fill="#f08c8c" opacity=".55" /></>}
+      <path d="M56 66 q4 -4 8 0 q-4 4 -8 0" fill="#2b2119" />
+      {s.mouth === "smile" && <path d="M52 74 q8 7 16 0" stroke="#2b2119" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
+      {s.mouth === "open" && <ellipse cx="60" cy="77" rx="7" ry="6" fill="#c9576b" />}
+      {s.mouth === "flat" && <path d="M53 76 q7 -3 14 0" stroke="#2b2119" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
+      {s.mouth === "small" && <path d="M57 75 q3 3 6 0" stroke="#2b2119" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
+      {state === "sleeping" && <text x="94" y="30" fontSize="15" fill="var(--mut-2, #9aa)">z</text>}
+    </svg>
+  );
+}
+
 function detectKind(term) {
   if (/[\u4E00-\u9FFF]/.test(term)) return "kanji";
   if (/[\u30A0-\u30FF]/.test(term)) return "katakana";
@@ -1469,17 +1539,34 @@ function Study({ cards, onResult, goAdd }) {
   const focusPool = useMemo(() => ranked.slice(0, 12), [ranked]);  // weakest STUDIED words only — matches the Weakest list
   const newCount = useMemo(() => cards.filter((c) => !((c.seen || 0) > 0)).length, [cards]);
   const coverage = newCount > 12;                            // coverage phase: plenty of untouched words left
+  /* Session mix.
+     The old rule was `newCount > 12` → half the session is brand-new words. With 332
+     untouched cards that condition is permanently true, so every session was 8 new words
+     against 8 reviews no matter how much overdue work had piled up. Accuracy fell from
+     98% to 36% over two weeks while effort went up, because most of what came round was
+     material never seen before.
+     New words are never capped to zero — there are class deadlines — but review debt now
+     earns slots: the more overdue cards there are, the fewer new words share the session.
+     Leeches are excluded here entirely and get their own mode; drilling a word sitting at
+     0% after eight tries inside a normal session just taxes the whole session. */
   const smartPool = useMemo(() => {
     const now = Date.now();
-    const studied = cards.filter((c) => (c.seen || 0) > 0)
-      .map((c) => ({ c, s: needScore(c, now) }))
-      .sort((a, b) => b.s - a.s)
-      .map((x) => x.c);
+    const SESSION = 16;
+    const studied = cards.filter((c) => (c.seen || 0) > 0 && !isLeech(c));
+    const due = studied.filter((c) => dueness(c, now) >= 1)
+      .sort((a, b) => dueness(b, now) - dueness(a, now));          // most overdue first
+    const rest = studied.filter((c) => dueness(c, now) < 1)
+      .map((c) => ({ c, s: needScore(c, now) })).sort((a, b) => b.s - a.s).map((x) => x.c);
     const fresh = cards.filter((c) => !((c.seen || 0) > 0))
-      .sort((a, b) => (a.lesson || 0) - (b.lesson || 0));   // earliest untouched lessons first
-    if (coverage) return [...fresh.slice(0, 8), ...studied.slice(0, 8)];   // learn new first, then review
-    return [...studied.slice(0, 12), ...fresh.slice(0, Math.min(4, fresh.length))];
-  }, [cards, coverage]);
+      .sort((a, b) => (a.lesson || 0) - (b.lesson || 0));           // earliest untouched lessons first
+
+    const newSlots = Math.min(fresh.length, due.length >= 40 ? 3 : due.length >= 15 ? 5 : 8);
+    const reviewSlots = SESSION - newSlots;
+    const review = [...due, ...rest].slice(0, reviewSlots);
+    return [...review, ...fresh.slice(0, newSlots)];
+  }, [cards]);
+  const leeches = useMemo(() => cards.filter(isLeech), [cards]);
+
   const dueCount = useMemo(() => {
     const now = Date.now();
     return cards.filter((c) => (c.seen || 0) > 0 && dueness(c, now) >= 1).length;
@@ -1489,6 +1576,25 @@ function Study({ cards, onResult, goAdd }) {
     return Math.round(cards.filter((c) => (c.level || 0) >= 4).length / cards.length * 100);
   }, [cards]);
 
+  /* ── buddy state ── */
+  const [days, setDays] = useState(null);
+  useEffect(() => { loadDays().then((d) => setDays({ ...d })); }, [running]);
+  const streak = useMemo(() => streakFrom(days), [days]);
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
+  const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
+  const buddy = useMemo(() => {
+    const state = mascotState({ studiedToday: todayRev > 0, dueCount, streak });
+    // One honest sentence, matched to the state. No fake enthusiasm when the numbers
+    // don't support it — the whole reason the old "57% never missed" felt hollow.
+    const line =
+      state === "sleeping" ? (streak > 0 ? `${streak}-day streak — keep it alive?` : "Ready when you are.")
+      : state === "worried" ? `${dueCount} reviews have piled up. Little and often beats a big catch-up.`
+      : state === "proud" ? `${streak} days straight. This is the part that actually works.`
+      : knownCount > 0 ? `${knownCount} words are properly solid now.`
+      : "Nice — that's a start.";
+    return { state, line };
+  }, [todayRev, dueCount, streak, knownCount]);
   const batches = useMemo(() => {
     const map = new Map();
     cards.forEach((c) => { const sec = sectionOf(c); if (!map.has(sec)) map.set(sec, []); map.get(sec).push(c); });
@@ -1601,6 +1707,22 @@ function Study({ cards, onResult, goAdd }) {
   if (!running) {
     return (
       <div className="tc-study-setup">
+        <div className="tc-buddy">
+          <Mascot state={buddy.state} />
+          <div className="tc-buddytext">
+            <p className="tc-buddyline">{buddy.line}</p>
+            <div className="tc-buddystats">
+              <span className={"tc-stat" + (streak > 0 ? " is-on" : "")}>
+                <b>{streak}</b> day{streak === 1 ? "" : "s"} in a row
+              </span>
+              {/* Deliberately counts only level 4+. "Never missed" was flattering and
+                  meaningless — most of those had been seen once. This number is small and
+                  moves slowly, which is the point: it can be trusted. */}
+              <span className="tc-stat"><b>{knownCount}</b> words solid</span>
+              {todayRev > 0 && <span className="tc-stat"><b>{todayRev}</b> today</span>}
+            </div>
+          </div>
+        </div>
         <div className="tc-hero">
           {dueCount > 0 ? (
             <>
@@ -1630,6 +1752,15 @@ function Study({ cards, onResult, goAdd }) {
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
             🧠 Smart Review · {smartPool.length} cards{dueCount > 0 ? ` · ${dueCount} due` : ""}
+          </button>
+        )}
+        {/* Stuck words get their own session instead of being sprinkled through every
+            other one. 歩いて sitting at 0% after eight attempts doesn't need more of the
+            same drill — it needs to be looked at deliberately, and it shouldn't be taxing
+            sessions that are otherwise going fine. */}
+        {leeches.length > 0 && (
+          <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12))}>
+            🩹 Trouble words · {leeches.length} stuck
           </button>
         )}
         {smartPool.length > 0 && (
@@ -5679,6 +5810,23 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-conjhow{font-size:15px;color:var(--shu-soft,#ff8a7a);font-variant-numeric:tabular-nums;}
 .tc-conjrule{font-size:12.5px;color:var(--mut-2);}
 .tc-conjnote{margin:6px 12px 0;font-size:12.5px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.08);border:1px solid rgba(255,190,90,.2);padding:8px 12px;border-radius:8px;}
+/* ── study buddy ── */
+.tc-buddy{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:12px 14px;margin:0 0 12px;}
+.tc-mascot{flex:none;filter:drop-shadow(0 4px 10px rgba(0,0,0,.3));}
+.tc-mascot.is-sleeping{animation:tc-breathe 3.6s ease-in-out infinite;}
+.tc-mascot.is-proud{animation:tc-bounce 2.4s ease-in-out infinite;}
+@keyframes tc-breathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(1.5px) scale(.995)}}
+@keyframes tc-bounce{0%,100%{transform:translateY(0)}45%{transform:translateY(-4px)}}
+.tc-buddytext{min-width:0;display:flex;flex-direction:column;gap:7px;}
+.tc-buddyline{margin:0;font-size:14px;line-height:1.45;color:var(--washi,#efeae2);}
+.tc-buddystats{display:flex;flex-wrap:wrap;gap:6px;}
+.tc-stat{font-size:11.5px;color:var(--mut-2);background:rgba(255,255,255,.06);border-radius:999px;padding:3px 9px;white-space:nowrap;}
+.tc-stat b{color:#fff;font-weight:600;font-size:12.5px;}
+.tc-stat.is-on{background:rgba(255,140,90,.16);color:#ffcbb0;}
+.tc-stat.is-on b{color:#ffb08a;}
+.tc-troublebtn{background:rgba(255,190,90,.1);border:1px solid rgba(255,190,90,.28);color:#ffd9a0;}
+@media (prefers-reduced-motion:reduce){.tc-mascot{animation:none !important;}}
+
 /* ── 入力 / input ── */
 .tc-input{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
 .tc-inlevels{display:flex;gap:10px;}
