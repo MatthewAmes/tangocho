@@ -7,6 +7,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    ────────────────────────────────────────────────────────────────────────── */
 
 import { MASCOT_GIFS } from "./data/mascot.js";
+import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -1184,6 +1185,22 @@ async function pullAndMergeCloud() {
 const KIND_LABEL = { kanji: "漢字", hiragana: "ひらがな", katakana: "カタカナ", mixed: "混" };
 
 /* ── daily study log: reviews, hits, think-time, new-word intake, per day ── */
+/* Desired retention — the single knob FSRS exposes, and the only one worth exposing.
+   0.90 means "schedule each card for the day it has a 90% chance of being recalled".
+   Lower it and you review less but forget more; raise it and you review far more for a
+   little extra recall. 0.90 is the researched default and where the review-count curve
+   starts climbing steeply. */
+const RETENTION_KEY = "jpn101:retention";
+let retentionTarget = 0.9;
+try {
+  const r = Number(window.localStorage.getItem(RETENTION_KEY));
+  if (r >= 0.7 && r <= 0.97) retentionTarget = r;
+} catch (e) {}
+function setRetention(r) {
+  retentionTarget = Math.min(0.97, Math.max(0.7, r));
+  try { window.localStorage.setItem(RETENTION_KEY, String(retentionTarget)); } catch (e) {}
+}
+
 const DAYS_KEY = "jpn101:days";
 let _days = null;
 async function loadDays() {
@@ -1364,6 +1381,14 @@ export default function JpnFlashcards() {
   const restoreDeck = useCallback(async (deck) => { persist(deck); }, [persist]);
 
 
+  const setMnemonic = useCallback((id, text) => {
+    setCards((prev) => {
+      const next = prev.map((c) => (c.id === id ? { ...c, mn: text.slice(0, 120) } : c));
+      sSet(STORE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const recordResult = useCallback((id, got, dir, ms) => {
     const t = ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0;  // sanity bounds: ignore misfires & walked-away cards
     logDay({ ok: got, ms: t, deck: "class" });
@@ -1380,8 +1405,15 @@ export default function JpnFlashcards() {
         const fast = got && t > 0 && t < 3000;
         const crawl = got && t >= 10000;
         const delta = got ? (fast ? 0.08 : crawl ? 0 : 0.05) : firstProdTry ? 0 : -0.15;
+        /* FSRS runs alongside the old counters rather than replacing them: seen/correct/
+           level still drive the existing UI, and keeping them means nothing already
+           recorded is lost if this needs rolling back. The schedule, though, now comes
+           from the memory model. */
+        const grade = gradeFromLatency(got, t);
+        const prior = c.fsrs || seedFromHistory(c);
+        const fsrs = fsrsReview(prior, grade, Date.now(), retentionTarget);
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
-        const base = { ...c, ease, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
+        const base = { ...c, ease, fsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
         if (dir === "prod") {                       // EN→JP recall (production)
           return {
             ...base,
@@ -1434,7 +1466,7 @@ export default function JpnFlashcards() {
         {!ready ? (
           <div className="tc-empty">Loading your deck…</div>
         ) : tab === "study" ? (
-          <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} />
+          <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
         ) : tab === "freq" ? (
           <Freq />
         ) : tab === "drill" ? (
@@ -1456,7 +1488,7 @@ export default function JpnFlashcards() {
 }
 
 /* ───────────────────────────── STUDY ───────────────────────────── */
-function Study({ cards, onResult, goAdd }) {
+function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [showRomaji, setShowRomaji] = useState(false); // front rōmaji on/off
   const [showPitch, setShowPitch] = useState(true);    // back pitch ⸢ ⸣ marks on/off
   const [queue, setQueue] = useState([]);              // working order; missed cards get re-inserted
@@ -1563,6 +1595,24 @@ function Study({ cards, onResult, goAdd }) {
   const todayKey = new Date().toISOString().slice(0, 10);
   const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
   const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
+  const [retention, setRetentionState] = useState(retentionTarget);
+  /* What the memory model actually predicts. Shown because a scheduler you can't inspect
+     is a scheduler you don't trust — and because "34 words are fading" is a far better
+     reason to open the app than "you have 392 due". */
+  const forecast = useMemo(() => {
+    const now = Date.now();
+    let fading = 0, solid = 0, week = 0;
+    for (const c of cards) {
+      if (!((c.seen || 0) > 0)) continue;
+      const r = recallChance(c, now);
+      if (r == null) continue;
+      if (r < 0.9) fading++;
+      if (r >= 0.9) solid++;
+      const st = c.fsrs || seedFromHistory(c);
+      if (st && st.due && st.due - now < 7 * 86400000) week++;
+    }
+    return { fading, solid, week };
+  }, [cards]);
   const buddy = useMemo(() => {
     const state = mascotState({ studiedToday: todayRev > 0, dueCount, streak });
     // One honest sentence, matched to the state. No fake enthusiasm when the numbers
@@ -1714,6 +1764,7 @@ function Study({ cards, onResult, goAdd }) {
                   moves slowly, which is the point: it can be trusted. */}
               <span className="tc-stat"><b>{knownCount}</b> words solid</span>
               {todayRev > 0 && <span className="tc-stat"><b>{todayRev}</b> today</span>}
+              {forecast.fading > 0 && <span className="tc-stat"><b>{forecast.fading}</b> fading</span>}
             </div>
           </div>
         </div>
@@ -1760,6 +1811,22 @@ function Study({ cards, onResult, goAdd }) {
           }</p>
         )}
 
+        {ranked.length > 0 && (
+          <div className="tc-retention">
+            <span className="tc-retlabel">Aim to remember</span>
+            <div className="tc-kanaseg">
+              {[[0.85, "85%"], [0.9, "90%"], [0.95, "95%"]].map(([v, label]) => (
+                <button key={v} className={"tc-fchip" + (Math.abs(retention - v) < 0.001 ? " is-on" : "")}
+                  onClick={() => { setRetention(v); setRetentionState(v); }}>{label}</button>
+              ))}
+            </div>
+            <p className="tc-smarthint">
+              {retention <= 0.85 ? "Fewer reviews, more forgetting. Good when you're buried."
+                : retention >= 0.95 ? "Many more reviews for a little more recall. Use before an exam."
+                : "The researched default — reviews land just as a word starts to slip."}
+            </p>
+          </div>
+        )}
         {ranked.length > 0 && (
           <div className="tc-insights">
             <div className="tc-masterystrip">
@@ -1881,7 +1948,19 @@ function Study({ cards, onResult, goAdd }) {
             <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
             <div className="tc-romaji">{showPitch && card.pitch ? card.pitch : card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
             {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen || 0}× · {card.seen ? Math.round(((card.correct || 0) / card.seen) * 100) : 0}%</span>}
-            {isLeech(card) && <span className="tc-leechtag">🩹 stuck word — try writing it</span>}
+            {isLeech(card) && (
+              /* The keyword mnemonic: link the Japanese sound to an English word you
+                 already know, plus a vivid image. Pairing it with retrieval practice
+                 beats either alone for foreign-language vocabulary, and it is the one
+                 technique aimed squarely at words that repetition alone has failed to
+                 shift — which is what a leech is. Typed once, shown on every review. */
+              <div className="tc-mnbox" onClick={(e) => e.stopPropagation()}>
+                <span className="tc-leechtag">🩹 stuck — give it a hook</span>
+                <input className="tc-mnin" value={card.mn || ""} placeholder="sounds like… / picture…"
+                  onChange={(e) => onMnemonic(card.id, e.target.value)} />
+              </div>
+            )}
+            {!isLeech(card) && card.mn ? <p className="tc-mnshow">🔗 {card.mn}</p> : null}
             {hook && hook.term === card.term ? (
               <p className="tc-hooktext" onClick={(e) => e.stopPropagation()}>
                 {hook.busy ? "✨ thinking…" : hook.err ? "Couldn't reach the AI — try again later." : "✨ " + hook.text}
@@ -1942,11 +2021,25 @@ function isLeech(c) {                 // stuck word: keeps failing despite reps
   const acc = ((c.correct || 0) + (c.rcorrect || 0)) / t;
   return totalMisses(c) >= 6 && acc < 0.6;
 }
-function dueness(c, now) {            // >= 1 means due / overdue for review
+/* >= 1 means due. Under FSRS this is "has recall probability fallen to the target yet",
+   which is a real question about your memory rather than a position on a fixed ladder. */
+function dueness(c, now) {
   const seen = c.seen || 0;
   if (seen === 0) return 0;
-  const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1); // per-card adaptive interval
+  const st = c.fsrs || seedFromHistory(c);
+  if (st && st.S > 0) {
+    const elapsed = (now - (st.last || 0)) / 86400000;
+    const target = intervalFor(st.S, 0.9);
+    return target > 0 ? elapsed / target : 0;
+  }
+  const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1);   // pre-FSRS fallback
   return (now - (c.last || 0)) / interval;
+}
+/** Probability you'd recall this card right now — used for the UI, not the schedule. */
+function recallChance(c, now) {
+  const st = c.fsrs || seedFromHistory(c);
+  if (!st || !(st.S > 0)) return null;
+  return retrievability(Math.max(0, (now - (st.last || 0)) / 86400000), st.S);
 }
 function needScore(c, now) {          // higher = needs review more (seen cards only)
   const seen = c.seen || 0;
@@ -5633,6 +5726,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-smart-btn:hover{filter:brightness(1.12);}
 .tc-smarthint{margin:8px 0 0;font-size:12px;color:var(--mut-2);line-height:1.5;text-align:center;}
 .tc-kind-prod{background:rgba(216,72,47,.16);border-color:rgba(216,72,47,.4);color:var(--shu-soft);}
+.tc-retention{display:flex;flex-direction:column;gap:7px;align-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 12px;}
+.tc-retlabel{font-size:12px;color:var(--mut-2);letter-spacing:.04em;text-transform:uppercase;}
+.tc-retention .tc-smarthint{margin:0;}
+.tc-mnbox{margin-top:10px;display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;}
+.tc-mnin{width:min(100%,300px);box-sizing:border-box;background:rgba(255,255,255,.9);border:1.5px solid rgba(230,162,60,.5);border-radius:9px;padding:8px 11px;font:inherit;font-size:14px;color:var(--sumi);}
+.tc-mnshow{margin:8px 0 0;font-size:13px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.1);border-radius:8px;padding:6px 11px;max-width:300px;}
 .tc-leechtag{margin-top:10px;font-size:12px;color:#e6a23c;background:rgba(230,162,60,.12);border:1px solid rgba(230,162,60,.35);padding:3px 10px;border-radius:99px;}
 .tc-leechpill{font-size:11px;font-weight:600;color:#e6a23c;background:rgba(230,162,60,.13);border:1px solid rgba(230,162,60,.35);padding:2px 8px;border-radius:99px;}
 .tc-coachcard{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:14px 16px;margin-bottom:10px;}
