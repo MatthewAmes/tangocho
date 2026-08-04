@@ -5338,8 +5338,18 @@ function Kanji({ cards }) {
     logDay({ ok, ms: think || 0, deck: "kanji" });
     if (ok) {
       if (!missRef.current[cur.c]) setFirstTry((p) => { const n = new Set(p); n.add(cur.c); return n; });
-      setPassed((p) => { const n = new Set(p); n.add(cur.c); return n; });
-      setQueue((q) => q.filter((x, i) => i <= pos || x.c !== cur.c));
+      if (mode === "learn") {
+        /* Introduce, then TEST, inside the same session. A fresh deck is entirely level 0,
+           so every card was a "learn" card and the multiple-choice and tile exercises never
+           appeared at all on a first run — they only unlocked the next time round. That is
+           why the tab looked like it had no exercises in it. Grading a learn card puts the
+           character at level 1, so putting it straight back in the queue brings it round
+           again as a real question. */
+        setQueue((q) => { const x = q.slice(); x.splice(Math.min(pos + 3, x.length), 0, cur); return x; });
+      } else {
+        setPassed((p) => { const n = new Set(p); n.add(cur.c); return n; });
+        setQueue((q) => q.filter((x, i) => i <= pos || x.c !== cur.c));
+      }
     } else {
       missRef.current[cur.c] = (missRef.current[cur.c] || 0) + 1;
       if (missRef.current[cur.c] <= 2) {
@@ -5429,7 +5439,7 @@ function Kanji({ cards }) {
           <div className="tc-rehnav">
             {!flipped
               ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
-              : <button className="tc-btn tc-btn-primary" onClick={() => grade(true)}>Got it \u2014 next</button>}
+              : <button className="tc-btn tc-btn-primary" onClick={() => grade(true)}>Got it — next</button>}
           </div>
         )}
       </div>
