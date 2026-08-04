@@ -5202,6 +5202,48 @@ function kanjiDistractors(all, target, n, field) {
 /* Which exercise a character gets, by how well it is already known. Recognition before
    production, the same order the vocabulary deck uses: a character you cannot yet pick out
    of four is not ready to be produced from its meaning alone. */
+/* A lesson, not a pile of cards.
+   The previous version asked each character exactly one question and moved on, so a
+   session was: show three, quiz three, repeat. Duolingo's lessons work because every item
+   is hit several times from different angles inside one sitting — recognise it, hear it,
+   pick it out of a line-up, produce it — and because a fast matching round breaks up the
+   rhythm before attention drifts.
+
+   Each new character gets four touches; a character already known gets two. A matching
+   round of five drops in every eight or so questions, drawn from what the session has
+   already covered, so it is revision rather than a cold quiz. */
+const KANJI_TOUCHES_NEW = ["learn", "meaning", "audio", "reading"];
+const KANJI_TOUCHES_KNOWN = ["reading", "build"];
+
+function buildLesson(pool, statsOf) {
+  const items = [];
+  for (const k of pool) {
+    const st = statsOf(k.c);
+    const seq = (st.seen || 0) === 0 ? KANJI_TOUCHES_NEW
+      : (st.level || 0) <= 2 ? ["meaning", "audio", "build"]
+      : KANJI_TOUCHES_KNOWN;
+    seq.forEach((mode, i) => items.push({ k, mode, wave: i }));
+  }
+  // Interleave by wave: every character's first touch, then every second touch, and so on.
+  // Blocking a character's four questions together would let you answer from short-term
+  // memory, which is the opposite of what spacing inside a session is for.
+  items.sort((a, b) => a.wave - b.wave || Math.random() - 0.5);
+
+  // slot in matching rounds over characters already introduced
+  const out = [];
+  let sinceMatch = 0;
+  for (const it of items) {
+    out.push(it);
+    sinceMatch++;
+    const seenSoFar = [...new Set(out.filter((x) => x.wave >= 1).map((x) => x.k))];
+    if (sinceMatch >= 8 && seenSoFar.length >= 5) {
+      out.push({ mode: "match", pool: seenSoFar.slice(-5) });
+      sinceMatch = 0;
+    }
+  }
+  return out;
+}
+
 function kanjiExercise(st) {
   const lvl = st.level || 0;
   if ((st.seen || 0) === 0) return "learn";           // first meeting: show everything
@@ -5239,157 +5281,258 @@ function Kanji({ cards }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
-  const [view, setView] = useState("home");      // home | session | summary
-  const [queue, setQueue] = useState([]);
+  const [view, setView] = useState("home");     // home | session | summary
+  const [queue, setQueue] = useState([]);       // array of steps
   const [pos, setPos] = useState(0);
+  const [choices, setChoices] = useState([]);
+  const [picked, setPicked] = useState(null);
   const [flipped, setFlipped] = useState(false);
-  const [poolSize, setPoolSize] = useState(0);
-  const [passed, setPassed] = useState(() => new Set());
-  const [firstTry, setFirstTry] = useState(() => new Set());
+  const [pairs, setPairs] = useState({ left: null, done: {} });
+  const [right, setRight] = useState([]);
+  const [hits, setHits] = useState(0);
+  const [total, setTotal] = useState(0);
   const missRef = useRef({});
   const shownRef = useRef(0);
   const thinkRef = useRef(null);
-  const [choices, setChoices] = useState([]);      // options for the current question
-  const [picked, setPicked] = useState(null);      // what was tapped; null until answered
-  const [mode, setMode] = useState("learn");
 
   useEffect(() => { loadKanji().then(setData); }, []);
   useEffect(() => { (async () => {
-    try { const r = await sGet(KANJI_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
+    try { const r = await sGet(KANJI_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (err) {}
   })(); }, []);
-  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
 
+  const getS = useCallback(
+    (c) => statsRef.current[c] || { seen: 0, correct: 0, level: 0, streak: 0 }, []);
   const deckMap = useMemo(() => deckKanjiIndex(cards), [cards]);
+
   const all = useMemo(() => {
     const list = data ? data.kanji : [];
     if (!deckMap.size) return list;
     const rank = (k, i) => {
-      const e = deckMap.get(k.c);
-      if (!e) return 2_000_000 + i;                       // not in the deck at all
-      return (e.studied ? 0 : 1_000_000) + i - Math.min(e.n, 40) * 40;
+      const d = deckMap.get(k.c);
+      if (!d) return 2000000 + i;
+      return (d.studied ? 0 : 1000000) + i - Math.min(d.n, 40) * 40;
     };
     return list.map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k);
   }, [data, deckMap]);
-  const getS = (id) => statsRef.current[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
-  const isMastered = (st) => (st.level || 0) >= 4;
-  const masteredCount = useMemo(() => all.filter((k) => isMastered(stats[k.c] || {})).length, [all, stats]);
-  const startedCount = useMemo(() => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0).length, [all, stats]);
 
-  /* Unlock in frequency order, a batch at a time. The frontier only advances as characters
-     become solid, so the live set can never outrun what is actually being retained — which
-     is the failure mode the vocabulary deck already demonstrated. */
+  const mastered = useMemo(() => all.filter((k) => ((stats[k.c] || {}).level || 0) >= 4).length, [all, stats]);
+  const started = useMemo(() => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0).length, [all, stats]);
   const unlocked = useMemo(() => {
-    const solid = all.filter((k) => isMastered(stats[k.c] || {})).length;
-    const frontier = Math.min(all.length, KANJI_BATCH * (Math.floor(solid / KANJI_BATCH) + 2));
+    const frontier = Math.min(all.length, KANJI_BATCH * (Math.floor(mastered / KANJI_BATCH) + 2));
     return all.slice(0, frontier);
-  }, [all, stats]);
+  }, [all, mastered]);
 
-  const startSession = useCallback((subset) => {
+  /* Speak the character. A kanji alone has no single pronunciation, so this says a word
+     from the deck that contains it when there is one — 学生 rather than a bare reading. */
+  const speak = useCallback((k) => {
+    if (!k) return;
+    const w = (deckMap.get(k.c) || {}).words;
+    const say = w && w.length ? (w[0].reading || w[0].term) : (k.kun[0] || k.on[0] || k.c);
+    try { speakJa(String(say).replace(/[-.]/g, ""), 0.95); } catch (err) {}
+  }, [deckMap]);
+
+  const startSession = useCallback(() => {
+    if (!unlocked.length) return;
     const now = Date.now();
-    const pool0 = subset && subset.length ? subset : unlocked;
-    if (!pool0.length) return;
-    const ordered = pool0
+    const chosen = unlocked
       .map((k) => ({ k, s: statNeed(getS(k.c), now) + Math.random() * 0.4 }))
-      .sort((a, b) => b.s - a.s)
-      .map((o) => o.k)
-      .slice(0, 15);
-    setQueue(ordered); setPos(0); setPoolSize(ordered.length);
-    setPassed(new Set()); setFirstTry(new Set());
-    missRef.current = {}; setFlipped(false); setView("session");
-  }, [unlocked]);
+      .sort((a, b) => b.s - a.s).map((x) => x.k).slice(0, 6);
+    const lesson = buildLesson(chosen, getS);
+    setQueue(lesson); setPos(0); setHits(0); setTotal(0);
+    missRef.current = {}; setView("session");
+  }, [unlocked, getS]);
 
-  const cur = queue[pos] || null;
-  const done = view === "session" && queue.length > 0 && pos >= queue.length;
-  useEffect(() => { if (done) setView("summary"); }, [done]);
+  const step = queue[pos] || null;
+  const cur = step && step.k ? step.k : null;
 
-  // new card -> choose its exercise and lay out the options
+  // lay out whatever the current step needs
   useEffect(() => {
-    if (!cur || view !== "session") return;
-    const m = kanjiExercise(getS(cur.c));
-    setMode(m); setPicked(null); setFlipped(false);
-    if (m === "learn") { setChoices([]); return; }
-    const wrong = kanjiDistractors(all, cur, 3, m === "reading" ? "reading" : "meaning");
-    setChoices([cur, ...wrong].sort(() => Math.random() - 0.5));
-  }, [pos, view, cur && cur.c]);   // eslint-disable-line react-hooks/exhaustive-deps
+    if (view !== "session" || !step) return;
+    shownRef.current = Date.now(); thinkRef.current = null;
+    setPicked(null); setFlipped(false); setPairs({ left: null, done: {} });
+    if (step.mode === "match") {
+      setChoices([]);
+      setRight(step.pool.slice().sort(() => Math.random() - 0.5));
+      return;
+    }
+    setRight([]);
+    if (step.mode === "learn") { setChoices([]); speak(step.k); return; }
+    if (step.mode === "audio") speak(step.k);
+    const field = step.mode === "reading" ? "reading" : "meaning";
+    const wrong = kanjiDistractors(all, step.k, 3, field);
+    setChoices([step.k, ...wrong].sort(() => Math.random() - 0.5));
+  }, [pos, view]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const answer = (k) => {
-    if (picked) return;                              // one shot per question
-    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
-    setPicked(k);
-    // A wrong answer holds on screen long enough to actually read the correct one; a right
-    // answer moves on quickly, because dwelling on success is wasted session time.
-    const right = k.c === cur.c;
-    setTimeout(() => grade(right), right ? 550 : 1600);
-  };
+  useEffect(() => {
+    if (view === "session" && queue.length && pos >= queue.length) setView("summary");
+  }, [pos, queue.length, view]);
 
-  const grade = (ok) => {
-    if (!cur) return;
-    const think = thinkRef.current;
-    const st = getS(cur.c);
+  const save = (k, ok, ms) => {
+    const st = getS(k.c);
     const ns = {
       ...st, seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
       level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
       streak: ok ? (st.streak || 0) + 1 : 0, last: Date.now(),
-      fsrs: statReview(st, ok, think, Date.now()),
-      ms: (st.ms || 0) + (think || 0), msN: (st.msN || 0) + (think ? 1 : 0),
+      fsrs: statReview(st, ok, ms, Date.now()),
+      ms: (st.ms || 0) + (ms || 0), msN: (st.msN || 0) + (ms ? 1 : 0),
     };
-    const nx = { ...statsRef.current, [cur.c]: ns };
+    const nx = { ...statsRef.current, [k.c]: ns };
     statsRef.current = nx; setStats(nx); sSet(KANJI_KEY, JSON.stringify(nx));
-    logDay({ ok, ms: think || 0, deck: "kanji" });
-    if (ok) {
-      if (!missRef.current[cur.c]) setFirstTry((p) => { const n = new Set(p); n.add(cur.c); return n; });
-      if (mode === "learn") {
-        /* Introduce, then TEST, inside the same session. A fresh deck is entirely level 0,
-           so every card was a "learn" card and the multiple-choice and tile exercises never
-           appeared at all on a first run — they only unlocked the next time round. That is
-           why the tab looked like it had no exercises in it. Grading a learn card puts the
-           character at level 1, so putting it straight back in the queue brings it round
-           again as a real question. */
-        setQueue((q) => { const x = q.slice(); x.splice(Math.min(pos + 3, x.length), 0, cur); return x; });
-      } else {
-        setPassed((p) => { const n = new Set(p); n.add(cur.c); return n; });
-        setQueue((q) => q.filter((x, i) => i <= pos || x.c !== cur.c));
-      }
-    } else {
-      missRef.current[cur.c] = (missRef.current[cur.c] || 0) + 1;
-      if (missRef.current[cur.c] <= 2) {
-        setQueue((q) => { const n = q.slice(); n.splice(Math.min(pos + 3, n.length), 0, cur); return n; });
-      }
+    logDay({ ok, ms: ms || 0, deck: "kanji" });
+  };
+
+  const advance = () => setPos((x) => x + 1);
+
+  const answer = (k) => {
+    if (picked || !cur) return;
+    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+    setPicked(k);
+    const ok = k.c === cur.c;
+    save(cur, ok, thinkRef.current);
+    setTotal((t) => t + 1);
+    if (ok) setHits((h) => h + 1);
+    else {
+      /* A missed character comes back later in the same lesson as the same kind of
+         question. Requeued as a proper step — inserting a bare kanji here is what broke
+         the previous version's queue. */
+      const m = (missRef.current[cur.c] || 0) + 1;
+      missRef.current[cur.c] = m;
+      if (m <= 2) setQueue((q) => {
+        const n = q.slice();
+        n.splice(Math.min(pos + 4, n.length), 0, { k: cur, mode: step.mode, wave: 9 });
+        return n;
+      });
     }
-    setFlipped(false); setPos((p) => p + 1);
+    setTimeout(advance, ok ? 550 : 1700);
+  };
+
+  const learnDone = () => {
+    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+    save(cur, true, thinkRef.current);
+    advance();
+  };
+
+  const tapPair = (k, side) => {
+    if (pairs.done[k.c]) return;
+    if (side === "left") { setPairs((s2) => ({ ...s2, left: k.c })); return; }
+    if (!pairs.left) return;
+    const ok = pairs.left === k.c;
+    if (ok) {
+      const done = { ...pairs.done, [k.c]: true };
+      setPairs({ left: null, done });
+      setHits((h) => h + 1); setTotal((t) => t + 1);
+      save(k, true, 0);
+      if (Object.keys(done).length >= step.pool.length) setTimeout(advance, 500);
+    } else {
+      setTotal((t) => t + 1);
+      save(k, false, 0);
+      setPairs((s2) => ({ ...s2, left: null }));
+    }
   };
 
   if (!data) return <div className="tc-empty">Loading kanji…</div>;
 
-  if (view === "session" && cur) {
+  /* ── session ── */
+  if (view === "session" && step) {
+    const pct = queue.length ? (pos / queue.length) * 100 : 0;
     return (
       <div className="tc-kanji">
         <div className="tc-progress">
-          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
-          <span className="tc-progtext">{passed.size} / {poolSize}</span>
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: pct + "%" }} /></div>
+          <span className="tc-progtext">{pos} / {queue.length}</span>
           <button className="tc-fchip" onClick={() => setView("home")}>Quit</button>
         </div>
-        {mode !== "learn" ? (
+
+        {step.mode === "match" ? (
+          <div className="tc-kmatch">
+            <p className="tc-kprompt">Tap the matching pairs</p>
+            <div className="tc-kmatchgrid">
+              <div className="tc-kmatchcol">
+                {step.pool.map((k) => (
+                  <button key={k.c} disabled={!!pairs.done[k.c]}
+                    className={"tc-kmatchbtn" + (pairs.done[k.c] ? " is-done" : "") + (pairs.left === k.c ? " is-sel" : "")}
+                    onClick={() => tapPair(k, "left")}>
+                    <span className="tc-kmatchkanji">{k.c}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="tc-kmatchcol">
+                {right.map((k) => (
+                  <button key={k.c} disabled={!!pairs.done[k.c]}
+                    className={"tc-kmatchbtn" + (pairs.done[k.c] ? " is-done" : "")}
+                    onClick={() => tapPair(k, "right")}>
+                    {k.m[0]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* A matching round only clears when all five are paired, so without this a
+                learner who cannot place one of them is stuck with nothing but Quit. */}
+            <button className="tc-btn tc-btn-sm" onClick={advance}>Skip this round</button>
+          </div>
+        ) : step.mode === "learn" ? (
+          <>
+            <div className={"tc-card" + (flipped ? " is-flipped" : "")}
+              onClick={() => { if (!flipped && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped((f) => !f); }}
+              role="button" tabIndex={0} aria-label="Kanji card, tap to flip">
+              <div className="tc-card-inner">
+                <div className="tc-face tc-front">
+                  <span className="tc-kindchip">{cur.f ? "#" + cur.f + " most used" : "new"}</span>
+                  {cur.e && <div className="tc-kemoji">{cur.e}</div>}
+                  <div className="tc-kanjibig">{cur.c}</div>
+                  <span className="tc-flipcue">meaning? reading? then tap</span>
+                </div>
+                <div className="tc-face tc-back">
+                  <div className="tc-kanjimid">{cur.e ? cur.e + " " : ""}{cur.c}</div>
+                  <div className="tc-meaning tc-meaning-lg">{cur.m.join(", ")}</div>
+                  {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {cur.on.join("・")}</div>}
+                  {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {cur.kun.join("・")}</div>}
+                  {(deckMap.get(cur.c) || {}).words && (
+                    <p className="tc-kwords">
+                      {deckMap.get(cur.c).words.slice(0, 3).map((w) => (
+                        <span key={w.id} className="tc-kword"><b>{w.term}</b> {shortMeaning(w.meaning)}</span>
+                      ))}
+                    </p>
+                  )}
+                  <span className="tc-timetag">{cur.s} strokes{cur.g && cur.g <= 6 ? " · grade " + cur.g : ""}{cur.j ? " · N" + cur.j : ""}</span>
+                </div>
+              </div>
+            </div>
+            <div className="tc-rehnav">
+              <button className="tc-btn tc-btn-sm" onClick={() => speak(cur)}>🔊 Say it</button>
+              {!flipped
+                ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
+                : <button className="tc-btn tc-btn-primary" onClick={learnDone}>Got it — next</button>}
+            </div>
+          </>
+        ) : (
           <div className="tc-kquiz">
             <p className="tc-kprompt">
-              {mode === "meaning" ? "What does this mean?"
-                : mode === "reading" ? "How is this read?"
+              {step.mode === "meaning" ? "What does this mean?"
+                : step.mode === "reading" ? "How is this read?"
+                : step.mode === "audio" ? "Which character did you hear?"
                 : "Which character is this?"}
             </p>
             <div className="tc-kstem">
-              {mode === "build"
-                ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
-                : <span className="tc-kanjimid">{cur.c}</span>}
+              {step.mode === "build" ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
+                : step.mode === "audio" ? (
+                  <button className="tc-kaudio" onClick={() => speak(cur)} aria-label="Play again">🔊</button>
+                ) : (
+                  <>
+                    <span className="tc-kanjimid">{cur.c}</span>
+                    <button className="tc-kaudiosm" onClick={() => speak(cur)} aria-label="Play">🔊</button>
+                  </>
+                )}
             </div>
-            <div className={"tc-kopts" + (mode === "build" ? " is-tiles" : "")}>
+            <div className={"tc-kopts" + (step.mode === "build" || step.mode === "audio" ? " is-tiles" : "")}>
               {choices.map((k) => {
                 const state = !picked ? ""
                   : k.c === cur.c ? " is-right"
                   : k.c === picked.c ? " is-wrong" : " is-dim";
                 return (
                   <button key={k.c} className={"tc-kopt" + state} disabled={!!picked} onClick={() => answer(k)}>
-                    {mode === "meaning" ? k.m[0]
-                      : mode === "reading" ? (k.on[0] || k.kun[0])
+                    {step.mode === "meaning" ? k.m[0]
+                      : step.mode === "reading" ? (k.on[0] || k.kun[0])
                       : <span className="tc-kopttile">{k.c}</span>}
                   </button>
                 );
@@ -5398,64 +5541,27 @@ function Kanji({ cards }) {
             {picked && picked.c !== cur.c && (
               <p className="tc-kcorrect">
                 <b>{cur.c}</b> {cur.m.join(", ")}
-                {cur.on.length ? " \u00b7 \u97f3 " + cur.on.join("\u30fb") : ""}
-                {cur.kun.length ? " \u00b7 \u8a13 " + cur.kun.join("\u30fb") : ""}
-                {(deckMap.get(cur.c)?.words || []).length > 0
-                  ? " \u2014 " + deckMap.get(cur.c).words.slice(0, 2).map((w) => w.term).join("\u3001")
-                  : ""}
+                {cur.on.length ? " · 音 " + cur.on.join("・") : ""}
+                {(deckMap.get(cur.c) || {}).words ? " — " + deckMap.get(cur.c).words.slice(0, 2).map((w) => w.term).join("、") : ""}
               </p>
             )}
-          </div>
-        ) : (
-        <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")}
-          onClick={() => { if (!flipped && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped((f) => !f); }}
-          role="button" tabIndex={0} aria-label="Kanji card, tap to flip">
-          <div className="tc-card-inner">
-            <div className="tc-face tc-front">
-              <span className="tc-kindchip">{cur.f ? "#" + cur.f + " most used" : "rare"}</span>
-              <div className="tc-kanjibig">{cur.c}</div>
-              <span className="tc-flipcue">meaning? reading? then tap</span>
-            </div>
-            <div className="tc-face tc-back">
-              <div className="tc-kanjimid">{cur.c}</div>
-              <div className="tc-meaning tc-meaning-lg">{cur.m.join(", ")}</div>
-              {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {cur.on.join("・")}</div>}
-              {/* Words from the deck that use this character. A kanji met inside vocabulary
-                  already being studied is far easier to hold on to than one met alone. */}
-              {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {cur.kun.join("・")}</div>}
-              {(deckMap.get(cur.c)?.words || []).length > 0 && (
-                <p className="tc-kwords">
-                  {deckMap.get(cur.c).words.slice(0, 3).map((w) => (
-                    <span key={w.id} className="tc-kword"><b>{w.term}</b> {shortMeaning(w.meaning)}</span>
-                  ))}
-                </p>
-              )}
-              <span className="tc-timetag">{cur.s} strokes{cur.g && cur.g <= 6 ? " · grade " + cur.g : ""}{cur.j ? " · N" + cur.j : ""}</span>
-            </div>
-          </div>
-        </div>
-        )}
-        {mode === "learn" && (
-          <div className="tc-rehnav">
-            {!flipped
-              ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
-              : <button className="tc-btn tc-btn-primary" onClick={() => grade(true)}>Got it — next</button>}
           </div>
         )}
       </div>
     );
   }
 
+  /* ── summary ── */
   if (view === "summary") {
-    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    const pct = total ? Math.round((hits / total) * 100) : 0;
     return (
       <div className="tc-kanji">
         <div className="tc-done">
-          <p className="tc-eyebrow">Session complete</p>
+          <p className="tc-eyebrow">Lesson complete</p>
           <div className="tc-bignum">{pct}<span>%</span></div>
-          <p className="tc-donesub">{firstTry.size} nailed first try · {poolSize} kanji</p>
+          <p className="tc-donesub">{hits} right of {total} questions</p>
           <div className="tc-donebtns">
-            <button className="tc-btn tc-btn-primary" onClick={() => startSession()}>Go again</button>
+            <button className="tc-btn tc-btn-primary" onClick={startSession}>Another lesson</button>
             <button className="tc-btn" onClick={() => setView("home")}>Done</button>
           </div>
         </div>
@@ -5463,35 +5569,28 @@ function Kanji({ cards }) {
     );
   }
 
-  const pctAll = all.length ? (masteredCount / all.length) * 100 : 0;
+  /* ── home ── */
+  const pctAll = all.length ? (mastered / all.length) * 100 : 0;
   const nextUp = unlocked.filter((k) => !(((stats[k.c] || {}).seen || 0) > 0)).slice(0, 8);
   return (
     <div className="tc-kanji">
       <div className="tc-kanjihero">
-        <img className="tc-mascot" src={MASCOT_GIFS[masteredCount > 0 ? "proud" : "waiting"]}
-          width={64} height={60} alt="" draggable="false" />
+        <img className="tc-mascot" src={MASCOT_GIFS[mastered > 0 ? "proud" : "waiting"]} width={64} height={60} alt="" draggable="false" />
         <div className="tc-kanjiheroright">
-          <p className="tc-kanjicount"><b>{masteredCount}</b> <span>/ {all.length} jōyō kanji</span></p>
-          <div className="tc-kanjibar">
-            <div className="tc-kanjibarfill" style={{ width: `${Math.max(pctAll, masteredCount ? 0.4 : 0)}%` }} />
-          </div>
+          <p className="tc-kanjicount"><b>{mastered}</b> <span>/ {all.length} jōyō kanji</span></p>
+          <div className="tc-kanjibar"><div className="tc-kanjibarfill" style={{ width: Math.max(pctAll, mastered ? 0.4 : 0) + "%" }} /></div>
           <p className="tc-kanjisub">
-            {masteredCount === 0
-              ? "Every kanji in the language, most useful first."
-              : `${pctAll.toFixed(1)}% mastered · ${startedCount} started`}
+            {mastered === 0 ? "Every kanji in the language, your own vocabulary first."
+              : pctAll.toFixed(1) + "% mastered · " + started + " started"}
           </p>
         </div>
       </div>
-
-      <button className="tc-btn tc-btn-primary tc-start" onClick={() => startSession()}>
-        Practice · {Math.min(15, unlocked.length)} kanji
-      </button>
+      <button className="tc-btn tc-btn-primary tc-start" onClick={startSession}>Start lesson · 6 kanji</button>
       <p className="tc-smarthint">
         {unlocked.length} unlocked. {deckMap.size > 0
-          ? `Ordered by your own vocabulary first — ${deckMap.size} of these appear in words in your deck.`
+          ? "Ordered by your own vocabulary first — " + deckMap.size + " of these appear in words in your deck."
           : "Ordered by how often each character appears in real Japanese."}
       </p>
-
       {nextUp.length > 0 && (
         <div className="tc-kanjinext">
           <p className="tc-eyebrow">next up</p>
@@ -5500,7 +5599,6 @@ function Kanji({ cards }) {
           </div>
         </div>
       )}
-
       <p className="tc-kanjicredit">
         Kanji data: KANJIDIC2 · Electronic Dictionary Research and Development Group · CC BY-SA 4.0
       </p>
@@ -6623,6 +6721,21 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-oralg{margin:0;font-size:12px;color:#ffd9a0;background:rgba(255,190,90,.1);border-radius:7px;padding:5px 10px;align-self:flex-start;}
 
 /* ── kanji ── */
+.tc-kemoji{font-size:44px;line-height:1;margin-bottom:2px;}
+.tc-kaudio{appearance:none;border:0;background:rgba(124,92,255,.2);color:#fff;font-size:38px;
+  width:96px;height:96px;border-radius:50%;cursor:pointer;line-height:1;}
+.tc-kaudio:active{transform:scale(.95);}
+.tc-kaudiosm{appearance:none;border:0;background:transparent;font-size:20px;cursor:pointer;padding:0 6px;}
+.tc-kmatch{display:flex;flex-direction:column;align-items:center;gap:14px;padding:6px 0;}
+.tc-kmatchgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;width:100%;max-width:400px;}
+.tc-kmatchcol{display:flex;flex-direction:column;gap:9px;}
+.tc-kmatchbtn{appearance:none;font:inherit;font-size:15px;color:var(--washi,#efeae2);
+  background:rgba(255,255,255,.05);border:1.5px solid rgba(255,255,255,.14);border-radius:12px;
+  padding:12px 8px;min-height:56px;cursor:pointer;transition:background .12s,border-color .12s,opacity .2s;}
+.tc-kmatchkanji{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:30px;line-height:1;}
+.tc-kmatchbtn.is-sel{border-color:#7c5cff;background:rgba(124,92,255,.2);}
+.tc-kmatchbtn.is-done{opacity:.28;border-color:#3d9150;}
+.tc-kmatchbtn.is-bad{border-color:#c23a26;background:rgba(194,58,38,.2);}
 .tc-kwords{display:flex;flex-direction:column;gap:3px;margin:8px 0 0;align-items:center;}
 .tc-kword{font-size:13px;color:var(--mut-2);}
 .tc-kword b{color:var(--washi,#efeae2);font-weight:600;margin-right:6px;font-size:15px;}
