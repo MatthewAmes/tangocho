@@ -1461,7 +1461,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -1479,7 +1479,12 @@ export default function JpnFlashcards() {
           <ConjDrill />
         ) : tab === "input" ? (
           <Input cards={cards} />
+        ) : tab === "kanji" ? (
+          <Kanji />
         ) : tab === "write" ? (
+          /* Write keeps its render branch and its component. The tab chip is gone for now,
+             not the feature — it is the only production-recall practice in the app and
+             deleting it to make room would be throwing away the harder retrieval. */
           <Write cards={cards} onResult={recordResult} />
         ) : tab === "kana" ? (
           <Kana />
@@ -4945,6 +4950,225 @@ function Input({ cards }) {
   );
 }
 
+/* ───────────────────────────── KANJI ─────────────────────────────
+   The 2,140 jōyō kanji, ordered by newspaper frequency rather than school grade.
+   Grade order is how Japanese children learn them, spread over six years and organised
+   around what a seven-year-old can discuss. Frequency order is what an adult learner
+   wants: 日 is rank 1, and the first 500 by frequency cover far more real text than the
+   first 500 by grade.
+
+   Data: KANJIDIC2 (EDRDG), CC BY-SA 4.0, via kanjiapi.dev. JLPT levels: Jonathan Waller.
+
+   Scheduling reuses statReview/statNeed, so kanji sit on the same FSRS memory model as
+   everything else rather than getting a fourth hand-rolled scorer. */
+const KANJI_KEY = "jpn101:kanji";
+const KANJI_URL = "/kanji.json";
+const KANJI_CACHE = "jpn101:kanjiData";
+const KANJI_BATCH = 12;              // how many new characters unlock at a time
+
+let _kanjiPromise = null;
+function loadKanji() {
+  if (_kanjiPromise) return _kanjiPromise;
+  _kanjiPromise = (async () => {
+    let cached = null;
+    try { cached = JSON.parse(window.localStorage.getItem(KANJI_CACHE) || "null"); } catch (e) {}
+    try {
+      const r = await fetch(KANJI_URL, { cache: "no-cache" });
+      if (r.ok && (r.headers.get("content-type") || "").includes("json")) {
+        const d = await r.json();
+        if (d && d.kanji) {
+          try { window.localStorage.setItem(KANJI_CACHE, JSON.stringify(d)); } catch (e) {}
+          return d;
+        }
+      }
+    } catch (e) { /* offline — the cached copy is the point */ }
+    return cached;
+  })();
+  return _kanjiPromise;
+}
+
+function Kanji() {
+  const [data, setData] = useState(null);
+  const [stats, setStats] = useState({});
+  const statsRef = useRef({});
+  const [view, setView] = useState("home");      // home | session | summary
+  const [queue, setQueue] = useState([]);
+  const [pos, setPos] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [poolSize, setPoolSize] = useState(0);
+  const [passed, setPassed] = useState(() => new Set());
+  const [firstTry, setFirstTry] = useState(() => new Set());
+  const missRef = useRef({});
+  const shownRef = useRef(0);
+  const thinkRef = useRef(null);
+
+  useEffect(() => { loadKanji().then(setData); }, []);
+  useEffect(() => { (async () => {
+    try { const r = await sGet(KANJI_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
+  })(); }, []);
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
+
+  const all = data ? data.kanji : [];
+  const getS = (id) => statsRef.current[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
+  const isMastered = (st) => (st.level || 0) >= 4;
+  const masteredCount = useMemo(() => all.filter((k) => isMastered(stats[k.c] || {})).length, [all, stats]);
+  const startedCount = useMemo(() => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0).length, [all, stats]);
+
+  /* Unlock in frequency order, a batch at a time. The frontier only advances as characters
+     become solid, so the live set can never outrun what is actually being retained — which
+     is the failure mode the vocabulary deck already demonstrated. */
+  const unlocked = useMemo(() => {
+    const solid = all.filter((k) => isMastered(stats[k.c] || {})).length;
+    const frontier = Math.min(all.length, KANJI_BATCH * (Math.floor(solid / KANJI_BATCH) + 2));
+    return all.slice(0, frontier);
+  }, [all, stats]);
+
+  const startSession = useCallback((subset) => {
+    const now = Date.now();
+    const pool0 = subset && subset.length ? subset : unlocked;
+    if (!pool0.length) return;
+    const ordered = pool0
+      .map((k) => ({ k, s: statNeed(getS(k.c), now) + Math.random() * 0.4 }))
+      .sort((a, b) => b.s - a.s)
+      .map((o) => o.k)
+      .slice(0, 15);
+    setQueue(ordered); setPos(0); setPoolSize(ordered.length);
+    setPassed(new Set()); setFirstTry(new Set());
+    missRef.current = {}; setFlipped(false); setView("session");
+  }, [unlocked]);
+
+  const cur = queue[pos] || null;
+  const done = view === "session" && queue.length > 0 && pos >= queue.length;
+  useEffect(() => { if (done) setView("summary"); }, [done]);
+
+  const grade = (ok) => {
+    if (!cur) return;
+    const think = thinkRef.current;
+    const st = getS(cur.c);
+    const ns = {
+      ...st, seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
+      level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
+      streak: ok ? (st.streak || 0) + 1 : 0, last: Date.now(),
+      fsrs: statReview(st, ok, think, Date.now()),
+      ms: (st.ms || 0) + (think || 0), msN: (st.msN || 0) + (think ? 1 : 0),
+    };
+    const nx = { ...statsRef.current, [cur.c]: ns };
+    statsRef.current = nx; setStats(nx); sSet(KANJI_KEY, JSON.stringify(nx));
+    logDay({ ok, ms: think || 0, deck: "kanji" });
+    if (ok) {
+      if (!missRef.current[cur.c]) setFirstTry((p) => { const n = new Set(p); n.add(cur.c); return n; });
+      setPassed((p) => { const n = new Set(p); n.add(cur.c); return n; });
+      setQueue((q) => q.filter((x, i) => i <= pos || x.c !== cur.c));
+    } else {
+      missRef.current[cur.c] = (missRef.current[cur.c] || 0) + 1;
+      if (missRef.current[cur.c] <= 2) {
+        setQueue((q) => { const n = q.slice(); n.splice(Math.min(pos + 3, n.length), 0, cur); return n; });
+      }
+    }
+    setFlipped(false); setPos((p) => p + 1);
+  };
+
+  if (!data) return <div className="tc-empty">Loading kanji…</div>;
+
+  if (view === "session" && cur) {
+    return (
+      <div className="tc-kanji">
+        <div className="tc-progress">
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
+          <span className="tc-progtext">{passed.size} / {poolSize}</span>
+          <button className="tc-fchip" onClick={() => setView("home")}>Quit</button>
+        </div>
+        <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")}
+          onClick={() => { if (!flipped && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped((f) => !f); }}
+          role="button" tabIndex={0} aria-label="Kanji card, tap to flip">
+          <div className="tc-card-inner">
+            <div className="tc-face tc-front">
+              <span className="tc-kindchip">{cur.f ? "#" + cur.f + " most used" : "rare"}</span>
+              <div className="tc-kanjibig">{cur.c}</div>
+              <span className="tc-flipcue">meaning? reading? then tap</span>
+            </div>
+            <div className="tc-face tc-back">
+              <div className="tc-kanjimid">{cur.c}</div>
+              <div className="tc-meaning tc-meaning-lg">{cur.m.join(", ")}</div>
+              {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {cur.on.join("・")}</div>}
+              {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {cur.kun.join("・")}</div>}
+              <span className="tc-timetag">{cur.s} strokes{cur.g && cur.g <= 6 ? " · grade " + cur.g : ""}{cur.j ? " · N" + cur.j : ""}</span>
+            </div>
+          </div>
+        </div>
+        <div className="tc-rehnav">
+          {!flipped
+            ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
+            : <>
+                <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => grade(true)}>Got it ✓</button>
+                <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => grade(false)}>Missed ✗</button>
+              </>}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === "summary") {
+    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    return (
+      <div className="tc-kanji">
+        <div className="tc-done">
+          <p className="tc-eyebrow">Session complete</p>
+          <div className="tc-bignum">{pct}<span>%</span></div>
+          <p className="tc-donesub">{firstTry.size} nailed first try · {poolSize} kanji</p>
+          <div className="tc-donebtns">
+            <button className="tc-btn tc-btn-primary" onClick={() => startSession()}>Go again</button>
+            <button className="tc-btn" onClick={() => setView("home")}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const pctAll = all.length ? (masteredCount / all.length) * 100 : 0;
+  const nextUp = unlocked.filter((k) => !(((stats[k.c] || {}).seen || 0) > 0)).slice(0, 8);
+  return (
+    <div className="tc-kanji">
+      <div className="tc-kanjihero">
+        <img className="tc-mascot" src={MASCOT_GIFS[masteredCount > 0 ? "proud" : "waiting"]}
+          width={64} height={60} alt="" draggable="false" />
+        <div className="tc-kanjiheroright">
+          <p className="tc-kanjicount"><b>{masteredCount}</b> <span>/ {all.length} jōyō kanji</span></p>
+          <div className="tc-kanjibar">
+            <div className="tc-kanjibarfill" style={{ width: `${Math.max(pctAll, masteredCount ? 0.4 : 0)}%` }} />
+          </div>
+          <p className="tc-kanjisub">
+            {masteredCount === 0
+              ? "Every kanji in the language, most useful first."
+              : `${pctAll.toFixed(1)}% mastered · ${startedCount} started`}
+          </p>
+        </div>
+      </div>
+
+      <button className="tc-btn tc-btn-primary tc-start" onClick={() => startSession()}>
+        Practice · {Math.min(15, unlocked.length)} kanji
+      </button>
+      <p className="tc-smarthint">
+        {unlocked.length} unlocked. More open as these become solid, so the live set never
+        outruns what you are actually keeping.
+      </p>
+
+      {nextUp.length > 0 && (
+        <div className="tc-kanjinext">
+          <p className="tc-eyebrow">next up</p>
+          <div className="tc-kanjirow">
+            {nextUp.map((k) => <span key={k.c} className="tc-kanjichip" title={k.m.join(", ")}>{k.c}</span>)}
+          </div>
+        </div>
+      )}
+
+      <p className="tc-kanjicredit">
+        Kanji data: KANJIDIC2 · Electronic Dictionary Research and Development Group · CC BY-SA 4.0
+      </p>
+    </div>
+  );
+}
+
 /* ── conjugation engine ──
    Class teaches this as rules, not memorised tables (FACT 4-3): godan stems shift across
    the あいうえお rows, ichidan drops る, する/くる are the two irregulars. So the forms are
@@ -6035,6 +6259,26 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-stat.is-on b{color:#ffb08a;}
 .tc-troublebtn{background:rgba(255,190,90,.1);border:1px solid rgba(255,190,90,.28);color:#ffd9a0;}
 
+
+
+/* ── kanji ── */
+.tc-kanji{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
+.tc-kanjihero{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:13px 14px;}
+.tc-kanjiheroright{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px;}
+.tc-kanjicount{margin:0;font-size:13px;color:var(--mut-2);}
+.tc-kanjicount b{font-size:26px;color:#fff;font-weight:600;margin-right:4px;}
+.tc-kanjibar{height:9px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;}
+.tc-kanjibarfill{height:100%;border-radius:99px;background:linear-gradient(90deg,#f4805c,#ffd76e);transition:width .6s ease;}
+.tc-kanjisub{margin:0;font-size:12px;color:var(--mut-2);}
+.tc-kanjibig{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;font-size:110px;line-height:1.05;color:#fff;}
+.tc-kanjimid{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;font-size:56px;line-height:1;color:#fff;margin-bottom:4px;}
+.tc-kanjiread{font-size:15px;color:var(--washi,#efeae2);letter-spacing:.02em;}
+.tc-kanjiread b{color:var(--shu-soft,#ff8a7a);font-weight:600;margin-right:5px;font-size:13px;}
+.tc-kanjinext{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 13px;}
+.tc-kanjirow{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px;}
+.tc-kanjichip{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;color:#fff;background:rgba(255,255,255,.07);border-radius:9px;width:42px;height:42px;display:flex;align-items:center;justify-content:center;}
+.tc-kanjicredit{margin:4px 0 0;font-size:10.5px;line-height:1.5;color:var(--mut-2);opacity:.75;text-align:center;}
+@media (max-width:460px){.tc-kanjibig{font-size:88px;}}
 
 /* ── 入力 / input ── */
 .tc-input{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}

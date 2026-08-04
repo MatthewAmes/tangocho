@@ -7,3 +7,4 @@ cf/public/
 .env.local
 tools/.yt-candidates.json
 tools/.yt-raw.json
+tools/.kanji-cache.json
