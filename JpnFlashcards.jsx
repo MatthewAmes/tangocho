@@ -4987,6 +4987,59 @@ function loadKanji() {
   return _kanjiPromise;
 }
 
+
+/* ── objective exercises ──
+   The flip card ends in "did you know it?", answered AFTER seeing the answer. That is
+   hindsight bias with a button, and it hands the scheduler a grade you invented. These
+   exercises have a right answer the app checks, so correctness and latency are both
+   measured rather than self-reported.
+
+   Distractors are the whole game. Three random kanji make a question you can pass while
+   knowing nothing; three plausible ones force a real discrimination. Candidates come from
+   a nearby frequency band (characters you might plausibly confuse) and are ranked by
+   closeness in stroke count, which stands in for visual similarity. */
+function kanjiDistractors(all, target, n, field) {
+  const idx = all.indexOf(target);
+  const band = all.slice(Math.max(0, idx - 90), Math.min(all.length, idx + 90))
+    .filter((k) => k !== target && (field === "reading" ? (k.on.length || k.kun.length) : k.m.length));
+  const val = (k) => (field === "reading" ? (k.on[0] || k.kun[0]) : k.m[0]);
+  /* Rejecting only exact duplicates is not enough. 中 (inside) drew a distractor whose
+     gloss was "in" — a different string, the same answer, and a question with no correct
+     option. Anything that overlaps ANY of the target meanings, in either direction, is out. */
+  const norm = (t) => t.toLowerCase().replace(/[^a-z ]/g, "").trim();
+  const targetWords = target.m.map(norm);
+  /* Only meaningful for English glosses. Applying it to readings normalised every
+     katakana option to an empty string and rejected the entire distractor pool, leaving
+     reading questions with exactly one option to choose from. */
+  const clashes = (v) => {
+    if (field !== "meaning") return false;
+    const n = norm(v);
+    if (!n) return true;
+    return targetWords.some((t) => t === n || t.includes(n) || n.includes(t));
+  };
+  const seen = new Set();
+  const pool = [];
+  for (const k of band) {
+    const v = val(k);
+    if (!v || seen.has(v) || clashes(v)) continue;
+    seen.add(v);
+    pool.push(k);
+  }
+  pool.sort((a, b) => Math.abs(a.s - target.s) - Math.abs(b.s - target.s));
+  return pool.slice(0, Math.max(n * 3, 9)).sort(() => Math.random() - 0.5).slice(0, n);
+}
+
+/* Which exercise a character gets, by how well it is already known. Recognition before
+   production, the same order the vocabulary deck uses: a character you cannot yet pick out
+   of four is not ready to be produced from its meaning alone. */
+function kanjiExercise(st) {
+  const lvl = st.level || 0;
+  if ((st.seen || 0) === 0) return "learn";           // first meeting: show everything
+  if (lvl <= 1) return "meaning";                     // kanji -> meaning
+  if (lvl <= 2) return "reading";                     // kanji -> reading
+  return Math.random() < 0.5 ? "build" : "reading";   // meaning -> kanji, from tiles
+}
+
 function Kanji() {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState({});
@@ -5001,6 +5054,9 @@ function Kanji() {
   const missRef = useRef({});
   const shownRef = useRef(0);
   const thinkRef = useRef(null);
+  const [choices, setChoices] = useState([]);      // options for the current question
+  const [picked, setPicked] = useState(null);      // what was tapped; null until answered
+  const [mode, setMode] = useState("learn");
 
   useEffect(() => { loadKanji().then(setData); }, []);
   useEffect(() => { (async () => {
@@ -5041,6 +5097,26 @@ function Kanji() {
   const done = view === "session" && queue.length > 0 && pos >= queue.length;
   useEffect(() => { if (done) setView("summary"); }, [done]);
 
+  // new card -> choose its exercise and lay out the options
+  useEffect(() => {
+    if (!cur || view !== "session") return;
+    const m = kanjiExercise(getS(cur.c));
+    setMode(m); setPicked(null); setFlipped(false);
+    if (m === "learn") { setChoices([]); return; }
+    const wrong = kanjiDistractors(all, cur, 3, m === "reading" ? "reading" : "meaning");
+    setChoices([cur, ...wrong].sort(() => Math.random() - 0.5));
+  }, [pos, view, cur && cur.c]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const answer = (k) => {
+    if (picked) return;                              // one shot per question
+    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+    setPicked(k);
+    // A wrong answer holds on screen long enough to actually read the correct one; a right
+    // answer moves on quickly, because dwelling on success is wasted session time.
+    const right = k.c === cur.c;
+    setTimeout(() => grade(right), right ? 550 : 1600);
+  };
+
   const grade = (ok) => {
     if (!cur) return;
     const think = thinkRef.current;
@@ -5078,6 +5154,41 @@ function Kanji() {
           <span className="tc-progtext">{passed.size} / {poolSize}</span>
           <button className="tc-fchip" onClick={() => setView("home")}>Quit</button>
         </div>
+        {mode !== "learn" ? (
+          <div className="tc-kquiz">
+            <p className="tc-kprompt">
+              {mode === "meaning" ? "What does this mean?"
+                : mode === "reading" ? "How is this read?"
+                : "Which character is this?"}
+            </p>
+            <div className="tc-kstem">
+              {mode === "build"
+                ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
+                : <span className="tc-kanjimid">{cur.c}</span>}
+            </div>
+            <div className={"tc-kopts" + (mode === "build" ? " is-tiles" : "")}>
+              {choices.map((k) => {
+                const state = !picked ? ""
+                  : k.c === cur.c ? " is-right"
+                  : k.c === picked.c ? " is-wrong" : " is-dim";
+                return (
+                  <button key={k.c} className={"tc-kopt" + state} disabled={!!picked} onClick={() => answer(k)}>
+                    {mode === "meaning" ? k.m[0]
+                      : mode === "reading" ? (k.on[0] || k.kun[0])
+                      : <span className="tc-kopttile">{k.c}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {picked && picked.c !== cur.c && (
+              <p className="tc-kcorrect">
+                <b>{cur.c}</b> {cur.m.join(", ")}
+                {cur.on.length ? " \u00b7 \u97f3 " + cur.on.join("\u30fb") : ""}
+                {cur.kun.length ? " \u00b7 \u8a13 " + cur.kun.join("\u30fb") : ""}
+              </p>
+            )}
+          </div>
+        ) : (
         <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")}
           onClick={() => { if (!flipped && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped((f) => !f); }}
           role="button" tabIndex={0} aria-label="Kanji card, tap to flip">
@@ -5096,14 +5207,14 @@ function Kanji() {
             </div>
           </div>
         </div>
-        <div className="tc-rehnav">
-          {!flipped
-            ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
-            : <>
-                <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => grade(false)}>Missed ✗</button>
-                <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => grade(true)}>Got it ✓</button>
-              </>}
-        </div>
+        )}
+        {mode === "learn" && (
+          <div className="tc-rehnav">
+            {!flipped
+              ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
+              : <button className="tc-btn tc-btn-primary" onClick={() => grade(true)}>Got it \u2014 next</button>}
+          </div>
+        )}
       </div>
     );
   }
@@ -6262,6 +6373,23 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 
 /* ── kanji ── */
+.tc-kquiz{display:flex;flex-direction:column;align-items:center;gap:14px;padding:6px 0 4px;}
+.tc-kprompt{margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut-2);}
+.tc-kstem{display:flex;align-items:center;gap:10px;min-height:74px;}
+.tc-kstemword{font-size:26px;font-weight:600;color:#fff;text-align:center;max-width:320px;line-height:1.3;}
+.tc-kopts{display:grid;grid-template-columns:1fr;gap:9px;width:100%;max-width:340px;}
+.tc-kopts.is-tiles{grid-template-columns:1fr 1fr;}
+.tc-kopt{appearance:none;font:inherit;font-size:16px;color:var(--washi,#efeae2);background:rgba(255,255,255,.05);
+  border:1.5px solid rgba(255,255,255,.14);border-radius:12px;padding:14px 12px;cursor:pointer;min-height:52px;
+  transition:background .12s,border-color .12s,transform .08s;}
+.tc-kopt:active{transform:scale(.98);}
+.tc-kopttile{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:38px;line-height:1;}
+.tc-kopt.is-right{background:rgba(61,145,80,.22);border-color:#3d9150;color:#b6efc4;}
+.tc-kopt.is-wrong{background:rgba(194,58,38,.2);border-color:#c23a26;color:#ffc0b4;}
+.tc-kopt.is-dim{opacity:.4;}
+.tc-kcorrect{margin:0;font-size:14px;line-height:1.6;color:#ffd9a0;background:rgba(255,190,90,.1);
+  border-radius:10px;padding:9px 13px;text-align:center;max-width:340px;}
+.tc-kcorrect b{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:22px;margin-right:6px;}
 .tc-kanji{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
 .tc-kanjihero{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:13px 14px;}
 .tc-kanjiheroright{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px;}
