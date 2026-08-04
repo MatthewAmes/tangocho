@@ -2780,8 +2780,8 @@ function Kana() {
               ? <button className="tc-btn tc-btn-primary" onClick={() => { thinkRef.current = Date.now() - shownRef.current; setRevealed(true); }}>Check</button>
               : (
                 <>
-                  <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => record(true)}>Got it ✓</button>
                   <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => record(false)}>Missed ✗</button>
+                  <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => record(true)}>Got it ✓</button>
                 </>
               )}
           </div>
@@ -5100,8 +5100,8 @@ function Kanji() {
           {!flipped
             ? <button className="tc-btn tc-btn-primary" onClick={() => { if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Show</button>
             : <>
-                <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => grade(true)}>Got it ✓</button>
                 <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => grade(false)}>Missed ✗</button>
+                <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => grade(true)}>Got it ✓</button>
               </>}
         </div>
       </div>
