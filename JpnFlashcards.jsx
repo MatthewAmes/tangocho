@@ -7,6 +7,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    ────────────────────────────────────────────────────────────────────────── */
 
 import { MASCOT_GIFS } from "./data/mascot.js";
+import { SITUATIONS, makeProps } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
 
 const STORE_KEY = "jpn101:deck";
@@ -1461,7 +1462,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["oral", "Oral"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -1479,6 +1480,8 @@ export default function JpnFlashcards() {
           <ConjDrill />
         ) : tab === "input" ? (
           <Input cards={cards} />
+        ) : tab === "oral" ? (
+          <Oral />
         ) : tab === "kanji" ? (
           <Kanji cards={cards} />
         ) : tab === "write" ? (
@@ -4950,6 +4953,173 @@ function Input({ cards }) {
   );
 }
 
+/* ───────────────────────────── ORAL EXAM ─────────────────────────────
+   A mock of the 6-7 minute oral final: three situations, an examiner who speaks, and
+   props you answer from.
+
+   The props are regenerated every run — date, weekday, room, copy count, price, budget,
+   headcount, and which of you orders the pizza. The study guide states outright that the
+   flier, receipt and budget may be different on the day, so drilling one fixed set would
+   train recall of specific answers instead of the ability to read a prop and answer from
+   it. Randomising is the whole point of the exercise.
+
+   Each question is spoken aloud rather than only written, because the exam is spoken and
+   parsing a question by ear is half the difficulty. You answer out loud, then reveal the
+   model answer, which is generated from the props actually on screen. */
+const ORAL_KEY = "jpn101:oral";
+
+function OralProp({ kind, props }) {
+  if (kind === "flyer") {
+    return (
+      <div className="tc-prop tc-flyer">
+        <p className="tc-propttl">Party Time for J-kaiwa!</p>
+        <p className="tc-propbig">{props.flyer.dateEn}</p>
+        <p className="tc-propbig">{props.flyer.timeEn}</p>
+        <p className="tc-propline">{props.flyer.room.en}</p>
+        <p className="tc-propsmall">Enjoy the night with pizza, drinks and refreshments!</p>
+      </div>
+    );
+  }
+  if (kind === "receipt") {
+    return (
+      <>
+        <div className="tc-prop tc-receipt">
+          <p className="tc-propttl">レシート · Cougar Print</p>
+          <p className="tc-propline">Color print × {props.receipt.copies}</p>
+          <p className="tc-propbig">${props.receipt.price}</p>
+        </div>
+        <div className="tc-prop tc-budget">
+          <p className="tc-propttl">Budget · J-kaiwa party</p>
+          <p className="tc-propline">Total: ${props.budget.total}</p>
+          <p className="tc-propline">People expected: {props.budget.people}</p>
+          <p className="tc-propline">Pizza from: {props.budget.place}</p>
+          <p className="tc-propline">
+            Ordering pizza: <b>{props.budget.youOrderPizza ? "YOU" : "TA"}</b>
+            {"  ·  "}Drinks: <b>{props.budget.youOrderPizza ? "TA" : "YOU"}</b>
+          </p>
+        </div>
+      </>
+    );
+  }
+  return null;
+}
+
+function Oral() {
+  const [props_, setProps] = useState(() => makeProps());
+  const [sit, setSit] = useState(0);
+  const [qi, setQi] = useState(0);
+  const [shown, setShown] = useState(false);
+  const [stats, setStats] = useState({});
+  const statsRef = useRef({});
+  const [running, setRunning] = useState(false);
+  const shownRef = useRef(0);
+  const thinkRef = useRef(null);
+
+  useEffect(() => { (async () => {
+    try { const r = await sGet(ORAL_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
+  })(); }, []);
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [qi, sit, running]);
+
+  const S = SITUATIONS[sit];
+  const q = S.questions[qi];
+  const key = S.id + ":" + qi;
+  const st = statsRef.current[key] || { seen: 0, correct: 0, level: 0, streak: 0 };
+
+  // speak the examiner's line the moment it appears — the exam is heard, not read
+  useEffect(() => {
+    if (running && q) { try { speakJa(q.r, 0.95); } catch (e) {} }
+  }, [running, sit, qi]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const record = (ok) => {
+    const think = thinkRef.current;
+    const ns = {
+      ...st, seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
+      level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
+      streak: ok ? (st.streak || 0) + 1 : 0, last: Date.now(),
+      fsrs: statReview(st, ok, think, Date.now()),
+    };
+    const nx = { ...statsRef.current, [key]: ns };
+    statsRef.current = nx; setStats(nx); sSet(ORAL_KEY, JSON.stringify(nx));
+    logDay({ ok, ms: think || 0, deck: "oral" });
+    setShown(false);
+    if (qi + 1 < S.questions.length) setQi(qi + 1);
+    else if (sit + 1 < SITUATIONS.length) { setSit(sit + 1); setQi(0); }
+    else setRunning(false);
+  };
+
+  const total = SITUATIONS.reduce((a, x) => a + x.questions.length, 0);
+  const answered = Object.keys(stats).length;
+  const solid = Object.values(stats).filter((x) => (x.level || 0) >= 4).length;
+
+  if (!running) {
+    return (
+      <div className="tc-oral">
+        <div className="tc-kanjihero">
+          <img className="tc-mascot" src={MASCOT_GIFS[solid > 0 ? "proud" : "waiting"]} width={64} height={60} alt="" draggable="false" />
+          <div className="tc-kanjiheroright">
+            <p className="tc-kanjicount"><b>{solid}</b> <span>/ {total} prompts solid</span></p>
+            <div className="tc-kanjibar"><div className="tc-kanjibarfill" style={{ width: `${(solid / total) * 100}%` }} /></div>
+            <p className="tc-kanjisub">{answered} of {total} attempted · 6–7 minute interview</p>
+          </div>
+        </div>
+        {SITUATIONS.map((x, i) => (
+          <button key={x.id} className="tc-btn tc-start tc-oralsit" onClick={() => { setSit(i); setQi(0); setShown(false); setProps(makeProps()); setRunning(true); }}>
+            <b>{x.title}</b>
+            <i>{x.mins} · {x.questions.length} prompts</i>
+          </button>
+        ))}
+        <button className="tc-btn tc-btn-primary tc-start" onClick={() => { setSit(0); setQi(0); setShown(false); setProps(makeProps()); setRunning(true); }}>
+          Full mock interview · all {total} prompts
+        </button>
+        <p className="tc-smarthint">
+          The flier, receipt and budget change every run, exactly as the study guide warns
+          they will on the day. Answer out loud before revealing anything.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tc-oral">
+      <div className="tc-progress">
+        <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${((qi + 1) / S.questions.length) * 100}%` }} /></div>
+        <span className="tc-progtext">{qi + 1} / {S.questions.length}</span>
+        <button className="tc-fchip" onClick={() => setRunning(false)}>Quit</button>
+      </div>
+      <p className="tc-eyebrow">{S.title}</p>
+
+      {S.prop !== "none" && <OralProp kind={S.prop} props={props_} />}
+
+      <div className="tc-card2 tc-oralcard">
+        <p className="tc-oralwho">examiner</p>
+        <p className="tc-oralq">{q.q} <SpeakBtn text={q.r} /></p>
+        {!shown ? (
+          <>
+            <p className="tc-oralcue">Say your answer out loud, then check.</p>
+            <div className="tc-rehnav">
+              <button className="tc-btn tc-btn-primary" onClick={() => {
+                if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+                setShown(true);
+              }}>Check my answer</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="tc-oralen">{q.en}</p>
+            <p className="tc-orala">{q.a(props_)} <SpeakBtn text={q.a(props_)} /></p>
+            <p className="tc-oralg">{q.g}</p>
+            <div className="tc-rehnav">
+              <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => record(false)}>Struggled</button>
+              <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => record(true)}>Said it ✓</button>
+            </div>
+          </>
+        )}
+      </div>
+      <p className="tc-smarthint">{S.intro}</p>
+    </div>
+  );
+}
+
 /* ───────────────────────────── KANJI ─────────────────────────────
    The 2,140 jōyō kanji, ordered by newspaper frequency rather than school grade.
    Grade order is how Japanese children learn them, spread over six years and organised
@@ -6419,6 +6589,28 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-troublebtn{background:rgba(255,190,90,.1);border:1px solid rgba(255,190,90,.28);color:#ffd9a0;}
 
 
+
+/* ── oral exam ── */
+.tc-oral{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
+.tc-oralsit{text-align:left;display:flex;flex-direction:column;gap:3px;align-items:flex-start;padding:12px 14px;}
+.tc-oralsit b{font-size:15px;font-weight:600;color:#fff;}
+.tc-oralsit i{font-style:normal;font-size:12px;color:var(--mut-2);}
+.tc-prop{background:#fdfbf5;color:#2b2119;border-radius:12px;padding:14px 16px;text-align:center;
+  box-shadow:0 8px 22px -12px rgba(0,0,0,.6);}
+.tc-flyer{border-top:5px solid #c23a26;}
+.tc-receipt{font-family:"SF Mono",Menlo,Consolas,monospace;text-align:left;}
+.tc-budget{text-align:left;background:#f2efe6;}
+.tc-propttl{margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+.tc-propbig{margin:2px 0;font-size:19px;font-weight:700;}
+.tc-propline{margin:2px 0;font-size:14px;}
+.tc-propsmall{margin:6px 0 0;font-size:12px;opacity:.7;}
+.tc-oralcard{align-items:stretch;text-align:left;gap:9px;padding:15px;}
+.tc-oralwho{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--shu-soft,#ff8a7a);}
+.tc-oralq{margin:0;font-size:22px;line-height:1.5;color:#fff;font-family:"Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-oralcue{margin:4px 0 0;font-size:13px;color:var(--mut-2);font-style:italic;}
+.tc-oralen{margin:0;font-size:13.5px;color:var(--mut-2);}
+.tc-orala{margin:0;font-size:19px;line-height:1.6;color:#b6efc4;font-family:"Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-oralg{margin:0;font-size:12px;color:#ffd9a0;background:rgba(255,190,90,.1);border-radius:7px;padding:5px 10px;align-self:flex-start;}
 
 /* ── kanji ── */
 .tc-kwords{display:flex;flex-direction:column;gap:3px;margin:8px 0 0;align-items:center;}
