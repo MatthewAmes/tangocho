@@ -6,9 +6,12 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    survive across sessions. Add words anytime; study with self-graded flips.
    ────────────────────────────────────────────────────────────────────────── */
 
+import { MASCOT_GIFS } from "./data/mascot.js";
+import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
+
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
-const SEED_VERSION = 29; // bump this each time I add/update words
+const SEED_VERSION = 30; // bump this each time I add/update words
 
 // Matthew's JPN 101 vocabulary. New batches get appended here with the version bumped.
 const SEED = [
@@ -800,6 +803,61 @@ const SEED = [
   { term: "〜に聞く", reading: "〜にきく", romaji: "~ni kiku", meaning: "ask ~ (about something)", kind: "kanji", emoji: "❓", lesson: 46, sec: "6-6" },
   { term: "〜に／と相談する", reading: "〜に／とそうだんする", romaji: "~ni/to sōdan suru", meaning: "consult with ~", kind: "kanji", emoji: "🗣️", lesson: 46, sec: "6-6" },
   { term: "〜に報告する", reading: "〜にほうこくする", romaji: "~ni hōkoku suru", meaning: "make a report to ~", kind: "kanji", emoji: "📢", lesson: 46, sec: "6-6" },
+
+  // ── class notes, by study date ──
+  { term: "会長", reading: "かいちょう", romaji: "kaichō", meaning: "chairman; president (of a society)", kind: "kanji", emoji: "🎩", lesson: 48, sec: "7/20" },
+  { term: "部長", reading: "ぶちょう", romaji: "buchō", meaning: "department head; manager", kind: "kanji", emoji: "👔", lesson: 48, sec: "7/20" },
+  { term: "鳥", reading: "とり", romaji: "tori", meaning: "bird", kind: "kanji", emoji: "🐦", lesson: 48, sec: "7/20" },
+  { term: "ダチョウ", reading: "ダチョウ", romaji: "dachō", meaning: "ostrich", kind: "katakana", emoji: "🦤", lesson: 48, sec: "7/20" },
+  { term: "おじいちゃん", reading: "おじいちゃん", romaji: "ojiichan", meaning: "grandpa (affectionate)", kind: "hiragana", emoji: "👴", lesson: 48, sec: "7/20" },
+  { term: "おばあちゃん", reading: "おばあちゃん", romaji: "obaachan", meaning: "grandma (affectionate)", kind: "hiragana", emoji: "👵", lesson: 48, sec: "7/20" },
+  { term: "太っている", reading: "ふとっている", romaji: "futotte iru", meaning: "to be overweight (state, from 太る futoru)", kind: "kanji", emoji: "🧸", lesson: 48, sec: "7/20" },
+  { term: "働く", reading: "はたらく", romaji: "hataraku", meaning: "to work (u-verb; polite 働きます hatarakimasu)", kind: "kanji", emoji: "💼", lesson: 48, sec: "7/20" },
+
+  { term: "十字架", reading: "じゅうじか", romaji: "jūjika", meaning: "cross (crucifix)", kind: "kanji", emoji: "✝️", lesson: 49, sec: "7/22" },
+  { term: "闇", reading: "やみ", romaji: "yami", meaning: "darkness", kind: "kanji", emoji: "🌑", lesson: 49, sec: "7/22" },
+  { term: "夢", reading: "ゆめ", romaji: "yume", meaning: "dream", kind: "kanji", emoji: "💭", lesson: 49, sec: "7/22" },
+  { term: "一つ", reading: "ひとつ", romaji: "hitotsu", meaning: "one (thing) — native counter", kind: "kanji", emoji: "1️⃣", lesson: 49, sec: "7/22" },
+  { term: "二つ", reading: "ふたつ", romaji: "futatsu", meaning: "two (things)", kind: "kanji", emoji: "2️⃣", lesson: 49, sec: "7/22" },
+  { term: "三つ", reading: "みっつ", romaji: "mittsu", meaning: "three (things)", kind: "kanji", emoji: "3️⃣", lesson: 49, sec: "7/22" },
+  { term: "四つ", reading: "よっつ", romaji: "yottsu", meaning: "four (things)", kind: "kanji", emoji: "4️⃣", lesson: 49, sec: "7/22" },
+  { term: "五つ", reading: "いつつ", romaji: "itsutsu", meaning: "five (things)", kind: "kanji", emoji: "5️⃣", lesson: 49, sec: "7/22" },
+  { term: "六つ", reading: "むっつ", romaji: "muttsu", meaning: "six (things)", kind: "kanji", emoji: "6️⃣", lesson: 49, sec: "7/22" },
+  { term: "七つ", reading: "ななつ", romaji: "nanatsu", meaning: "seven (things)", kind: "kanji", emoji: "7️⃣", lesson: 49, sec: "7/22" },
+  { term: "八つ", reading: "やっつ", romaji: "yattsu", meaning: "eight (things)", kind: "kanji", emoji: "8️⃣", lesson: 49, sec: "7/22" },
+  { term: "九つ", reading: "ここのつ", romaji: "kokonotsu", meaning: "nine (things)", kind: "kanji", emoji: "9️⃣", lesson: 49, sec: "7/22" },
+  { term: "十", reading: "とお", romaji: "tō", meaning: "ten (things) — note: とお, not じゅう, in this counter", kind: "kanji", emoji: "🔟", lesson: 49, sec: "7/22" },
+
+  { term: "風", reading: "かぜ", romaji: "kaze", meaning: "wind", kind: "kanji", emoji: "🌬️", lesson: 50, sec: "7/23" },
+  { term: "美しい", reading: "うつくしい", romaji: "utsukushii", meaning: "beautiful (い-adj)", kind: "kanji", emoji: "🌸", lesson: 50, sec: "7/23" },
+  { term: "蝶々", reading: "ちょうちょう", romaji: "chōchō", meaning: "butterfly", kind: "kanji", emoji: "🦋", lesson: 50, sec: "7/23" },
+  { term: "目", reading: "め", romaji: "me", meaning: "eye; eyes", kind: "kanji", emoji: "👁️", lesson: 50, sec: "7/23" },
+  { term: "命", reading: "いのち", romaji: "inochi", meaning: "life", kind: "kanji", emoji: "🌱", lesson: 50, sec: "7/23" },
+  { term: "でしょう", reading: "でしょう", romaji: "deshō", meaning: "probably; right? — rising = asking, falling = fairly sure", kind: "hiragana", emoji: "🤔", lesson: 50, sec: "7/23" },
+  { term: "どのぐらい", reading: "どのぐらい", romaji: "dono gurai", meaning: "how much; how long", kind: "hiragana", emoji: "📏", lesson: 50, sec: "7/23" },
+  { term: "〜く", reading: "〜く", romaji: "~ku", meaning: "makes an い-adjective adverbial: 早い → 早く 'quickly'", kind: "hiragana", emoji: "⚙️", lesson: 50, sec: "7/23" },
+
+  { term: "お気に入り", reading: "おきにいり", romaji: "okiniiri", meaning: "favorite", kind: "kanji", emoji: "⭐", lesson: 51, sec: "7/24" },
+  { term: "問題ない", reading: "もんだいない", romaji: "mondai nai", meaning: "no problem", kind: "kanji", emoji: "👌", lesson: 51, sec: "7/24" },
+
+  { term: "草", reading: "くさ", romaji: "kusa", meaning: "grass", kind: "kanji", emoji: "🌿", lesson: 52, sec: "7/27" },
+  { term: "花", reading: "はな", romaji: "hana", meaning: "flower", kind: "kanji", emoji: "🌸", lesson: 52, sec: "7/27" },
+
+  { term: "幸せに", reading: "しあわせに", romaji: "shiawase ni", meaning: "happily (from 幸せ shiawase 'happiness')", kind: "kanji", emoji: "😊", lesson: 53, sec: "7/29" },
+  { term: "教え", reading: "おしえ", romaji: "oshie", meaning: "teaching; doctrine", kind: "kanji", emoji: "📖", lesson: 53, sec: "7/29" },
+  { term: "正義", reading: "せいぎ", romaji: "seigi", meaning: "justice; righteousness", kind: "kanji", emoji: "⚖️", lesson: 53, sec: "7/29" },
+  { term: "福音", reading: "ふくいん", romaji: "fukuin", meaning: "gospel", kind: "kanji", emoji: "📜", lesson: 53, sec: "7/29" },
+  { term: "忘れず", reading: "わすれず", romaji: "wasurezu", meaning: "without forgetting (from 忘れる wasureru)", kind: "kanji", emoji: "🧠", lesson: 53, sec: "7/29" },
+
+  { term: "夜", reading: "よる", romaji: "yoru", meaning: "night", kind: "kanji", emoji: "🌙", lesson: 54, sec: "7/30" },
+  { term: "悲しみ", reading: "かなしみ", romaji: "kanashimi", meaning: "sorrow; grief", kind: "kanji", emoji: "😢", lesson: 54, sec: "7/30" },
+  { term: "救い", reading: "すくい", romaji: "sukui", meaning: "salvation; rescue", kind: "kanji", emoji: "🙏", lesson: 54, sec: "7/30" },
+  { term: "雲", reading: "くも", romaji: "kumo", meaning: "cloud", kind: "kanji", emoji: "☁️", lesson: 54, sec: "7/30" },
+  { term: "力", reading: "ちから", romaji: "chikara", meaning: "strength; power", kind: "kanji", emoji: "💪", lesson: 54, sec: "7/30" },
+  { term: "贖い", reading: "あがない", romaji: "aganai", meaning: "atonement; redemption", kind: "kanji", emoji: "✝️", lesson: 54, sec: "7/30" },
+  { term: "王", reading: "おう", romaji: "ō", meaning: "king", kind: "kanji", emoji: "👑", lesson: 54, sec: "7/30" },
+  { term: "喜び", reading: "よろこび", romaji: "yorokobi", meaning: "joy; delight", kind: "kanji", emoji: "🎉", lesson: 54, sec: "7/30" },
+  { term: "我", reading: "われ", romaji: "ware", meaning: "I; we (literary/formal — 我々 wareware = 'we')", kind: "kanji", emoji: "🙋", lesson: 54, sec: "7/30" },
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -916,6 +974,37 @@ function mergeScripts(localRaw, cloudRaw) {   // union by id, preferring the ful
   });
   return JSON.stringify(Array.from(byId.values()));
 }
+// 入力 state: the immersion history is an append-only log, so the generic
+// "newest whole snapshot wins" rule would silently drop a session rated on the other
+// device. Union the log instead and keep the higher rating count per side.
+function mergeInput(localRaw, cloudRaw) {
+  let local = null, cloud = null;
+  try { local = localRaw ? JSON.parse(localRaw) : null; } catch (e) {}
+  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : null; } catch (e) {}
+  if (!cloud) return localRaw;
+  if (!local) return cloudRaw;
+  const seen = new Set();
+  const history = [...(local.history || []), ...(cloud.history || [])]
+    .filter((h) => { const k = h.itemId + "|" + h.at; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => b.at - a.at).slice(0, 400);
+  const newer = (cloud.levels?.updatedAt || 0) > (local.levels?.updatedAt || 0) ? cloud : local;
+  const items = { ...(local.items || {}) };
+  Object.entries(cloud.items || {}).forEach(([id, v]) => {
+    const ex = items[id];
+    if (!ex || (v.ratings || 0) > (ex.ratings || 0)) items[id] = v;   // more ratings = better informed
+  });
+  const byUrl = new Map([...(local.custom || []), ...(cloud.custom || [])].map((c) => [c.url, c]));
+  return JSON.stringify({
+    ...local, ...newer, levels: newer.levels, history, items,
+    counts: { listening: Math.max(local.counts?.listening || 0, cloud.counts?.listening || 0),
+              reading: Math.max(local.counts?.reading || 0, cloud.counts?.reading || 0) },
+    custom: Array.from(byUrl.values()),
+    hidden: Array.from(new Set([...(local.hidden || []), ...(cloud.hidden || [])])),
+    pending: (local.pending || []).concat(cloud.pending || []).filter((p) => {
+      const k = "p" + p.itemId + p.at; if (seen.has(k)) return false; seen.add(k); return true;
+    }).slice(0, 6),
+  });
+}
 function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
   const out = { ...localSnap };
   const keys = new Set([...Object.keys(localSnap), ...Object.keys(cloudSnap)]);
@@ -923,6 +1012,7 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
     if (k === "jpn101:deck") { out[k] = mergeDeck(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:days") { out[k] = mergeDays(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:input") { out[k] = mergeInput(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:deckVersion") { out[k] = String(Math.max(Number(localSnap[k] || 0), Number(cloudSnap[k] || 0))); return; }
     if (!(k in localSnap)) { out[k] = cloudSnap[k]; return; }   // new key we don't have locally yet
     if (k in cloudSnap && cloudUpdatedAt && cloudUpdatedAt > (localLastPulled || 0)) out[k] = cloudSnap[k];   // secondary keys: newer whole snapshot wins
@@ -1010,21 +1100,70 @@ function syncRequestOptions(extra) {
   return { url: SYNC_ENDPOINT + "?code=" + encodeURIComponent(getSyncCode()), opts };
 }
 
-async function pushCloudNow() {   // immediate, non-debounced — used right after sign-in so existing local progress uploads without waiting on the next study action
+// ── saving progress to the cloud ──
+// Progress is the one thing in here that can't be regenerated, so a failed save must
+// never be silent. Three things this guards against, all of which were live bugs:
+//   1. fetch() resolves for a 401/500 too — an unchecked response counted a rejected
+//      write as a success, so the app believed it had saved when it hadn't.
+//   2. A failure had no retry: the data sat local-only forever with no indication.
+//   3. The 2.5s debounce meant answering a card and closing the tab within 2.5s
+//      dropped that save entirely.
+const SYNC_PENDING_KEY = "jpn101:syncPending";
+let _syncState = "idle";            // idle | saving | saved | pending
+const _syncWatchers = new Set();
+function setSyncState(s) {
+  _syncState = s;
+  _syncWatchers.forEach((fn) => { try { fn(s); } catch (e) {} });
+}
+function watchSyncState(fn) { _syncWatchers.add(fn); return () => _syncWatchers.delete(fn); }
+function syncStateNow() { return _syncState; }
+function markSyncPending() { try { window.localStorage.setItem(SYNC_PENDING_KEY, String(Date.now())); } catch (e) {} }
+function clearSyncPending() { try { window.localStorage.removeItem(SYNC_PENDING_KEY); } catch (e) {} }
+function hasSyncPending() { try { return !!window.localStorage.getItem(SYNC_PENDING_KEY); } catch (e) { return false; } }
+
+let _retryTimer = null;
+async function pushCloudNow({ attempt = 0, keepalive = false } = {}) {
+  if (_cloudPushTimer) { clearTimeout(_cloudPushTimer); _cloudPushTimer = null; }
+  setSyncState("saving");
   try {
     const { url, opts } = syncRequestOptions({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
+      keepalive,                        // lets the request outlive the page on pagehide
     });
-    await fetch(url, opts);
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error("save rejected: HTTP " + res.status);
+    clearSyncPending();
+    setSyncState("saved");
     return true;
-  } catch (e) { return false; /* offline or endpoint unreachable — local data is still safe */ }
+  } catch (e) {
+    // keep a durable flag so a failure survives a reload and gets retried later
+    markSyncPending();
+    setSyncState("pending");
+    if (attempt < 5) {
+      const wait = Math.min(30000, 1000 * Math.pow(2, attempt));   // 1s,2s,4s,8s,16s
+      clearTimeout(_retryTimer);
+      _retryTimer = setTimeout(() => pushCloudNow({ attempt: attempt + 1 }), wait);
+    }
+    return false;
+  }
 }
 let _cloudPushTimer = null;
 function scheduleCloudPush() {
   if (_cloudPushTimer) clearTimeout(_cloudPushTimer);
-  _cloudPushTimer = setTimeout(pushCloudNow, 2500);
+  _cloudPushTimer = setTimeout(() => pushCloudNow(), 2500);
+}
+if (typeof window !== "undefined") {
+  // retry the moment there's any reason to think it might work now
+  window.addEventListener("online", () => { if (hasSyncPending()) pushCloudNow(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && hasSyncPending()) pushCloudNow();
+  });
+  // flush a debounced-but-not-yet-sent save before the page goes away
+  window.addEventListener("pagehide", () => {
+    if (_cloudPushTimer || hasSyncPending()) pushCloudNow({ keepalive: true });
+  });
 }
 async function pullAndMergeCloud() {
   try {
@@ -1046,6 +1185,22 @@ async function pullAndMergeCloud() {
 const KIND_LABEL = { kanji: "漢字", hiragana: "ひらがな", katakana: "カタカナ", mixed: "混" };
 
 /* ── daily study log: reviews, hits, think-time, new-word intake, per day ── */
+/* Desired retention — the single knob FSRS exposes, and the only one worth exposing.
+   0.90 means "schedule each card for the day it has a 90% chance of being recalled".
+   Lower it and you review less but forget more; raise it and you review far more for a
+   little extra recall. 0.90 is the researched default and where the review-count curve
+   starts climbing steeply. */
+const RETENTION_KEY = "jpn101:retention";
+let retentionTarget = 0.9;
+try {
+  const r = Number(window.localStorage.getItem(RETENTION_KEY));
+  if (r >= 0.7 && r <= 0.97) retentionTarget = r;
+} catch (e) {}
+function setRetention(r) {
+  retentionTarget = Math.min(0.97, Math.max(0.7, r));
+  try { window.localStorage.setItem(RETENTION_KEY, String(retentionTarget)); } catch (e) {}
+}
+
 const DAYS_KEY = "jpn101:days";
 let _days = null;
 async function loadDays() {
@@ -1059,6 +1214,43 @@ async function logDay({ ok, ms, deck, fnew }) {
   d.rev += 1; if (ok) d.ok += 1; if (ms) d.ms += ms;
   if (deck === "freq") { d.frev += 1; if (fnew) d.fnew += 1; }
   sSet(DAYS_KEY, JSON.stringify(_days));
+}
+
+/* ── streak ──
+   Counts back from today, and from yesterday if today hasn't been studied yet — so the
+   streak doesn't read as broken at 9am before you've started. A day counts if anything
+   was reviewed at all; the point is showing up, not hitting a number. */
+function streakFrom(days) {
+  if (!days) return 0;
+  const key = (d) => new Date(d).toISOString().slice(0, 10);
+  const has = (d) => { const v = days[key(d)]; return !!(v && (v.rev || 0) > 0); };
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  let cursor = new Date(today);
+  if (!has(cursor)) cursor.setDate(cursor.getDate() - 1);   // grace: today isn't over
+  let n = 0;
+  while (has(cursor) && n < 3650) { n++; cursor.setDate(cursor.getDate() - 1); }
+  return n;
+}
+
+/* ── the mascot ──
+   Pixel-art nigiri, one animated GIF per mood, generated by tools/make-mascot.mjs and
+   inlined as data URIs — about 2.5KB for all five, so no extra request and nothing to
+   load. GIF rather than SVG because pixel art is what was asked for, and a hand-rolled
+   encoder (tools/gifenc.mjs) turned out to be ~90 lines; the earlier claim that a GIF
+   wasn't practical here was wrong.
+   States are earned rather than decorative: asleep when you haven't studied, worried when
+   reviews pile up, delighted on a streak. A mascot that always looks happy carries no
+   information. */
+function mascotState({ studiedToday, dueCount, streak }) {
+  if (!studiedToday) return dueCount > 30 ? "worried" : "sleeping";
+  if (streak >= 7) return "proud";
+  if (dueCount > 40) return "worried";
+  return "happy";
+}
+function Mascot({ state, size = 84 }) {
+  const src = MASCOT_GIFS[state] || MASCOT_GIFS.waiting;
+  return <img className={"tc-mascot is-" + state} src={src} width={size} height={size * 30 / 32}
+              alt={"Study buddy, looking " + state} draggable="false" />;
 }
 
 function detectKind(term) {
@@ -1189,6 +1381,14 @@ export default function JpnFlashcards() {
   const restoreDeck = useCallback(async (deck) => { persist(deck); }, [persist]);
 
 
+  const setMnemonic = useCallback((id, text) => {
+    setCards((prev) => {
+      const next = prev.map((c) => (c.id === id ? { ...c, mn: text.slice(0, 120) } : c));
+      sSet(STORE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const recordResult = useCallback((id, got, dir, ms) => {
     const t = ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0;  // sanity bounds: ignore misfires & walked-away cards
     logDay({ ok: got, ms: t, deck: "class" });
@@ -1196,16 +1396,37 @@ export default function JpnFlashcards() {
       const next = prev.map((c) => {
         if (c.id !== id) return c;
         const firstProdTry = dir === "prod" && (c.rseen || 0) === 0;   // first attempt at producing = learning, not a lapse
-        const delta = got ? 0.05 : firstProdTry ? 0 : -0.15;
+        /* Hesitation predicts failure. In this deck, answers given in under 3 seconds
+            are 87% correct and answers taking over 6 seconds are 71% correct — so a slow
+            "got it" is much weaker evidence than a fast one, and treating them the same
+            is why 503 studied cards produced only ten at level 4.
+            Fast+right now advances two levels, slow+right advances one, and a right answer
+            that took more than 10 seconds holds level instead of advancing. */
+        const fast = got && t > 0 && t < 3000;
+        const crawl = got && t >= 10000;
+        const delta = got ? (fast ? 0.08 : crawl ? 0 : 0.05) : firstProdTry ? 0 : -0.15;
+        /* FSRS runs alongside the old counters rather than replacing them: seen/correct/
+           level still drive the existing UI, and keeping them means nothing already
+           recorded is lost if this needs rolling back. The schedule, though, now comes
+           from the memory model. */
+        const grade = gradeFromLatency(got, t);
+        /* Recognition and production are tracked separately. Being able to read 火曜日 says
+           very little about being able to produce it from "Tuesday", so one shared
+           stability would over-schedule one direction and under-schedule the other. */
+        const isProd = dir === "prod";
+        const prior = isProd ? (c.rfsrs || null) : (c.fsrs || seedFromHistory(c));
+        const nextState = fsrsReview(prior, grade, Date.now(), retentionTarget);
+        const fsrs = isProd ? c.fsrs : nextState;
+        const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
-        const base = { ...c, ease, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
+        const base = { ...c, ease, fsrs, rfsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
         if (dir === "prod") {                       // EN→JP recall (production)
           return {
             ...base,
             rseen: (c.rseen || 0) + 1,
             rcorrect: (c.rcorrect || 0) + (got ? 1 : 0),
             rms: (c.rms || 0) + t, rmsN: (c.rmsN || 0) + (t ? 1 : 0),
-            rlevel: got ? Math.min(5, (c.rlevel || 0) + 1) : Math.max(0, (c.rlevel || 0) - 2),
+            rlevel: got ? Math.min(5, (c.rlevel || 0) + (fast ? 2 : crawl ? 0 : 1)) : Math.max(0, (c.rlevel || 0) - 2),
           };
         }
         return {                                    // JP→EN recognition
@@ -1213,7 +1434,7 @@ export default function JpnFlashcards() {
           seen: (c.seen || 0) + 1,
           correct: (c.correct || 0) + (got ? 1 : 0),
           ms: (c.ms || 0) + t, msN: (c.msN || 0) + (t ? 1 : 0),
-          level: got ? Math.min(5, (c.level || 0) + 1) : Math.max(0, (c.level || 0) - 2),
+          level: got ? Math.min(5, (c.level || 0) + (fast ? 2 : crawl ? 0 : 1)) : Math.max(0, (c.level || 0) - 2),
         };
       });
       sSet(STORE_KEY, JSON.stringify(next));
@@ -1240,7 +1461,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -1251,11 +1472,13 @@ export default function JpnFlashcards() {
         {!ready ? (
           <div className="tc-empty">Loading your deck…</div>
         ) : tab === "study" ? (
-          <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} />
+          <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
         ) : tab === "freq" ? (
           <Freq />
         ) : tab === "drill" ? (
           <ConjDrill />
+        ) : tab === "input" ? (
+          <Input cards={cards} />
         ) : tab === "write" ? (
           <Write cards={cards} onResult={recordResult} />
         ) : tab === "kana" ? (
@@ -1271,7 +1494,7 @@ export default function JpnFlashcards() {
 }
 
 /* ───────────────────────────── STUDY ───────────────────────────── */
-function Study({ cards, onResult, goAdd }) {
+function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [showRomaji, setShowRomaji] = useState(false); // front rōmaji on/off
   const [showPitch, setShowPitch] = useState(true);    // back pitch ⸢ ⸣ marks on/off
   const [queue, setQueue] = useState([]);              // working order; missed cards get re-inserted
@@ -1303,6 +1526,10 @@ function Study({ cards, onResult, goAdd }) {
   const [running, setRunning] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
+  const [prodSet, setProdSet] = useState(() => new Set());
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [flash, setFlash] = useState(0);
   const shownRef = useRef(0);          // when the current card appeared
   const thinkRef = useRef(null);       // ms from shown → first reveal (think time)
   useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, running]);
@@ -1331,17 +1558,51 @@ function Study({ cards, onResult, goAdd }) {
   const focusPool = useMemo(() => ranked.slice(0, 12), [ranked]);  // weakest STUDIED words only — matches the Weakest list
   const newCount = useMemo(() => cards.filter((c) => !((c.seen || 0) > 0)).length, [cards]);
   const coverage = newCount > 12;                            // coverage phase: plenty of untouched words left
+  /* Session mix.
+     The old rule was `newCount > 12` → half the session is brand-new words. With 332
+     untouched cards that condition is permanently true, so every session was 8 new words
+     against 8 reviews no matter how much overdue work had piled up. Accuracy fell from
+     98% to 36% over two weeks while effort went up, because most of what came round was
+     material never seen before.
+     New words are never capped to zero — there are class deadlines — but review debt now
+     earns slots: the more overdue cards there are, the fewer new words share the session.
+     Leeches are excluded here entirely and get their own mode; drilling a word sitting at
+     0% after eight tries inside a normal session just taxes the whole session. */
   const smartPool = useMemo(() => {
     const now = Date.now();
-    const studied = cards.filter((c) => (c.seen || 0) > 0)
-      .map((c) => ({ c, s: needScore(c, now) }))
-      .sort((a, b) => b.s - a.s)
-      .map((x) => x.c);
+    const SESSION = 16;
+    const studied = cards.filter((c) => (c.seen || 0) > 0 && !isLeech(c));
+    const due = studied.filter((c) => dueness(c, now) >= 1)
+      .sort((a, b) => dueness(b, now) - dueness(a, now));          // most overdue first
+    const rest = studied.filter((c) => dueness(c, now) < 1)
+      .map((c) => ({ c, s: needScore(c, now) })).sort((a, b) => b.s - a.s).map((x) => x.c);
     const fresh = cards.filter((c) => !((c.seen || 0) > 0))
-      .sort((a, b) => (a.lesson || 0) - (b.lesson || 0));   // earliest untouched lessons first
-    if (coverage) return [...fresh.slice(0, 8), ...studied.slice(0, 8)];   // learn new first, then review
-    return [...studied.slice(0, 12), ...fresh.slice(0, Math.min(4, fresh.length))];
-  }, [cards, coverage]);
+      .sort((a, b) => (a.lesson || 0) - (b.lesson || 0));           // earliest untouched lessons first
+
+    const newSlots = Math.min(fresh.length, due.length >= 40 ? 3 : due.length >= 15 ? 5 : 8);
+    // Cards owed a backwards retrieval get their own reserved slots, drawn from the whole
+    // deck rather than from the recognition-due list they will never appear in.
+    const prod = cards.filter((c) => prodDue(c, now)).sort((a, b) => (a.rfsrs?.due || 0) - (b.rfsrs?.due || 0));
+    const prodSlots = Math.min(prod.length, 4);
+    const reviewSlots = SESSION - newSlots - prodSlots;
+    const review = [...due, ...rest].slice(0, Math.max(0, reviewSlots));
+    const chosenProd = prod.slice(0, prodSlots).filter((c) => !review.includes(c));
+
+    /* Spread the production cards through the session instead of appending them as a
+       block. A run of four backwards cards in a row lets you settle into "this is the
+       reverse bit" — and predictability is exactly what interleaving is meant to remove.
+       Mixed in, you cannot tell which direction is coming, so each card requires deciding
+       what kind of retrieval this is before doing it. That extra step is the point. */
+    const body = [...review];
+    const gap = chosenProd.length ? Math.max(1, Math.floor(body.length / (chosenProd.length + 1))) : 0;
+    chosenProd.forEach((c, i) => {
+      const at = Math.min(body.length, gap * (i + 1) + i);
+      body.splice(at, 0, c);
+    });
+    return [...body, ...fresh.slice(0, newSlots)];
+  }, [cards]);
+  const leeches = useMemo(() => cards.filter(isLeech), [cards]);
+
   const dueCount = useMemo(() => {
     const now = Date.now();
     return cards.filter((c) => (c.seen || 0) > 0 && dueness(c, now) >= 1).length;
@@ -1351,6 +1612,43 @@ function Study({ cards, onResult, goAdd }) {
     return Math.round(cards.filter((c) => (c.level || 0) >= 4).length / cards.length * 100);
   }, [cards]);
 
+  /* ── buddy state ── */
+  const [days, setDays] = useState(null);
+  useEffect(() => { loadDays().then((d) => setDays({ ...d })); }, [running]);
+  const streak = useMemo(() => streakFrom(days), [days]);
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
+  const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
+  const [retention, setRetentionState] = useState(retentionTarget);
+  /* What the memory model actually predicts. Shown because a scheduler you can't inspect
+     is a scheduler you don't trust — and because "34 words are fading" is a far better
+     reason to open the app than "you have 392 due". */
+  const forecast = useMemo(() => {
+    const now = Date.now();
+    let fading = 0, solid = 0, week = 0;
+    for (const c of cards) {
+      if (!((c.seen || 0) > 0)) continue;
+      const r = recallChance(c, now);
+      if (r == null) continue;
+      if (r < 0.9) fading++;
+      if (r >= 0.9) solid++;
+      const st = c.fsrs || seedFromHistory(c);
+      if (st && st.due && st.due - now < 7 * 86400000) week++;
+    }
+    return { fading, solid, week };
+  }, [cards]);
+  const buddy = useMemo(() => {
+    const state = mascotState({ studiedToday: todayRev > 0, dueCount, streak });
+    // One honest sentence, matched to the state. No fake enthusiasm when the numbers
+    // don't support it — the whole reason the old "57% never missed" felt hollow.
+    const line =
+      state === "sleeping" ? (streak > 0 ? `${streak}-day streak — keep it alive?` : "Ready when you are.")
+      : state === "worried" ? `${dueCount} reviews have piled up. Little and often beats a big catch-up.`
+      : state === "proud" ? `${streak} days straight. This is the part that actually works.`
+      : knownCount > 0 ? `${knownCount} words are properly solid now.`
+      : "Nice — that's a start.";
+    return { state, line };
+  }, [todayRev, dueCount, streak, knownCount]);
   const batches = useMemo(() => {
     const map = new Map();
     cards.forEach((c) => { const sec = sectionOf(c); if (!map.has(sec)) map.set(sec, []); map.get(sec).push(c); });
@@ -1387,11 +1685,17 @@ function Study({ cards, onResult, goAdd }) {
     return batches.slice().sort((a, b) => a.rate - b.rate)[0];
   }, [batches]);
 
-  const start = useCallback((subset, preordered) => {
+  const lastPool = useRef(null);
+  const start = useCallback((subset, preordered, opts) => {
     const pool0 = (subset && subset.length) ? subset : cards;
-    // leech throttle: drilling stuck words harder doesn't work — cap them per session
-    const leeches = pool0.filter(isLeech);
-    const pool = leeches.length > 3 ? pool0.filter((c) => !isLeech(c)).concat(leeches.slice(0, 3)) : pool0;
+    lastPool.current = { subset: (subset && subset.length) ? subset : null, preordered, opts };
+    /* Leech throttle: drilling stuck words harder doesn't work, so a normal session gets
+       at most three. It must NOT apply when the session IS the stuck words — that turned
+       "Trouble words · 62 stuck" into the same three cards forever. */
+    const stuck = pool0.filter(isLeech);
+    const pool = (opts && opts.leechSession) || stuck.length <= 3
+      ? pool0
+      : pool0.filter((c) => !isLeech(c)).concat(stuck.slice(0, 3));
     const ordered = (preordered ? [...pool] : pool
       .map((c) => ({ c, k: masteryScore(c) + Math.random() * 0.3 }))  // weakest (lowest) first; small stable jitter
       .sort((a, b) => a.k - b.k)
@@ -1399,12 +1703,23 @@ function Study({ cards, onResult, goAdd }) {
     setQueue(ordered);
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
+    setCombo(0); setBestCombo(0);
+    /* Interleave production into the session rather than leaving it on a separate tab you
+       have to remember to visit. Roughly a third of the cards that have earned it get
+       asked backwards — enough that the direction is genuinely unpredictable, which is
+       the point: a block of ten recognition cards lets you settle into one mode, and
+       mixing retrieval types is what makes each retrieval effortful. Capped so a session
+       never becomes mostly production, which is demoralising at this stage. */
+    const nowP = Date.now();
+    const owed = ordered.filter((c) => prodDue(c, nowP));
+    setProdSet(new Set(owed.slice(0, 6).map((c) => c.id)));
     missRef.current = {};
     setHook(null); setDebrief(null);
     setFlipped(false); setRunning(true);
   }, [cards, coverage]);
 
   const card = queue[pos];
+  const isProd = !!(card && prodSet.has(card.id));
   const done = running && pos >= queue.length;
 
   useEffect(() => {                                   // auto-debrief when a session ends with misses
@@ -1421,7 +1736,14 @@ function Study({ cards, onResult, goAdd }) {
     const c = queue[pos];
     if (!c) return;
     setHook(null);
-    onResult(c.id, got, undefined, thinkRef.current || undefined);
+    const think = thinkRef.current || 0;
+    // The combo counts instant recall, not merely correct answers — it rewards the thing
+    // that actually correlates with remembering the word tomorrow.
+    if (got && think > 0 && think < 3000) {
+      setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
+      setFlash(Date.now());
+    } else if (!got) setCombo(0);
+    onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined);
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       setPassed((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -1463,6 +1785,23 @@ function Study({ cards, onResult, goAdd }) {
   if (!running) {
     return (
       <div className="tc-study-setup">
+        <div className="tc-buddy">
+          <Mascot state={buddy.state} />
+          <div className="tc-buddytext">
+            <p className="tc-buddyline">{buddy.line}</p>
+            <div className="tc-buddystats">
+              <span className={"tc-stat" + (streak > 0 ? " is-on" : "")}>
+                <b>{streak}</b> day{streak === 1 ? "" : "s"} in a row
+              </span>
+              {/* Deliberately counts only level 4+. "Never missed" was flattering and
+                  meaningless — most of those had been seen once. This number is small and
+                  moves slowly, which is the point: it can be trusted. */}
+              <span className="tc-stat"><b>{knownCount}</b> words solid</span>
+              {todayRev > 0 && <span className="tc-stat"><b>{todayRev}</b> today</span>}
+              {forecast.fading > 0 && <span className="tc-stat"><b>{forecast.fading}</b> fading</span>}
+            </div>
+          </div>
+        </div>
         <div className="tc-hero">
           {dueCount > 0 ? (
             <>
@@ -1484,22 +1823,44 @@ function Study({ cards, onResult, goAdd }) {
             </>
           )}
         </div>
-        {smartBatch && (
-          <button className="tc-btn tc-btn-primary tc-start" onClick={() => start(smartBatch.cards)}>
-            Today's section · {smartBatch.name} ({smartBatch.cards.length})
-          </button>
-        )}
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
             🧠 Smart Review · {smartPool.length} cards{dueCount > 0 ? ` · ${dueCount} due` : ""}
           </button>
         )}
+        {/* Stuck words get their own session instead of being sprinkled through every
+            other one. 歩いて sitting at 0% after eight attempts doesn't need more of the
+            same drill — it needs to be looked at deliberately, and it shouldn't be taxing
+            sessions that are otherwise going fine. */}
+        {leeches.length > 0 && (
+          <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12), false, { leechSession: true })}>
+            🩹 Trouble words · {leeches.length} stuck
+          </button>
+        )}
         {smartPool.length > 0 && (
-          <p className="tc-smarthint">{coverage
-            ? `Learning new words first (${newCount} untouched left), mixed with review.`
-            : `Your weakest, most-missed & overdue — plus a few new${newCount > 0 ? ` (${newCount} left)` : ""}.`}</p>
+          <p className="tc-smarthint">{
+            dueCount >= 15
+              ? `Mostly catch-up while ${dueCount} are due, plus a few new ones.`
+              : `Your weakest and most overdue, plus new words${newCount > 0 ? ` (${newCount} left)` : ""}.`
+          }</p>
         )}
 
+        {ranked.length > 0 && (
+          <div className="tc-retention">
+            <span className="tc-retlabel">Aim to remember</span>
+            <div className="tc-kanaseg">
+              {[[0.85, "85%"], [0.9, "90%"], [0.95, "95%"]].map(([v, label]) => (
+                <button key={v} className={"tc-fchip" + (Math.abs(retention - v) < 0.001 ? " is-on" : "")}
+                  onClick={() => { setRetention(v); setRetentionState(v); }}>{label}</button>
+              ))}
+            </div>
+            <p className="tc-smarthint">
+              {retention <= 0.85 ? "Fewer reviews, more forgetting. Good when you're buried."
+                : retention >= 0.95 ? "Many more reviews for a little more recall. Use before an exam."
+                : "The researched default — reviews land just as a word starts to slip."}
+            </p>
+          </div>
+        )}
         {ranked.length > 0 && (
           <div className="tc-insights">
             <div className="tc-masterystrip">
@@ -1558,6 +1919,9 @@ function Study({ cards, onResult, goAdd }) {
         <p className="tc-eyebrow">Session complete</p>
         <div className="tc-bignum">{pct}<span>%</span></div>
         <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {poolSize} cards</p>
+        {bestCombo >= 2 && (
+          <p className="tc-donecombo">best run: <b>{bestCombo}</b> instant recalls back to back</p>
+        )}
         {debrief && debrief.busy && <p className="tc-debrief tc-debrief-busy">✨ Coach is looking at what you missed…</p>}
         {debrief && debrief.text && <p className="tc-debrief">✨ {debrief.text}</p>}
         {debrief && debrief.err && missedCards.length > 0 && (
@@ -1567,7 +1931,10 @@ function Study({ cards, onResult, goAdd }) {
           {missedCards.length > 0 && (
             <button className="tc-btn tc-btn-primary" onClick={() => start(missedCards)}>Review the {missedCards.length} you missed</button>
           )}
-          <button className="tc-btn" onClick={() => start()}>Go again</button>
+          <button className="tc-btn" onClick={() => {
+            const L = lastPool.current;
+            start(L && L.subset ? L.subset : smartPool, L ? L.preordered : true, L ? L.opts : undefined);
+          }}>Go again</button>
           <button className="tc-btn" onClick={() => setRunning(false)}>Done</button>
         </div>
       </div>
@@ -1579,6 +1946,11 @@ function Study({ cards, onResult, goAdd }) {
       <div className="tc-progress">
         <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
         <span className="tc-progtext">{passed.size} / {poolSize}</span>
+        {combo >= 2 && (
+          <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
+            {combo}<i>×</i>
+          </span>
+        )}
         <button className={"tc-rpill" + (showRomaji ? " is-on" : "")}
           aria-pressed={showRomaji} onClick={() => setShowRomaji((v) => !v)}>
           Rōmaji {showRomaji ? "on" : "off"}
@@ -1596,21 +1968,51 @@ function Study({ cards, onResult, goAdd }) {
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
            role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
         <div className="tc-card-inner">
-          {/* FRONT — Japanese: kanji + kana (+ rōmaji if on) */}
+          {/* FRONT — normally the Japanese; on a production card, the English, and you
+              have to come up with the Japanese yourself. No reading, no rōmaji and no
+              audio button here: every one of those would hand you the answer. */}
           <div className="tc-face tc-front">
-            <span className="tc-kindchip">{KIND_LABEL[card.kind] || ""}</span>
-            <div className="tc-term">{card.term}</div>
-            <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
-            {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
-            <span className="tc-flipcue">tap to flip</span>
+            {isProd ? (
+              <>
+                <span className="tc-kindchip tc-prodchip">→ 日本語</span>
+                {card.emoji && <div className="tc-emoji">{card.emoji}</div>}
+                <div className="tc-prodprompt">{card.meaning}</div>
+                <span className="tc-flipcue">say it, then tap</span>
+              </>
+            ) : (
+              <>
+                <span className="tc-kindchip">{KIND_LABEL[card.kind] || ""}</span>
+                <div className="tc-term">{card.term}</div>
+                <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
+                {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
+                <span className="tc-flipcue">tap to flip</span>
+              </>
+            )}
           </div>
           {/* BACK — meaning + picture + pronunciation (rōmaji always shown) */}
           <div className="tc-face tc-back">
-            {card.emoji && <div className="tc-emoji">{card.emoji}</div>}
-            <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
+            {isProd ? (
+              <div className="tc-term tc-prodanswer">{card.term}</div>
+            ) : (
+              card.emoji && <div className="tc-emoji">{card.emoji}</div>
+            )}
+            {!isProd && <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>}
+            {isProd && <div className="tc-reading-front">{card.reading}</div>}
             <div className="tc-romaji">{showPitch && card.pitch ? card.pitch : card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
             {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen || 0}× · {card.seen ? Math.round(((card.correct || 0) / card.seen) * 100) : 0}%</span>}
-            {isLeech(card) && <span className="tc-leechtag">🩹 stuck word — try writing it</span>}
+            {isLeech(card) && (
+              /* The keyword mnemonic: link the Japanese sound to an English word you
+                 already know, plus a vivid image. Pairing it with retrieval practice
+                 beats either alone for foreign-language vocabulary, and it is the one
+                 technique aimed squarely at words that repetition alone has failed to
+                 shift — which is what a leech is. Typed once, shown on every review. */
+              <div className="tc-mnbox" onClick={(e) => e.stopPropagation()}>
+                <span className="tc-leechtag">🩹 stuck — give it a hook</span>
+                <input className="tc-mnin" value={card.mn || ""} placeholder="sounds like… / picture…"
+                  onChange={(e) => onMnemonic(card.id, e.target.value)} />
+              </div>
+            )}
+            {!isLeech(card) && card.mn ? <p className="tc-mnshow">🔗 {card.mn}</p> : null}
             {hook && hook.term === card.term ? (
               <p className="tc-hooktext" onClick={(e) => e.stopPropagation()}>
                 {hook.busy ? "✨ thinking…" : hook.err ? "Couldn't reach the AI — try again later." : "✨ " + hook.text}
@@ -1655,8 +2057,16 @@ function masteryScore(c) {            // higher = stronger; seen cards only
 // ── spaced repetition ──
 const DAY = 86400000;
 const REVIEW_INTERVALS = [0.007 * DAY, 1 * DAY, 3 * DAY, 7 * DAY, 16 * DAY, 35 * DAY]; // per mastery level (L0…L5)
-function recallUnlocked(c) {          // EN→JP mode retired — cards always show Japanese first
-  return false;
+/* Production (EN→JP) unlocks once recognition is solid — stability of a week or more.
+   Asking you to produce a word you can't yet recognise is just failure with extra steps;
+   asking only ever to recognise leaves you able to read Japanese and unable to speak it.
+   Recognition reliably precedes production in L2 acquisition, so this gates on the
+   recognition state and then starts building the harder direction on top. */
+const PROD_UNLOCK_STABILITY = 7;    // days
+function recallUnlocked(c) {
+  if (!((c.seen || 0) > 0)) return false;
+  const st = c.fsrs || seedFromHistory(c);
+  return !!(st && st.S >= PROD_UNLOCK_STABILITY);
 }
 function effLevel(c) {                // true strength = weakest direction once recall unlocks
   const lvl = Math.min(5, c.level || 0);
@@ -1671,11 +2081,60 @@ function isLeech(c) {                 // stuck word: keeps failing despite reps
   const acc = ((c.correct || 0) + (c.rcorrect || 0)) / t;
   return totalMisses(c) >= 6 && acc < 0.6;
 }
-function dueness(c, now) {            // >= 1 means due / overdue for review
+/* >= 1 means due. Under FSRS this is "has recall probability fallen to the target yet",
+   which is a real question about your memory rather than a position on a fixed ladder. */
+function dueness(c, now) {
   const seen = c.seen || 0;
   if (seen === 0) return 0;
-  const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1); // per-card adaptive interval
+  const st = c.fsrs || seedFromHistory(c);
+  if (st && st.S > 0) {
+    const elapsed = (now - (st.last || 0)) / 86400000;
+    const target = intervalFor(st.S, 0.9);
+    return target > 0 ? elapsed / target : 0;
+  }
+  const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1);   // pre-FSRS fallback
   return (now - (c.last || 0)) / interval;
+}
+/* ── shared FSRS plumbing for the mini-decks ──
+   Kana, the conjugation drill and the 10k deck each grew their own scheduler: a hand-tuned
+   priority score over level, accuracy, streak and days-since. They work, but there is no
+   reason kana or verb forms should be scheduled worse than vocabulary, and three
+   near-identical scorers is three places to fix anything. These two functions put every
+   deck in the app on the same memory model. The stat records keep their existing shape —
+   an `fsrs` field is simply added alongside. */
+function statReview(st, ok, ms, now = Date.now()) {
+  const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
+  return fsrsReview(prior, gradeFromLatency(ok, ms), now, retentionTarget);
+}
+/** Higher = drill this sooner. Driven by how far recall has decayed below the target. */
+function statNeed(st, now = Date.now()) {
+  const seen = st && st.seen || 0;
+  if (!seen) return 6;                                    // never drilled → straight to the front
+  const f = st.fsrs || seedFromHistory(st);
+  if (!f || !(f.S > 0)) return 5;
+  const r = retrievability(Math.max(0, (now - (f.last || 0)) / 86400000), f.S);
+  // 1 - r is "how much of this memory has decayed". A card at 50% recall outranks one at
+  // 95% no matter how many times each has been seen, which is the whole point.
+  return (1 - r) * 8 + (st.streak ? 0 : 0.6);
+}
+
+/* Production is scheduled on its own clock. This matters more than it looks: a card only
+   unlocks production once recognition is STABLE, and a stable card is by definition not due
+   for recognition. Selecting the session purely on recognition due-ness therefore surfaces
+   production almost never — the feature would have looked wired up and quietly done nothing.
+   A card is production-due if it has earned the direction and either has never been asked
+   backwards, or its production memory has decayed to the target. */
+function prodDue(c, now) {
+  if (!recallUnlocked(c)) return false;
+  if (!c.rfsrs || !(c.rfsrs.S > 0)) return true;
+  return (c.rfsrs.due || 0) <= now;
+}
+
+/** Probability you'd recall this card right now — used for the UI, not the schedule. */
+function recallChance(c, now) {
+  const st = c.fsrs || seedFromHistory(c);
+  if (!st || !(st.S > 0)) return null;
+  return retrievability(Math.max(0, (now - (st.last || 0)) / 86400000), st.S);
 }
 function needScore(c, now) {          // higher = needs review more (seen cards only)
   const seen = c.seen || 0;
@@ -2056,41 +2515,159 @@ const KANA_DAKU_ROWS = [
   [["ば","バ","ba"],["び","ビ","bi"],["ぶ","ブ","bu"],["べ","ベ","be"],["ぼ","ボ","bo"]],
   [["ぱ","パ","pa"],["ぴ","ピ","pi"],["ぷ","プ","pu"],["ぺ","ペ","pe"],["ぽ","ポ","po"]],
 ];
+// 拗音 yōon — the "modified"/contracted kana: a full-size consonant kana + a SMALL ゃゅょ.
+// These are what trip people up (byu / pyo / hya …) and they never appear in the base 46
+// or dakuten charts, so they need their own drillable set.
+const KANA_YOON_ROWS = [
+  [["きゃ","キャ","kya"],["きゅ","キュ","kyu"],["きょ","キョ","kyo"]],
+  [["しゃ","シャ","sha"],["しゅ","シュ","shu"],["しょ","ショ","sho"]],
+  [["ちゃ","チャ","cha"],["ちゅ","チュ","chu"],["ちょ","チョ","cho"]],
+  [["にゃ","ニャ","nya"],["にゅ","ニュ","nyu"],["にょ","ニョ","nyo"]],
+  [["ひゃ","ヒャ","hya"],["ひゅ","ヒュ","hyu"],["ひょ","ヒョ","hyo"]],
+  [["みゃ","ミャ","mya"],["みゅ","ミュ","myu"],["みょ","ミョ","myo"]],
+  [["りゃ","リャ","rya"],["りゅ","リュ","ryu"],["りょ","リョ","ryo"]],
+  [["ぎゃ","ギャ","gya"],["ぎゅ","ギュ","gyu"],["ぎょ","ギョ","gyo"]],
+  [["じゃ","ジャ","ja"],["じゅ","ジュ","ju"],["じょ","ジョ","jo"]],
+  [["びゃ","ビャ","bya"],["びゅ","ビュ","byu"],["びょ","ビョ","byo"]],
+  [["ぴゃ","ピャ","pya"],["ぴゅ","ピュ","pyu"],["ぴょ","ピョ","pyo"]],
+];
+// The modifier marks themselves. Not syllables — but you can't read or write real words
+// without them (きって, コーヒー, きょう), and they appear in no standard kana chart.
+// Row entries are [hiragana, katakana, romaji, note, kataOnly].
+const KANA_MARK_ROWS = [
+  [["っ","ッ","small tsu","— doubles the next consonant: きって kitte"],
+   ["ー","ー","long mark","— lengthens the vowel: コーヒー kōhī", 1],
+   ["ゃ","ャ","small ya","— builds combos: きゃ kya"],
+   ["ゅ","ュ","small yu","— builds combos: きゅ kyu"],
+   ["ょ","ョ","small yo","— builds combos: きょ kyo"]],
+  [["ぁ","ァ","small a","— builds ファ fa"],
+   ["ぃ","ィ","small i","— builds ティ ti"],
+   ["ぅ","ゥ","small u","— builds トゥ tu"],
+   ["ぇ","ェ","small e","— builds フェ fe"],
+   ["ぉ","ォ","small o","— builds フォ fo"]],
+];
+// Katakana-only extended sounds for loanwords. These are all over this app's own vocab
+// (カフェ, オフィス, フォント, マーケティング, ジェ…) and exist in no gojūon/dakuten chart.
+// hiragana slot just mirrors the katakana — it's only the stable stats id; kataOnly=1
+// keeps these out of hiragana mode entirely, since they have no hiragana spelling.
+const KANA_EXT_ROWS = [
+  [["ファ","ファ","fa",null,1],["フィ","フィ","fi",null,1],["フェ","フェ","fe",null,1],["フォ","フォ","fo",null,1],["フュ","フュ","fyu",null,1]],
+  [["ヴァ","ヴァ","va",null,1],["ヴィ","ヴィ","vi",null,1],["ヴ","ヴ","vu",null,1],["ヴェ","ヴェ","ve",null,1],["ヴォ","ヴォ","vo",null,1]],
+  [["ティ","ティ","ti",null,1],["トゥ","トゥ","tu",null,1],["ディ","ディ","di",null,1],["ドゥ","ドゥ","du",null,1]],
+  [["シェ","シェ","she",null,1],["ジェ","ジェ","je",null,1],["チェ","チェ","che",null,1]],
+  [["ツァ","ツァ","tsa",null,1],["ツィ","ツィ","tsi",null,1],["ツェ","ツェ","tse",null,1],["ツォ","ツォ","tso",null,1]],
+  [["ウィ","ウィ","wi",null,1],["ウェ","ウェ","we",null,1],["ウォ","ウォ","wo",null,1]],
+  [["クァ","クァ","kwa",null,1],["クィ","クィ","kwi",null,1],["クェ","クェ","kwe",null,1],["クォ","クォ","kwo",null,1],["グァ","グァ","gwa",null,1]],
+];
+// Independently toggleable so you can drill everything at once or isolate one weak set.
+// labels stay short on purpose — six of these plus script/mode chips have to fit a phone
+const KANA_GROUPS = [
+  ["base", "46",       KANA_BASE_ROWS],
+  ["daku", "dakuten",  KANA_DAKU_ROWS],
+  ["yoon", "combos",   KANA_YOON_ROWS],
+  ["mark", "marks",    KANA_MARK_ROWS],
+  ["ext",  "extended", KANA_EXT_ROWS],
+];
+const KANA_LENGTHS = [10, 20, 40, "all"];
+const KANA_REQUEUE_GAP = 3, KANA_REQUEUE_CAP = 2;
+const fmtSecs = (ms) => {
+  const s = Math.round(ms / 1000);
+  return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+};
+
 function Kana() {
   const [script, setScript] = useState("hira");     // hira | kata
-  const [withDaku, setWithDaku] = useState(false);  // start with the base 46
-  const [mode, setMode] = useState("drill");        // drill | chart
+  const [sets, setSets] = useState(() => new Set(["base"]));   // any mix of KANA_GROUPS keys
+  const [view, setView] = useState("setup");        // setup | session | summary | chart
+  const [sessionLen, setSessionLen] = useState(20);
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
-  const [currentId, setCurrentId] = useState(null);
   const [revealed, setRevealed] = useState(false);
   const [guide, setGuide] = useState(false);
+  // session state — mirrors Study so both tabs behave the same way
+  const [queue, setQueue] = useState([]);
+  const [pos, setPos] = useState(0);
+  const [poolSize, setPoolSize] = useState(0);
+  const [passed, setPassed] = useState(() => new Set());
+  const [firstTry, setFirstTry] = useState(() => new Set());
+  const [struggled, setStruggled] = useState(() => new Set());
+  const missRef = useRef({});
+  const shownRef = useRef(0);        // when the current kana appeared
+  const thinkRef = useRef(null);     // ms from shown → Check (think time)
+  const sessionStartRef = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => { (async () => {
     try { const r = await sGet(KANA_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
   })(); }, []);
 
-  const rows = useMemo(() => (withDaku ? [...KANA_BASE_ROWS, ...KANA_DAKU_ROWS] : KANA_BASE_ROWS), [withDaku]);
+  // Rows for whichever groups are switched on, dropping katakana-only entries (ー, ファ …)
+  // when hiragana is selected, and any row those leave empty.
+  const rows = useMemo(() => {
+    const keep = (e) => !(e[4] && script !== "kata");
+    return KANA_GROUPS
+      .filter(([key]) => sets.has(key))
+      .flatMap(([, , groupRows]) => groupRows.map((row) => row.filter(keep)))
+      .filter((row) => row.length);
+  }, [sets, script]);
   const list = useMemo(() => rows.flat().map(([h, k, r, note]) => ({
     id: (script === "hira" ? "h-" : "k-") + h,       // char-keyed: stable & collision-free
     ch: script === "hira" ? h : k, r, note,
   })), [rows, script]);
+  const toggleSet = (key) => setSets((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next.size ? next : new Set(["base"]);      // never leave nothing to drill
+  });
+  const allOn = KANA_GROUPS.every(([key]) => sets.has(key));
 
   const getS = (m, id) => m[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
-  const chooseNext = (m, exclude) => {
-    let best = null, bestK = Infinity;
-    list.forEach((x) => {
-      if (x.id === exclude && list.length > 1) return;
-      const st = getS(m, x.id);
-      const k = st.level * 10 + Math.min(st.seen, 6) + Math.random() * 3;
-      if (k < bestK) { bestK = k; best = x.id; }
-    });
-    return best;
-  };
+  // Pick whichever kana needs work MOST (highest score wins). The old version only looked
+  // at level + times-seen, so a kana you kept getting wrong was treated the same as one you
+  // nailed every time. Now accuracy, a broken streak, and how long it's been all count.
+  // Same memory model as the vocabulary deck — see statNeed.
+  const needK = (st, now) => statNeed(st, now) + (st.seen ? 0 : Math.random());
+  // neediest first, with jitter so repeat sessions aren't an identical loop
+  const byNeed = useCallback((pool) => {
+    const now = Date.now();
+    return pool
+      .map((x) => ({ x, k: needK(getS(statsRef.current, x.id), now) + Math.random() * 1.2 }))
+      .sort((a, b) => b.k - a.k)
+      .map((o) => o.x);
+  }, []);
+
+  const startSession = useCallback((subset) => {
+    const ordered = byNeed(subset && subset.length ? subset : list);
+    const pool = sessionLen === "all" ? ordered : ordered.slice(0, sessionLen);
+    if (!pool.length) return;
+    setQueue(pool); setPos(0); setPoolSize(pool.length);
+    setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
+    missRef.current = {};
+    sessionStartRef.current = Date.now();
+    setElapsed(0);
+    setRevealed(false); setGuide(false);
+    setView("session");
+  }, [list, sessionLen, byNeed]);
+
+  const cur = queue[pos] || null;
+  const sessionDone = view === "session" && pos >= queue.length && queue.length > 0;
+
+  // start the clock on each new kana, and freeze total elapsed when the session ends
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
   useEffect(() => {
-    if (!list.some((x) => x.id === currentId)) setCurrentId(chooseNext(statsRef.current, null));
-  }, [list]);          // eslint-disable-line
-  const cur = list.find((x) => x.id === currentId) || null;
+    if (sessionDone) { setElapsed(Date.now() - sessionStartRef.current); setView("summary"); }
+  }, [sessionDone]);
+
+  // weakest kana in the current selection — drives the setup preview and the "drill weakest" button
+  const weakest = useMemo(() => {
+    const now = Date.now();
+    return list
+      .filter((x) => (getS(stats, x.id).seen || 0) > 0)
+      .map((x) => ({ x, st: getS(stats, x.id), k: needK(getS(stats, x.id), now) }))
+      .sort((a, b) => b.k - a.k)
+      .slice(0, 6);
+  }, [list, stats]);
+  const untouched = useMemo(() => list.filter((x) => !(getS(stats, x.id).seen || 0)).length, [list, stats]);
 
   /* drawing pad */
   const canvasRef = useRef(null);
@@ -2108,14 +2685,14 @@ function Kana() {
     ctx.strokeStyle = "#2b2620";
     ctx.clearRect(0, 0, rect.width, rect.height);
   }, []);
-  useEffect(() => { if (mode === "drill") setup(); }, [currentId, mode, setup]);
+  useEffect(() => { if (view === "session") setup(); }, [pos, view, setup]);
   useEffect(() => {                                   // iOS: stop the page panning while drawing
     const cv = canvasRef.current; if (!cv) return;
     const block = (e) => e.preventDefault();
     cv.addEventListener("touchmove", block, { passive: false });
     cv.addEventListener("touchstart", block, { passive: false });
     return () => { cv.removeEventListener("touchmove", block); cv.removeEventListener("touchstart", block); };
-  }, [mode]);
+  }, [view]);
   useEffect(() => {
     const onResize = () => setup();
     window.addEventListener("resize", onResize);
@@ -2137,14 +2714,33 @@ function Kana() {
     if (!cur) return;
     const m = statsRef.current;
     const s0 = getS(m, cur.id);
+    const think = thinkRef.current;
     const ns = { ...s0, seen: s0.seen + 1, correct: s0.correct + (got ? 1 : 0),
       level: got ? Math.min(5, s0.level + 1) : Math.max(0, s0.level - 2),
-      streak: got ? (s0.streak || 0) + 1 : 0, last: Date.now() };
+      streak: got ? (s0.streak || 0) + 1 : 0, last: Date.now(),
+      // same memory model as the vocabulary deck; the old counters stay for the UI
+      fsrs: statReview(s0, got, think, Date.now()),
+      ms: (s0.ms || 0) + (think || 0), msN: (s0.msN || 0) + (think ? 1 : 0) };
     const nx = { ...m, [cur.id]: ns };
     statsRef.current = nx; setStats(nx); sSet(KANA_KEY, JSON.stringify(nx));
+
+    // session bookkeeping: passed once, and missed ones come back later in the same session
+    if (got) {
+      if (!missRef.current[cur.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(cur.id); return n; });
+      setPassed((prev) => { const n = new Set(prev); n.add(cur.id); return n; });
+      setQueue((prev) => prev.filter((x, idx) => idx <= pos || x.id !== cur.id));   // drop later duplicates
+    } else {
+      setStruggled((prev) => { const n = new Set(prev); n.add(cur.id); return n; });
+      const n = (missRef.current[cur.id] || 0) + 1;
+      missRef.current[cur.id] = n;
+      if (n <= KANA_REQUEUE_CAP) {
+        setQueue((prev) => { const next = prev.slice(); next.splice(Math.min(pos + 1 + KANA_REQUEUE_GAP, next.length), 0, cur); return next; });
+      }
+    }
     setRevealed(false); setGuide(false);
-    setCurrentId(chooseNext(nx, cur.id));
+    setPos((p) => p + 1);
   };
+  const avgSecs = (st) => (st.msN ? (st.ms / st.msN / 1000).toFixed(1) + "s" : "—");
 
   const mastered = list.filter((x) => getS(stats, x.id).level >= 4).length;
   const cellClass = (id) => {
@@ -2155,42 +2751,15 @@ function Kana() {
     return " kn-mid";
   };
 
-  return (
-    <div className="tc-kana">
-      <div className="tc-kanabar">
-        <div className="tc-kanaseg">
-          <button className={"tc-fchip" + (script === "hira" ? " is-on" : "")} onClick={() => setScript("hira")}>ひらがな</button>
-          <button className={"tc-fchip" + (script === "kata" ? " is-on" : "")} onClick={() => setScript("kata")}>カタカナ</button>
+  // ── mid-session: just the progress bar and the pad, no set chips to fiddle with ──
+  if (view === "session" && cur) {
+    return (
+      <div className="tc-kana">
+        <div className="tc-progress">
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
+          <span className="tc-progtext">{passed.size} / {poolSize}</span>
+          <button className="tc-fchip" onClick={() => setView("setup")}>Quit</button>
         </div>
-        <div className="tc-kanaseg">
-          <button className={"tc-fchip" + (!withDaku ? " is-on" : "")} onClick={() => setWithDaku(false)}>46 base</button>
-          <button className={"tc-fchip" + (withDaku ? " is-on" : "")} onClick={() => setWithDaku(true)}>+ dakuten</button>
-        </div>
-        <div className="tc-kanaseg">
-          <button className={"tc-fchip" + (mode === "drill" ? " is-on" : "")} onClick={() => setMode("drill")}>Drill</button>
-          <button className={"tc-fchip" + (mode === "chart" ? " is-on" : "")} onClick={() => setMode("chart")}>Chart</button>
-        </div>
-      </div>
-      <p className="tc-kanaprog">{mastered}/{list.length} mastered · {script === "hira" ? "hiragana" : "katakana"}{withDaku ? " + dakuten" : ""}</p>
-
-      {mode === "chart" ? (
-        <div className="tc-kanagrid">
-          {rows.map((row, ri) => (
-            <div key={ri} className="tc-kanarow">
-              {row.map(([h, k, r]) => {
-                const id = (script === "hira" ? "h-" : "k-") + h;
-                return (
-                  <button key={id} className={"tc-kanacell" + cellClass(id)}
-                    onClick={() => { setCurrentId(id); setMode("drill"); setRevealed(false); setGuide(false); }}>
-                    <span className="tc-kanach">{script === "hira" ? h : k}</span>
-                    <span className="tc-kanar">{r}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      ) : cur ? (
         <div className="tc-card2 tc-kanadrill">
           <p className="tc-eyebrow">write this kana</p>
           <p className="tc-kanaprompt">{cur.r}{cur.note ? <span className="tc-kananote"> {cur.note}</span> : null}</p>
@@ -2203,7 +2772,7 @@ function Kana() {
             <button className="tc-btn tc-btn-sm" onClick={clearPad}>Clear</button>
             {!revealed && <button className="tc-btn tc-btn-sm" onClick={() => setGuide((v) => !v)}>{guide ? "Hide hint" : "Hint"}</button>}
             {!revealed
-              ? <button className="tc-btn tc-btn-primary" onClick={() => setRevealed(true)}>Check</button>
+              ? <button className="tc-btn tc-btn-primary" onClick={() => { thinkRef.current = Date.now() - shownRef.current; setRevealed(true); }}>Check</button>
               : (
                 <>
                   <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => record(true)}>Got it ✓</button>
@@ -2212,7 +2781,154 @@ function Kana() {
               )}
           </div>
         </div>
-      ) : null}
+      </div>
+    );
+  }
+
+  // ── session summary ──
+  if (view === "summary") {
+    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    const missed = list.filter((x) => struggled.has(x.id));
+    const graded = passed.size || 1;
+    return (
+      <div className="tc-kana">
+        <div className="tc-done">
+          <p className="tc-eyebrow">Session complete</p>
+          <div className="tc-bignum">{pct}<span>%</span></div>
+          <p className="tc-donesub">
+            {firstTry.size} nailed first try{missed.length > 0 ? ` · ${missed.length} missed` : ""} · {poolSize} kana
+          </p>
+          <p className="tc-donesub">{fmtSecs(elapsed)} total · {(elapsed / graded / 1000).toFixed(1)}s per kana</p>
+          {missed.length > 0 && (
+            <div className="tc-kanaweak">
+              <p className="tc-eyebrow">needs the most work</p>
+              {missed.slice(0, 6).map((x) => {
+                const st = getS(stats, x.id);
+                return (
+                  <div key={x.id} className="tc-kanaweakrow">
+                    <span className="tc-kanaweakch">{x.ch}</span>
+                    <span className="tc-kanaweakr">{x.r}</span>
+                    <span className="tc-kanaweakmeta">{st.seen ? Math.round((st.correct / st.seen) * 100) + "%" : "—"} · {avgSecs(st)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="tc-donebtns">
+            {missed.length > 0 && (
+              <button className="tc-btn tc-btn-primary" onClick={() => startSession(missed)}>Review the {missed.length} you missed</button>
+            )}
+            <button className="tc-btn" onClick={() => startSession()}>Go again</button>
+            <button className="tc-btn" onClick={() => setView("setup")}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tc-kana">
+      <div className="tc-kanabar">
+        <div className="tc-kanaseg">
+          <button className={"tc-fchip" + (script === "hira" ? " is-on" : "")} onClick={() => setScript("hira")}>ひらがな</button>
+          <button className={"tc-fchip" + (script === "kata" ? " is-on" : "")} onClick={() => setScript("kata")}>カタカナ</button>
+        </div>
+        <div className="tc-kanaseg">
+          {KANA_GROUPS.map(([key, label]) => (
+            <button key={key} className={"tc-fchip" + (sets.has(key) ? " is-on" : "")}
+              aria-pressed={sets.has(key)} onClick={() => toggleSet(key)}
+              title={key === "ext" ? "katakana-only loanword sounds" : undefined}>{label}</button>
+          ))}
+          <button className={"tc-fchip" + (allOn ? " is-on" : "")}
+            title={allOn ? "back to base 46 only" : "select every set"}
+            onClick={() => setSets(allOn ? new Set(["base"]) : new Set(KANA_GROUPS.map(([k]) => k)))}>
+            {allOn ? "only 46" : "all"}
+          </button>
+        </div>
+        <div className="tc-kanaseg">
+          <button className={"tc-fchip" + (view === "setup" ? " is-on" : "")} onClick={() => setView("setup")}>Practice</button>
+          <button className={"tc-fchip" + (view === "chart" ? " is-on" : "")} onClick={() => setView("chart")}>Chart</button>
+        </div>
+      </div>
+      <p className="tc-kanaprog">
+        {mastered}/{list.length} mastered · {script === "hira" ? "hiragana" : "katakana"} · {allOn ? "all sets" : KANA_GROUPS.filter(([k]) => sets.has(k)).map(([, l]) => l).join(" + ")}
+        {sets.has("ext") && script !== "kata" ? " · extended = katakana only" : ""}
+      </p>
+
+      {!list.length ? (
+        // only reachable with extended-only selected in hiragana mode — those sounds have
+        // no hiragana spelling, so there's genuinely nothing to draw. Offer a way out.
+        <div className="tc-card2 tc-kanadrill">
+          <p className="tc-eyebrow">nothing to drill</p>
+          <p className="tc-kanaempty">The extended loanword sounds (ファ, ヴィ, ティ…) only exist in katakana.</p>
+          <div className="tc-rehnav">
+            <button className="tc-btn tc-btn-primary" onClick={() => setScript("kata")}>Switch to カタカナ</button>
+            <button className="tc-btn tc-btn-sm" onClick={() => setSets(new Set(["base"]))}>Back to base 46</button>
+          </div>
+        </div>
+      ) : view === "chart" ? (
+        <div className="tc-kanagrid">
+          {rows.map((row, ri) => (
+            <div key={ri} className="tc-kanarow">
+              {row.map(([h, k, r]) => {
+                const id = (script === "hira" ? "h-" : "k-") + h;
+                const one = list.find((x) => x.id === id);
+                return (
+                  <button key={id} className={"tc-kanacell" + cellClass(id)}
+                    title={`${r} · ${getS(stats, id).seen ? Math.round((getS(stats, id).correct / getS(stats, id).seen) * 100) + "% · " + avgSecs(getS(stats, id)) : "not drilled yet"}`}
+                    onClick={() => one && startSession([one])}>
+                    <span className="tc-kanach">{script === "hira" ? h : k}</span>
+                    <span className="tc-kanar">{r}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="tc-study-setup">
+          <div className="tc-hero">
+            <div className="tc-heronum">{mastered}</div>
+            <p className="tc-herolabel">of {list.length} mastered</p>
+            <p className="tc-herosub">{untouched > 0 ? `${untouched} never drilled` : "every kana in this set has been drilled"}</p>
+          </div>
+
+          <div className="tc-kanaseg tc-kanalen">
+            <span className="tc-kanalenlabel">session</span>
+            {KANA_LENGTHS.map((n) => (
+              <button key={n} className={"tc-fchip" + (sessionLen === n ? " is-on" : "")} onClick={() => setSessionLen(n)}>
+                {n === "all" ? `all ${list.length}` : n}
+              </button>
+            ))}
+          </div>
+
+          <button className="tc-btn tc-btn-primary tc-start" onClick={() => startSession()}>
+            Start · {sessionLen === "all" ? list.length : Math.min(sessionLen, list.length)} kana
+          </button>
+          <p className="tc-smarthint">
+            {untouched > 0
+              ? `New kana first, then whichever you've been missing most.`
+              : `Ordered by what you get wrong, how long you take, and how long since you last saw it.`}
+          </p>
+
+          {weakest.length > 0 && (
+            <div className="tc-kanaweak">
+              <p className="tc-eyebrow">needs the most work</p>
+              {weakest.map(({ x, st }) => (
+                <div key={x.id} className="tc-kanaweakrow">
+                  <span className="tc-kanaweakch">{x.ch}</span>
+                  <span className="tc-kanaweakr">{x.r}</span>
+                  <span className="tc-kanaweakmeta">{Math.round((st.correct / st.seen) * 100)}% · {avgSecs(st)} · seen {st.seen}×</span>
+                </div>
+              ))}
+              <button className="tc-btn tc-btn-sm" onClick={() => startSession(weakest.map((w) => w.x))}>
+                Drill these {weakest.length}
+              </button>
+            </div>
+          )}
+          <p className="tc-hintline">Tap a cell in Chart to drill just that one kana.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -2992,6 +3708,12 @@ function Scripts() {
 function Write({ cards, onResult }) {
   const order = useMemo(() => cards.slice().sort((a, b) => masteryScore(a) - masteryScore(b)), [cards]);
   const [pos, setPos] = useState(0);
+  /* Writing was feeding the scheduler without ever timing the answer, so every card here
+     landed as a middling grade no matter how long it took. Production recall is the
+     harder direction and the more valuable signal — it deserves the same fast/slow
+     distinction the flip cards get. Timed from the card appearing to the reveal. */
+  const shownRef = useRef(0);
+  const thinkRef = useRef(null);
   const [guide, setGuide] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const canvasRef = useRef(null);
@@ -3039,7 +3761,11 @@ function Write({ cards, onResult }) {
   };
   const up = () => { drawingRef.current = false; lastRef.current = null; };
 
-  const next = (got) => { if (card) onResult(card.id, got); setRevealed(false); setGuide(false); setPos((p) => p + 1); };
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos]);
+  const next = (got) => {
+    if (card) onResult(card.id, got, undefined, thinkRef.current || undefined);
+    setRevealed(false); setGuide(false); setPos((p) => p + 1);
+  };
 
   if (!order.length) return <div className="tc-empty"><p>Add some words first, then come here to practice writing them by hand.</p></div>;
   if (!card) return (
@@ -3064,7 +3790,10 @@ function Write({ cards, onResult }) {
         <div className="tc-sentbtns tc-writetools">
           <button className="tc-btn tc-btn-sm" onClick={() => setGuide((g) => !g)}>{guide ? "Hide guide" : "Show guide"}</button>
           <button className="tc-btn tc-btn-sm" onClick={setup}>Clear</button>
-          {!revealed && <button className="tc-btn tc-btn-primary" onClick={() => setRevealed(true)}>Reveal</button>}
+          {!revealed && <button className="tc-btn tc-btn-primary" onClick={() => {
+            if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+            setRevealed(true);
+          }}>Reveal</button>}
         </div>
         {revealed && (
           <div className="tc-writereveal">
@@ -3082,7 +3811,17 @@ function Write({ cards, onResult }) {
   );
 }
 
+// how each save state reads to the user — never leave a failure looking like success
+const SYNC_UI = {
+  idle:    { dot: "#3ddc84", label: "Synced automatically." },
+  saving:  { dot: "#ffd166", label: "Saving…" },
+  saved:   { dot: "#3ddc84", label: "All changes saved to your account." },
+  pending: { dot: "#ff8a7a", label: "⚠ Not saved yet — your progress is safe on this device and will upload automatically." },
+};
+
 function Browse({ cards, onRemove, onClear, onRestore }) {
+  const [syncState, setSyncState] = useState(syncStateNow);
+  useEffect(() => watchSyncState(setSyncState), []);
   const [showMore, setShowMore] = useState(false);
   const [showRestore, setShowRestore] = useState(false);
   const [restoreText, setRestoreText] = useState("");
@@ -3225,10 +3964,18 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
         {googleEmail ? (
-          <p style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3ddc84", display: "inline-block", boxShadow: "0 0 6px #3ddc84" }} />
-            Signed in as <b>{googleEmail}</b> — synced automatically.
-          </p>
+          <>
+            <p style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: SYNC_UI[syncState].dot, display: "inline-block", boxShadow: "0 0 6px " + SYNC_UI[syncState].dot }} />
+              Signed in as <b>{googleEmail}</b>
+            </p>
+            <p style={{ margin: "6px 0 0", fontSize: 12.5, color: SYNC_UI[syncState].dot }}>
+              {SYNC_UI[syncState].label}
+            </p>
+            {syncState === "pending" && (
+              <button className="tc-btn tc-btn-sm" style={{ marginTop: 8 }} onClick={() => pushCloudNow()}>Retry now</button>
+            )}
+          </>
         ) : (
           <>
             <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Sign in once per device to keep your progress synced everywhere.</p>
@@ -3365,12 +4112,14 @@ function Add({ onAdd, count }) {
    い-adjectives, and nouns/な-adjectives. Rules per sensei's board:
    ① drop る + ない · ⑤ shift to "a" row + ない · Adj: 〜い → くない ·
    Noun/なAdj: + じゃない · Polite: ます→ません OR ない+です      */
+// Rules describe how the STEM is formed, not one specific ending — the drill asks for
+// all 8 cells now, so a negative-only rule ("drop る, add ない") was wrong on 7 of them.
 const CONJ_TYPES = {
-  ichidan:   { chip: "① ichidan", rule: "iru/eru verb → drop る, add ない" },
-  godan:     { chip: "⑤ godan", rule: "shift the last sound to the あ row, add ない" },
-  irregular: { chip: "irregular", rule: "no pattern — just memorize this one" },
-  iadj:      { chip: "い-adj", rule: "drop the final い, add くない" },
-  na:        { chip: "noun / な-adj", rule: "add じゃない after the word" },
+  ichidan:   { chip: "① ichidan", rule: "iru/eru verb → drop る, then add the ending (ます・ない・た・なかった)" },
+  godan:     { chip: "⑤ godan", rule: "shift the last sound across the あいうえお rows: ～い+ます, ～あ+ない, past is 音便" },
+  irregular: { chip: "irregular", rule: "no pattern — する and くる have to be memorised" },
+  iadj:      { chip: "い-adj", rule: "drop the final い → ～く for negatives, ～かった for past" },
+  na:        { chip: "noun / な-adj", rule: "だ・です, じゃない for negatives, だった・でした for past" },
 };
 const CONJ_BANK = [
   // ① ichidan — drop る + ない
@@ -3414,124 +4163,1052 @@ const CONJ_BANK = [
 ];
 const CONJ_FILTERS = [["all", "All"], ["ichidan", "① る"], ["godan", "⑤ う"], ["irregular", "Irreg"], ["iadj", "い-adj"], ["na", "Noun/な"]];
 
+/* ═══════════════════ 入力 / INPUT — comprehensible input finder ═══════════════════
+   The job here is volume: remove every second of friction between "I have time" and
+   "I am consuming Japanese". Two taps to something at roughly 85-90% comprehension.
+
+   Difficulty is 0-100: 0-15 absolute-beginner CI (slow, gestures, pictures) · 15-30 N5 ·
+   30-45 N4 · 45-60 N3 · 60-75 N2 · 75-100 native unmodified.
+
+   Every source below was checked live before being baked in. Casualties, for the record:
+   "Bitesize Japanese" turned out to be a channel about 1971 Johnson outboard motors,
+   Wasabi and Teppei&Noriko are gone, the 4989 feed 404s, and the naive way of scraping a
+   YouTube channel id off its page silently returns the id of a *recommended* channel —
+   which is how Onomappu first resolved to a Polish travel vlog. Ids below come from each
+   page's own RSS autodiscovery link and were confirmed against the feed's author name. */
+const INPUT_KEY = "jpn101:input";
+// Same shape as the sync/TTS endpoints so one build runs on either host.
+const FEED_ENDPOINT = "/.netlify/functions/feed";
+
+/* ── the indexed video library ──
+   ~950 individual videos across 35 channels, built by tools/yt-index.mjs and shipped as a
+   separate asset. Each becomes an ordinary catalog entry, so the recommender and the
+   rating engine need no special case: a video is just a source that happens to already be
+   one specific thing. Cached in localStorage keyed on the index's build time, so a
+   refreshed index replaces the old one and an unchanged one costs no network at all.
+
+   Difficulty on these rows is ESTIMATED, not measured — YouTube does not expose subtitle
+   text (see tools/yt-index.mjs). Every row carries its own confidence, which feeds the
+   same damping the rest of the engine uses, so low-confidence guesses move fast once
+   they're rated and high-confidence ones hold their ground. */
+const VIDEOS_URL = "/videos.json";
+const VIDEOS_CACHE = "jpn101:videoIndex";
+let _videoPromise = null;
+function loadVideoIndex() {
+  if (_videoPromise) return _videoPromise;
+  _videoPromise = (async () => {
+    let cached = null;
+    try { cached = JSON.parse(window.localStorage.getItem(VIDEOS_CACHE) || "null"); } catch (e) {}
+    try {
+      const r = await fetch(VIDEOS_URL, { cache: "no-cache" });
+      if (r.ok && (r.headers.get("content-type") || "").includes("json")) {
+        const data = await r.json();
+        if (data && data.videos) {
+          try { window.localStorage.setItem(VIDEOS_CACHE, JSON.stringify(data)); } catch (e) { /* quota */ }
+          return unpackVideos(data);
+        }
+      }
+    } catch (e) { /* offline — the cached copy below is the point */ }
+    return cached ? unpackVideos(cached) : [];
+  })();
+  return _videoPromise;
+}
+function unpackVideos(data) {
+  const chans = data.channels || [];
+  return (data.videos || []).map(([id, title, ci, sec, day, d, conf, cc, views]) => {
+    const c = chans[ci] || ["", "unknown", "adult", ""];
+    return {
+      id: "yt:" + id,
+      title,
+      channel: c[1],
+      channelId: c[0],
+      url: "https://www.youtube.com/watch?v=" + id,
+      medium: "video",
+      source: "youtube",
+      difficulty: d,
+      difficultyConfidence: (conf || 25) / 100,
+      durationSec: sec,
+      publishedAt: day * 86400000,
+      audience: c[2],
+      hasSubsJa: !!cc,
+      views,
+      tags: (c[3] || "").split(" ").filter(Boolean),
+      indexed: true,
+    };
+  });
+}
+// Which sources the Worker can resolve to individual episodes. Kept in step with FEEDS
+// in cf/src/index.js — the ids must match or the source silently falls back to its
+// channel link. tools/check-feeds.mjs fails the build if they drift.
+const FEED_SOURCES = new Set([
+  "ci-natural", "ci-tanaka", "ci-peppa", "ci-shun", "yt-sayuri", "yt-akane", "yt-miku",
+  "yt-onomappu", "yt-gamegengo", "yt-yuyu", "pod-yuyu", "yt-sambon", "pod-teppei-beg",
+  "rd-nhkeasier", "rd-yomujp", "rd-watanoc", "rd-crunchy",
+]);
+const INPUT_CATALOG = [
+  // ── listening: absolute beginner comprehensible input ──
+  { id: "ci-natural", title: "Natural Japanese (NIJ)", titleJa: "コンプリヘンシブル日本語", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/c/ComprehensibleJapanese", channelId: "UCXo8kuCtqLjL1EH6m4FJJNA", channel: "Natural Japanese",
+    difficulty: 12, difficultyConfidence: 0.7, durationSec: 600, tags: ["ci", "slice-of-life", "story"], hasSubsJa: true, addedBy: "seed",
+    note: "Tiered complete-beginner → advanced. The closest thing to purpose-built CI." },
+  { id: "ci-tanaka", title: "Learn Japanese with Tanaka san", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/channel/UCvryaJCRHcTVjOC_DcuYxGg", channelId: "UCvryaJCRHcTVjOC_DcuYxGg", channel: "Tanaka san",
+    difficulty: 15, difficultyConfidence: 0.6, durationSec: 720, tags: ["ci", "slice-of-life"], addedBy: "seed" },
+  { id: "ci-peppa", title: "Peppa Pig (Japanese)", titleJa: "ペッパピッグ 公式チャンネル", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/channel/UCldXjuJ7Qg8wTNktOnVXkGw", channelId: "UCldXjuJ7Qg8wTNktOnVXkGw", channel: "ペッパピッグ",
+    difficulty: 18, difficultyConfidence: 0.6, durationSec: 300, tags: ["kids", "story", "ci"], addedBy: "seed",
+    note: "Children's show — short sentences, heavy visual context, endless volume." },
+  { id: "ci-shun", title: "Japanese with Shun", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@JapanesewithShun", channelId: "UCu6sZrHyl4hSS2PvlUo2XZA", channel: "Shun",
+    difficulty: 22, difficultyConfidence: 0.6, durationSec: 900, tags: ["ci", "vlog", "slice-of-life"], addedBy: "seed" },
+  { id: "pod-teppei-beg", title: "Nihongo con Teppei for Beginners", medium: "audio", source: "podcast",
+    url: "https://nihongoconteppei.com/", rss: "https://nihongoconteppei.com/feed/", channel: "Teppei",
+    difficulty: 25, difficultyConfidence: 0.7, durationSec: 300, tags: ["podcast", "daily", "chat"], addedBy: "seed",
+    note: "1,500+ short episodes. Ideal passive listening." },
+
+  // ── listening: upper beginner → intermediate ──
+  { id: "yt-sayuri", title: "Sayuri Saying", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@sayurisaying", channelId: "UCqMY-cp1He6IAi1cIz-gX1g", channel: "Sayuri",
+    difficulty: 35, difficultyConfidence: 0.5, durationSec: 900, tags: ["chat", "culture"], addedBy: "seed" },
+  { id: "yt-akane", title: "Akane's Japanese Class", titleJa: "あかね的日本語教室", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@Akane-JapaneseClass", channelId: "UCh-GhnQ7qDQmS6Bz3pGc1Mw", channel: "あかね",
+    difficulty: 35, difficultyConfidence: 0.5, durationSec: 900, tags: ["ci", "vlog"], addedBy: "seed" },
+  { id: "yt-miku", title: "Speak Japanese Naturally", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@SpeakJapaneseNaturally", channelId: "UCSbH_BPR_AoARW6RDYLlLog", channel: "Miku",
+    difficulty: 40, difficultyConfidence: 0.5, durationSec: 720, tags: ["chat", "slice-of-life"], addedBy: "seed" },
+  { id: "yt-onomappu", title: "Onomappu", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@onomappu", channelId: "UCLuymDHiOySsAQ9Nc-4NoEQ", channel: "Onomappu",
+    difficulty: 45, difficultyConfidence: 0.5, durationSec: 720, tags: ["culture", "street"], addedBy: "seed" },
+  { id: "yt-gamegengo", title: "Game Gengo", titleJa: "ゲーム言語", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@GameGengo", channelId: "UCsXJuG5tSNRr9IwfjMbNvqQ", channel: "Game Gengo",
+    difficulty: 45, difficultyConfidence: 0.5, durationSec: 900, tags: ["gaming", "vocab"], addedBy: "seed",
+    note: "Japanese through video games." },
+  { id: "yt-yuyu", title: "YUYU NIHONGO", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/@yuyunihongo", channelId: "UCCyQwSS6m2mVB0-H2FOFJtw", channel: "YUYU",
+    difficulty: 50, difficultyConfidence: 0.5, durationSec: 900, tags: ["chat"], addedBy: "seed" },
+  { id: "pod-yuyu", title: "YUYUの日本語Podcast", medium: "audio", source: "youtube",
+    url: "https://www.youtube.com/channel/UC8dWfySP_cKDMFj6aFfQbFA", channelId: "UC8dWfySP_cKDMFj6aFfQbFA", channel: "YUYU",
+    difficulty: 55, difficultyConfidence: 0.5, durationSec: 1500, tags: ["podcast", "chat"], addedBy: "seed" },
+  { id: "yt-sambon", title: "三本塾 Sambon Juku", medium: "video", source: "youtube",
+    url: "https://www.youtube.com/channel/UC0ujXryUUwILURRKt9Eh7Nw", channelId: "UC0ujXryUUwILURRKt9Eh7Nw", channel: "三本塾",
+    difficulty: 65, difficultyConfidence: 0.5, durationSec: 900, tags: ["grammar", "jlpt"], addedBy: "seed" },
+
+  // ── reading ──
+  { id: "rd-tadoku", title: "Tadoku free graded readers", titleJa: "にほんごたどく", medium: "reading", source: "web",
+    url: "https://tadoku.org/japanese/free-books/", difficulty: 8, difficultyConfidence: 0.8, wordCount: 300,
+    tags: ["graded", "story", "pdf"], hasFurigana: true, addedBy: "seed", note: "Levels 0-4, genuinely free PDFs. Start at level 0." },
+  { id: "rd-ehonnavi", title: "絵本ナビ (picture books)", titleJa: "絵本ナビ", medium: "reading", source: "web",
+    url: "https://www.ehonnavi.net/", difficulty: 14, difficultyConfidence: 0.5, wordCount: 250,
+    tags: ["kids", "story", "picture-book"], hasFurigana: true, addedBy: "seed", note: "Same idea as the eHon app, in a browser." },
+  { id: "rd-yomujp", title: "Yomujp graded readings", medium: "reading", source: "web",
+    url: "https://yomujp.com/", difficulty: 22, difficultyConfidence: 0.7, wordCount: 400,
+    tags: ["graded", "jlpt"], hasFurigana: true, addedBy: "seed", note: "Sorted by JLPT level, many with audio." },
+  { id: "rd-hukumusume", title: "ふくむすめ童話集", titleJa: "ふくむすめ童話集", medium: "reading", source: "web",
+    url: "http://hukumusume.com/douwa/", difficulty: 26, difficultyConfidence: 0.6, wordCount: 500,
+    tags: ["folktale", "story", "audio"], hasFurigana: true, addedBy: "seed", note: "Folk tales with furigana and audio. HTTP only." },
+  // NHK's own Easy site moved behind a token-gated JSON index and no longer exposes a
+  // usable article list, so this points at the long-running mirror, which does publish a
+  // feed and carries the same articles with optional furigana.
+  { id: "rd-nhkeasier", title: "NHK News Web Easy", titleJa: "やさしい日本語のニュース", medium: "reading", source: "web",
+    url: "https://nhkeasier.com/", difficulty: 30, difficultyConfidence: 0.8, wordCount: 350,
+    tags: ["news", "daily"], hasFurigana: true, addedBy: "seed", note: "New articles daily — good for a repeatable habit." },
+  { id: "rd-todai", title: "Todai Easy Japanese", medium: "reading", source: "web",
+    url: "https://easyjapanese.net/", difficulty: 32, difficultyConfidence: 0.5, wordCount: 400,
+    tags: ["news", "daily"], hasFurigana: true, addedBy: "seed" },
+  { id: "rd-watanoc", title: "Watanoc", medium: "reading", source: "web",
+    url: "http://watanoc.com/", difficulty: 34, difficultyConfidence: 0.6, wordCount: 400,
+    tags: ["magazine", "culture"], hasFurigana: true, addedBy: "seed", note: "Free N5-N3 web magazine." },
+  { id: "rd-crunchy", title: "Crunchy Nihongo reading", medium: "reading", source: "web",
+    url: "https://crunchynihongo.com/", difficulty: 36, difficultyConfidence: 0.4, wordCount: 400,
+    tags: ["graded", "lesson"], addedBy: "seed" },
+  { id: "rd-aozora", title: "青空文庫 Aozora Bunko", titleJa: "青空文庫", medium: "reading", source: "web",
+    url: "https://www.aozora.gr.jp/", difficulty: 85, difficultyConfidence: 0.8, wordCount: 3000,
+    tags: ["literature", "native"], addedBy: "seed", note: "Public domain classics — park here for much later." },
+];
+
+/* Level engine. Ratings move the user's level and the item's difficulty in opposite
+   directions, scaled by how much was actually consumed (bailing after 90s is weak
+   evidence; 40 minutes is strong), with a decaying learning rate so the level settles
+   instead of oscillating. Listening and reading never share updates. */
+const INPUT_VERDICTS = {
+  too_easy:   { user: +4, item: -3, en: "Too easy",   ja: "簡単すぎ" },
+  just_right: { user: +1, item: null, en: "Just right", ja: "ちょうどいい" },
+  too_hard:   { user: -2, item: +3, en: "Hard",       ja: "難しい" },
+  lost:       { user: -4, item: +6, en: "Lost me",    ja: "わからなかった" },
+};
+const clamp100 = (n) => Math.max(0, Math.min(100, n));
+// weak evidence below ~4 min, full weight by ~20 min
+function evidenceWeight(minutes) { return Math.max(0.25, Math.min(1, (minutes || 0) / 20)); }
+// early ratings move a lot, later ones barely — keeps the level from oscillating forever
+function learningRate(ratingCount) { return 1 / (1 + (ratingCount || 0) / 12); }
+
+function applyRating({ level, ratingCount, itemDifficulty, itemConfidence, verdict, minutes }) {
+  const v = INPUT_VERDICTS[verdict];
+  if (!v) return { level, itemDifficulty, itemConfidence, ratingCount };
+  const w = evidenceWeight(minutes) * learningRate(ratingCount);
+  const nextLevel = clamp100(level + v.user * w);
+  // item difficulty moves less the more confident we already are about it
+  const conf = itemConfidence == null ? 0.3 : itemConfidence;
+  const damp = 1 - Math.min(0.9, conf);
+  let nextDiff = itemDifficulty;
+  if (v.item === null) nextDiff = itemDifficulty + (level - itemDifficulty) * 0.15 * damp;  // pull toward the user
+  else nextDiff = itemDifficulty + v.item * damp * evidenceWeight(minutes);
+  return {
+    level: nextLevel,
+    ratingCount: (ratingCount || 0) + 1,
+    itemDifficulty: clamp100(nextDiff),
+    itemConfidence: Math.min(1, conf + 0.12),
+  };
+}
+
+// Seed the starting level from the deck rather than asking — the deck already knows.
+// Listening lags reading for almost everyone, so it starts lower. Tuned so that a
+// JPN 101 student mid-way through volume 1 (~375 solid words) lands on the true
+// beginner CI channels as their core band, not on Teppei and Sayuri: guessing too high
+// is the expensive mistake here, since the first thing that happens is an hour of not
+// understanding anything. Ratings pull it up fast if it's wrong.
+function seedLevelsFromDeck(cards) {
+  const known = cards.filter((c) => (c.seen || 0) > 0 && (c.correct || 0) / (c.seen || 1) >= 0.6).length;
+  return { listening: clamp100(5 + known / 40), reading: clamp100(8 + known / 30), updatedAt: Date.now() };
+}
+
+// deterministic shuffle so the same open doesn't reshuffle on every render
+function seededShuffle(arr, seed) {
+  const a = arr.slice();
+  let s = seed >>> 0;
+  for (let i = a.length - 1; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    const j = s % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay, preferred }) {
+  const now = Date.now();
+  const recent = new Set((history || []).filter((h) => now - h.at < 14 * 86400000).map((h) => h.itemId));
+  let pool = catalog.filter((it) => {
+    if (medium === "reading" && it.medium !== "reading") return false;
+    if (medium === "listening" && it.medium === "reading") return false;
+    if (!allowReplay && recent.has(it.id)) return false;
+    return true;
+  });
+  if (!pool.length) pool = catalog.filter((it) => (medium === "reading" ? it.medium === "reading" : it.medium !== "reading"));
+
+  const pick = (from) => {
+    const band = (lo, hi) => from.filter((it) => it.difficulty >= level + lo && it.difficulty <= level + hi);
+    if (mode === "passive") {
+      // passive wants length and things already known to sit well
+      return from.filter((it) => it.difficulty >= level - 10 && it.difficulty <= level + 4)
+        .sort((a, b) => (b.durationSec || 0) - (a.durationSec || 0));
+    }
+    const core = band(-3, 6), stretch = band(6, 14), comfort = band(-12, -3);
+    return [...seededShuffle(core, seed),
+            ...seededShuffle(stretch, seed + 1).slice(0, Math.max(1, Math.round(core.length * 0.3))),
+            ...seededShuffle(comfort, seed + 2).slice(0, 1)];
+  };
+
+  /* Sources that resolve to a specific episode get first refusal on all three slots.
+     A source with no feed can only offer "here's a whole website, go dig" — which is the
+     work this tab exists to remove. Doing this as a score bonus AFTER banding was not
+     enough: banding had already spent the slots, so the bonus only reordered whatever
+     survived. Feedless sources still fill in when the level genuinely has nothing else. */
+  // An indexed video always counts as resolvable — it is already one specific thing.
+  const canResolve = (it) => it.indexed || (preferred && preferred.has(it.id));
+  const feedFirst = preferred ? pool.filter(canResolve) : pool;
+  let ranked = pick(feedFirst);
+  if (ranked.length < 3) {
+    const rest = pick(pool.filter((it) => !feedFirst.includes(it)));
+    ranked = [...ranked, ...rest.filter((it) => !ranked.includes(it))];
+  }
+  if (!ranked.length) ranked = seededShuffle(pool, seed);
+
+  // nudge toward tags that have rated well
+  const score = (it) => (it.tags || []).reduce((n, t) => n + ((tagScores || {})[t] || 0), 0);
+  ranked = ranked.slice().sort((a, b) => score(b) - score(a));
+
+  // Fit the time available. Indexed rows carry real durations from the YouTube API, so
+  // this is now an actual constraint rather than a hint.
+  if (minutes) {
+    const fits = ranked.filter((it) => !it.durationSec || it.durationSec <= minutes * 60 * 1.25);
+    if (fits.length >= 3) ranked = fits;
+  }
+  return ranked.slice(0, 3);
+}
+
+/* Vocab coverage. Deliberately NOT kuromoji: it needs ~15MB of dictionary files fetched
+   at runtime, which would break the "works with zero network calls" requirement and the
+   single-file build. Longest-match against the actual deck is also a closer match to the
+   question being asked — "how many of these words do I already have" — than morphological
+   tokenisation would be. */
+function coverageAgainstDeck(text, cards) {
+  if (!text) return null;
+  const terms = new Set();
+  // Deck terms are dictionary forms, but real text is inflected — 面白い appears as
+  // 面白かったです. Index the stem too so knowing the word counts wherever it shows up.
+  // Guarded so short kana words (いい → い) can't start matching stray characters.
+  const addStem = (t) => {
+    if (/する$/.test(t) && t.length >= 4) terms.add(t.slice(0, -2));
+    else if (/[いるうくぐすつぬぶむ]$/.test(t) && t.length >= 3) terms.add(t.slice(0, -1));
+  };
+  cards.forEach((c) => {
+    if (c.term) { terms.add(c.term); addStem(c.term); }
+    if (c.reading) { terms.add(c.reading); addStem(c.reading); }
+  });
+  const maxLen = 12;
+  const isJa = (c) => /[぀-ヿ一-龯]/.test(c);
+  const isKanji = (c) => /[一-龯]/.test(c);
+  const longest = (i) => {
+    for (let L = Math.min(maxLen, text.length - i); L >= 1; L--) if (terms.has(text.slice(i, i + L))) return L;
+    return 0;
+  };
+
+  // Counted in tokens, not characters, and with two rules that keep the number honest:
+  //   1. a kana run straight after a word you know is its okurigana/particle/copula
+  //      (勉強 + しました), so it doesn't count against you — it isn't separate vocabulary;
+  //   2. a kanji word you don't know absorbs its own trailing kana, so 難しかったですが is
+  //      one gap rather than two.
+  // Without these, ordinary inflection alone drags a sentence he mostly understands down
+  // into the 50s, which would push him toward material that's too easy.
+  let covered = 0, total = 0, afterMatch = false;
+  const unknown = new Map();
+  for (let i = 0; i < text.length;) {
+    const ch = text[i];
+    if (!isJa(ch)) { i++; continue; }                 // punctuation, latin, digits
+    const hit = longest(i);
+    if (hit) { covered++; total++; i += hit; afterMatch = true; continue; }
+
+    if (!isKanji(ch)) {                                // unmatched kana run
+      let j = i; while (j < text.length && isJa(text[j]) && !isKanji(text[j]) && !longest(j)) j++;
+      if (j === i) j = i + 1;
+      total++;
+      if (afterMatch) covered++;                       // inflection of a word you know
+      else unknown.set(text.slice(i, j), (unknown.get(text.slice(i, j)) || 0) + 1);
+      i = j; afterMatch = false; continue;
+    }
+
+    // unmatched kanji: extend while the next char is also kanji and starts no known word
+    let j = i + 1;
+    while (j < text.length && isKanji(text[j]) && !longest(j)) j++;
+    const word = text.slice(i, j);
+    while (j < text.length && isJa(text[j]) && !isKanji(text[j]) && !longest(j)) j++;   // absorb okurigana
+    unknown.set(word, (unknown.get(word) || 0) + 1);
+    total++; i = j; afterMatch = false;
+  }
+  return {
+    pct: total ? Math.round((covered / total) * 100) : null,
+    unknown: Array.from(unknown.entries()).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([w, n]) => ({ w, n })),
+  };
+}
+
+/* ───────────────────────────── 入力 / INPUT ─────────────────────────────
+   Comprehensible input: the tab answers "what should I watch or read right now"
+   and then learns from the answer. Deliberately shows no raw difficulty numbers —
+   a number invites arguing with it, dots just say "harder than you / about right". */
+/* Every control is labelled in English first with the Japanese underneath. The tab is
+   about Japanese, not written in it — a button you can't read is a button you don't press. */
+const Bi = ({ en, ja }) => <span className="tc-bi">{en}<small>{ja}</small></span>;
+const INPUT_PLANS = [
+  { id: "listen",  label: "Listen",     ja: "聞く",   mode: "active",  medium: "listening" },
+  { id: "read",    label: "Read",       ja: "読む",   mode: "active",  medium: "reading" },
+  { id: "passive", label: "Background", ja: "ながら", mode: "passive", medium: "listening" },
+];
+const INPUT_TIMES = [5, 15, 30, 60];
+const INPUT_BANDS = [["Starter", "入門"], ["Beginner", "初級"], ["Upper beginner", "初中級"],
+                     ["Intermediate", "中級"], ["Upper intermediate", "中上級"], ["Advanced", "上級"]];
+function band(level) { return INPUT_BANDS[Math.min(INPUT_BANDS.length - 1, Math.floor(level / 17))]; }
+function bandName(level) { return band(level)[0]; }
+// difficulty shown only relative to where you are — never as a score
+function relDots(diff, level) {
+  const d = diff - level;
+  if (d <= -8) return { n: 1, label: "easy for you", ja: "らく" };
+  if (d <= 4) return { n: 2, label: "right where you are", ja: "ちょうどいい" };
+  if (d <= 12) return { n: 3, label: "a stretch", ja: "すこし上" };
+  return { n: 4, label: "probably too hard", ja: "むずかしい" };
+}
+const MEDIUM_CHIP = { video: "📺", audio: "🎧", reading: "📖" };
+function agoLabel(at) {
+  const d = Math.floor((Date.now() - at) / 86400000);
+  if (d <= 0) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 7) return d + " days ago";
+  if (d < 30) return Math.floor(d / 7) + "w ago";
+  if (d < 365) return Math.floor(d / 30) + "mo ago";
+  return Math.floor(d / 365) + "y ago";
+}
+function blankInput(cards) {
+  return { v: 1, levels: seedLevelsFromDeck(cards), counts: { listening: 0, reading: 0 },
+           items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [] };
+}
+
+function Input({ cards }) {
+  const [st, setSt] = useState(null);
+  const [plan, setPlan] = useState("listen");
+  const [minutes, setMinutes] = useState(15);
+  const [seed, setSeed] = useState(1);
+  const [picks, setPicks] = useState(null);
+  const [panel, setPanel] = useState("");        // "" | log | link | cover
+  const [logText, setLogText] = useState("");
+  const [logMin, setLogMin] = useState(15);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkTitle, setLinkTitle] = useState("");
+  const [coverText, setCoverText] = useState("");
+  const [note, setNote] = useState("");
+
+  useEffect(() => { (async () => {
+    let o = null;
+    try { const r = await sGet(INPUT_KEY); if (r) o = JSON.parse(r); } catch (e) {}
+    if (!o || !o.levels) o = blankInput(cards);
+    else if (!(o.counts?.listening || 0) && !(o.counts?.reading || 0)) o.levels = seedLevelsFromDeck(cards);
+    o.pending = o.pending || []; o.history = o.history || []; o.custom = o.custom || [];
+    o.items = o.items || {}; o.tagScores = o.tagScores || {}; o.hidden = o.hidden || [];
+    o.counts = o.counts || { listening: 0, reading: 0 };
+    stRef.current = o;
+    setSt(o);
+  })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Writes go through the ref, not through `st`. Two taps in the same tick both close
+     over the same render's state, so the second silently discards the first — which for a
+     pending rating means the thing you just opened never gets rated. Accepts an updater
+     so every call site sees the newest state. */
+  const stRef = useRef(null);
+  const save = useCallback((next) => {
+    const value = typeof next === "function" ? next(stRef.current) : next;
+    stRef.current = value;
+    setSt(value);
+    sSet(INPUT_KEY, JSON.stringify(value));
+  }, []);
+  const flash = (m) => { setNote(m); setTimeout(() => setNote((v) => (v === m ? "" : v)), 2600); };
+
+  const cfg = INPUT_PLANS.find((p) => p.id === plan);
+  const [videos, setVideos] = useState([]);
+  useEffect(() => { loadVideoIndex().then(setVideos); }, []);
+
+  // catalog with whatever we've learned about each item layered on top of the seed
+  const catalog = useMemo(() => {
+    if (!st) return [];
+    return [...INPUT_CATALOG, ...videos, ...st.custom]
+      .filter((it) => !st.hidden.includes(it.id))
+      .map((it) => {
+        const o = st.items[it.id];
+        return o ? { ...it, difficulty: o.difficulty, difficultyConfidence: o.confidence } : it;
+      });
+  }, [st, videos]);
+
+  const level = st ? st.levels[cfg.medium] : 0;
+
+  /* Resolve each recommended source down to one actual episode or article. A link to a
+     channel just hands the searching back to you, which was the whole thing this tab was
+     supposed to take off your plate. Feeds come through our own Worker because none of
+     these sites send CORS headers. If a feed is down the source still opens as before,
+     so a dead feed degrades to the old behaviour rather than an error. */
+  const [loading, setLoading] = useState(false);
+  const seenUrls = useMemo(() => new Set((st?.history || []).map((h) => h.url).filter(Boolean)), [st]);
+
+  const suggest = useCallback(async () => {
+    const sources = recommend({
+      catalog, level, mode: cfg.mode, medium: cfg.medium, minutes,
+      history: st.history, tagScores: st.tagScores, seed, preferred: FEED_SOURCES,
+    });
+    // An indexed video already IS one specific thing — there's nothing to look up, so it
+    // resolves immediately and never shows the "finding an episode…" state.
+    const resolved = (s) => (s.indexed
+      ? { source: s, item: { title: s.title, url: s.url, at: s.publishedAt, sec: s.durationSec } }
+      : { source: s, item: null });
+
+    setLoading(true);
+    setPicks(sources.map(resolved));
+    if (sources.every((s) => s.indexed)) { setLoading(false); return; }
+
+    let feeds = {};
+    try {
+      const ids = sources.map((s) => s.id).filter((id) => FEED_SOURCES.has(id));
+      if (ids.length) {
+        const r = await fetch(FEED_ENDPOINT + "?src=" + ids.join(",") + "&n=20&dur=1", { cache: "no-store" });
+        // Check the type: a cache or proxy serving the app's own HTML under this URL would
+        // otherwise throw inside r.json() and look identical to "every feed is down".
+        if (r.ok && (r.headers.get("content-type") || "").includes("json")) feeds = (await r.json()).feeds || {};
+      }
+    } catch (e) { /* offline or feed down — fall through to the source link */ }
+    const budget = minutes * 60 * 1.25;      // a little over is fine; double is not
+    setPicks(sources.map((s, i) => {
+      if (s.indexed) return resolved(s);
+      const list = (feeds[s.id] || []).filter((x) => !seenUrls.has(x.url));
+      // Prefer episodes whose real length fits the time asked for. Unknown lengths are
+      // allowed through rather than discarded — better an unlabelled 12-minute video than
+      // nothing — but anything known to blow the budget is dropped.
+      // Shorts fit any budget and teach nothing. Length is the reliable test, but it isn't
+      // always available (see ytDurations in the Worker), so fall back to the tag creators
+      // put in the title themselves.
+      const isShort = (x) => /#shorts?/i.test(x.title) || (x.sec && x.sec < 60);
+      const fits = list.filter((x) => !isShort(x) && (!x.sec || x.sec <= budget));
+      const pool = fits.length ? fits : list;
+      // vary by seed so a reroll moves through the feed instead of re-offering episode 1
+      const item = pool.length ? pool[(seed * 3 + i * 7) % pool.length] : null;
+      return { source: s, item };
+    }));
+    setLoading(false);
+  }, [catalog, level, cfg, minutes, st, seed, seenUrls]);
+
+  const reroll = () => setSeed((s) => s + 7);
+  useEffect(() => { setPicks(null); }, [plan, minutes]);
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return; }
+    if (st) suggest();
+  }, [seed]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // opening something creates a pending rating that survives a reload — the rating is
+  // the only thing that teaches the engine, so it must not evaporate when the tab closes
+  // The rating still teaches the SOURCE (itemId), because that's what has a difficulty
+  // worth learning; the episode title and url ride along so the rating row and the log
+  // name the thing you actually watched.
+  const open = (pick) => {
+    const s = pick.source, ep = pick.item;
+    const entry = { itemId: s.id, at: Date.now(), medium: cfg.medium, mode: cfg.mode, minutes,
+                    title: ep ? ep.title : s.title, source: s.title, url: ep ? ep.url : s.url };
+    save((s0) => ({ ...s0, pending: [entry, ...s0.pending.filter((p) => p.url !== entry.url)].slice(0, 6) }));
+    try { window.open(entry.url, "_blank", "noopener,noreferrer"); } catch (e) {}
+  };
+
+  const rate = (entry, verdict) => {
+    const med = entry.medium;
+    const it = catalog.find((x) => x.id === entry.itemId);
+    save((s0) => {
+      const cur = s0.items[entry.itemId] || { difficulty: it ? it.difficulty : s0.levels[med], confidence: it ? (it.difficultyConfidence || 0.3) : 0.2, ratings: 0 };
+      const r = applyRating({
+        level: s0.levels[med], ratingCount: s0.counts[med] || 0,
+        itemDifficulty: cur.difficulty, itemConfidence: cur.confidence,
+        verdict, minutes: entry.minutes,
+      });
+      const tagScores = { ...s0.tagScores };
+      if (it && verdict !== "lost") {
+        const bump = verdict === "just_right" ? 1 : verdict === "too_easy" ? 0.2 : -0.3;
+        (it.tags || []).forEach((t) => { tagScores[t] = Math.round(((tagScores[t] || 0) + bump) * 10) / 10; });
+      }
+      return {
+        ...s0,
+        levels: { ...s0.levels, [med]: r.level, updatedAt: Date.now() },
+        counts: { ...s0.counts, [med]: r.ratingCount },
+        items: { ...s0.items, [entry.itemId]: { difficulty: r.itemDifficulty, confidence: r.itemConfidence, ratings: (cur.ratings || 0) + 1 } },
+        history: [{ ...entry, verdict, ratedAt: Date.now() }, ...s0.history].slice(0, 400),
+        pending: s0.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)),
+        tagScores,
+      };
+    });
+  };
+  const dismiss = (entry) => save((s0) => ({ ...s0, pending: s0.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)) }));
+
+  const logOffline = (verdict) => {
+    const title = logText.trim();
+    if (!title) return;
+    const entry = { itemId: "offline:" + title.slice(0, 40), at: Date.now(), medium: cfg.medium,
+                    mode: cfg.mode, minutes: logMin, title, offline: true };
+    save((s0) => {
+      const r = applyRating({ level: s0.levels[cfg.medium], ratingCount: s0.counts[cfg.medium] || 0,
+                              itemDifficulty: s0.levels[cfg.medium], itemConfidence: 0, verdict, minutes: logMin });
+      return { ...s0,
+        levels: { ...s0.levels, [cfg.medium]: r.level, updatedAt: Date.now() },
+        counts: { ...s0.counts, [cfg.medium]: r.ratingCount },
+        history: [{ ...entry, verdict, ratedAt: Date.now() }, ...s0.history].slice(0, 400),
+      };
+    });
+    setLogText(""); setPanel(""); flash("Logged " + logMin + " min");
+  };
+
+  const addLink = () => {
+    const url = linkUrl.trim();
+    if (!/^https?:\/\//.test(url)) { flash("Needs to start with http:// or https://"); return; }
+    const it = {
+      id: "user-" + Math.abs(Array.from(url).reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)).toString(36),
+      title: linkTitle.trim() || url.replace(/^https?:\/\/(www\.)?/, "").slice(0, 48),
+      medium: cfg.medium === "reading" ? "reading" : "video", source: "web", url,
+      difficulty: level, difficultyConfidence: 0.15, tags: ["mine"], addedBy: "user", addedAt: Date.now(),
+    };
+    save((s0) => ({ ...s0, custom: [it, ...s0.custom.filter((c) => c.url !== url)] }));
+    setLinkUrl(""); setLinkTitle(""); setPanel(""); setPicks(null);
+    flash("Added to your sources");
+  };
+
+  const coverage = useMemo(() => (coverText.trim() ? coverageAgainstDeck(coverText, cards) : null), [coverText, cards]);
+
+  const week = useMemo(() => {
+    if (!st) return { mins: 0, byDay: [], items: [] };
+    const cut = Date.now() - 7 * 86400000;
+    const rows = st.history.filter((h) => h.at >= cut);
+    const byDay = {};
+    rows.forEach((h) => { const d = new Date(h.at).toISOString().slice(0, 10); byDay[d] = (byDay[d] || 0) + (h.minutes || 0); });
+    return { mins: rows.reduce((n, h) => n + (h.minutes || 0), 0), rows,
+             byDay: Object.entries(byDay).sort((a, b) => (a[0] < b[0] ? -1 : 1)) };
+  }, [st]);
+
+  const exportWeek = () => {
+    const lines = [
+      "TANGOCHO — 入力ログ / immersion log",
+      new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) + " → " + new Date().toISOString().slice(0, 10),
+      "",
+      `total: ${week.mins} min over ${week.rows.length} session(s)`,
+      `listening: ${bandName(st.levels.listening)} · reading: ${bandName(st.levels.reading)}`,
+      "",
+      ...week.byDay.map(([d, m]) => `  ${d}   ${m} min`),
+      "",
+      "detail:",
+      ...week.rows.map((h) => `  ${new Date(h.at).toISOString().slice(0, 10)}  ${String(h.minutes).padStart(3)}m  ${h.medium === "reading" ? "読" : "聞"}  ${INPUT_VERDICTS[h.verdict] ? INPUT_VERDICTS[h.verdict].en : "-"}  ${h.title}`),
+    ].join("\n");
+    try {
+      const url = URL.createObjectURL(new Blob([lines], { type: "text/plain;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = "tangocho-input-" + new Date().toISOString().slice(0, 10) + ".txt";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) {}
+    try { navigator.clipboard.writeText(lines); } catch (e) {}
+    flash("Downloaded and copied to the clipboard");
+  };
+
+  if (!st) return <div className="tc-empty">Loading…</div>;
+
+  return (
+    <div className="tc-input">
+      {st.pending.length > 0 && (
+        <div className="tc-inrate">
+          <p className="tc-eyebrow">How was it? · どうだった？</p>
+          {st.pending.map((p) => (
+            <div key={p.itemId + p.at} className="tc-inrateitem">
+              <div className="tc-inraterow1">
+                <span className="tc-inratetitle">{p.title}</span>
+                <button className="tc-inx" onClick={() => dismiss(p)} aria-label="dismiss">×</button>
+              </div>
+              <div className="tc-inverdicts">
+                {Object.entries(INPUT_VERDICTS).map(([k, v]) => (
+                  <button key={k} className="tc-fchip" onClick={() => rate(p, k)}><Bi en={v.en} ja={v.ja} /></button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="tc-inlevels">
+        {[["listening", "Listening", "聞く"], ["reading", "Reading", "読む"]].map(([m, en, ja]) => (
+          <div key={m} className="tc-inlevel">
+            <span className="tc-inlevlabel">{en} <i>{ja}</i></span>
+            <div className="tc-inbar"><div className="tc-inbarfill" style={{ width: `${st.levels[m]}%` }} /></div>
+            <span className="tc-inband">{band(st.levels[m])[0]} <i>{band(st.levels[m])[1]}</i></span>
+          </div>
+        ))}
+      </div>
+
+      <div className="tc-kanaseg">
+        {INPUT_PLANS.map((p) => (
+          <button key={p.id} className={"tc-fchip" + (plan === p.id ? " is-on" : "")} onClick={() => setPlan(p.id)}><Bi en={p.label} ja={p.ja} /></button>
+        ))}
+      </div>
+      <div className="tc-kanaseg tc-kanalen">
+        <span className="tc-kanalenlabel">Time</span>
+        {INPUT_TIMES.map((n) => (
+          <button key={n} className={"tc-fchip" + (minutes === n ? " is-on" : "")} onClick={() => setMinutes(n)}>{n === 60 ? "60+" : n} min</button>
+        ))}
+      </div>
+
+      {!picks ? (
+        <button className="tc-btn tc-btn-primary tc-start" onClick={suggest}>
+          {cfg.mode === "passive" ? "Find something to have on" : "Show me 3 things"} · {minutes} min
+        </button>
+      ) : (
+        <>
+          <div className="tc-inpicks">
+            {picks.length === 0 && <p className="tc-smarthint">Nothing left at this level that you haven't opened in the last two weeks. Reroll or add a link of your own.</p>}
+            {picks.map(({ source: it, item }, idx) => {
+              const d = relDots(it.difficulty, level);
+              const mins = it.durationSec ? Math.round(it.durationSec / 60) : null;
+              return (
+                <div key={it.id} className="tc-card2 tc-inpick">
+                  <div className="tc-inpicktop">
+                    <span className="tc-kindchip">{MEDIUM_CHIP[it.medium] || "📖"}</span>
+                    <span className="tc-indots" title={d.label}>
+                      {[1, 2, 3, 4].map((i) => <i key={i} className={"tc-indot" + (i <= d.n ? " is-on" : "")} />)}
+                    </span>
+                    <span className="tc-indotlabel">{d.label}</span>
+                  </div>
+                  {item ? (
+                    <>
+                      <p className="tc-inpicktitle">{item.title}</p>
+                      <p className="tc-inpickmeta">
+                        {/* for an indexed video the source IS the item, so name the
+                            channel here instead of repeating the title back */}
+                        {it.indexed ? it.channel : it.title}
+                        {item.at ? " · " + agoLabel(item.at) : ""}
+                        {/* only claim a length when it's this episode's, not the channel's average */}
+                        {item.sec ? ` · ${Math.max(1, Math.round(item.sec / 60))} min` : ""}
+                        {it.hasFurigana ? " · furigana" : ""}
+                        {it.hasSubsJa ? " · JP subtitles" : ""}
+                      </p>
+                    </>
+                  ) : loading && FEED_SOURCES.has(it.id) ? (
+                    <p className="tc-inpicktitle tc-inloading">finding {it.medium === "reading" ? "an article" : "an episode"}…</p>
+                  ) : (
+                    <>
+                      <p className="tc-inpicktitle">{it.title}{it.titleJa && it.titleJa !== it.title ? <i className="tc-inpickja">{it.titleJa}</i> : null}</p>
+                      <p className="tc-inpickmeta">
+                        {it.channel || it.source}
+                        {mins ? ` · ~${mins} min` : ""}
+                        {it.hasFurigana ? " · furigana" : ""}
+                        {it.hasSubsJa ? " · JP subtitles" : ""}
+                      </p>
+                      {it.note && <p className="tc-inpicknote">{it.note}</p>}
+                    </>
+                  )}
+                  <div className="tc-rehnav">
+                    <button className="tc-btn tc-btn-sm tc-btn-primary" disabled={loading && !item}
+                      onClick={() => open(picks[idx])}>{item ? "Play this" : "Open"}</button>
+                    <button className="tc-btn tc-btn-sm" onClick={() => save((s0) => ({ ...s0, hidden: [...s0.hidden, it.id] }))}>Not for me</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="tc-rehnav">
+            <button className="tc-btn tc-btn-sm" onClick={reroll}>Show me others</button>
+            <button className="tc-btn tc-btn-sm" onClick={() => setPicks(null)}>Back</button>
+          </div>
+        </>
+      )}
+
+      <p className="tc-smarthint">
+        {week.mins > 0
+          ? `This week · ${week.mins} min of input over ${week.rows.length} session${week.rows.length === 1 ? "" : "s"}.`
+          : "Nothing logged this week yet. Even 10 minutes of something you mostly understand beats 60 minutes of something you don't."}
+      </p>
+
+      <div className="tc-kanaseg tc-intools">
+        {[["log", "Log", "記録"], ["link", "Add link", "リンク追加"], ["cover", "Coverage", "カバー率"]].map(([k, en, ja]) => (
+          <button key={k} className={"tc-fchip" + (panel === k ? " is-on" : "")} onClick={() => setPanel(panel === k ? "" : k)}><Bi en={en} ja={ja} /></button>
+        ))}
+        <button className="tc-fchip" onClick={exportWeek} disabled={!week.rows.length}><Bi en="Export" ja="書き出し" /></button>
+      </div>
+      {note && <p className="tc-innote">{note}</p>}
+
+      {panel === "log" && (
+        <div className="tc-card2 tc-inpanel">
+          <p className="tc-eyebrow">input you did somewhere else</p>
+          <input className="tc-sentinput" value={logText} onChange={(e) => setLogText(e.target.value)}
+            placeholder="anime, a podcast, a conversation…" />
+          <div className="tc-kanaseg">
+            {INPUT_TIMES.map((n) => (
+              <button key={n} className={"tc-fchip" + (logMin === n ? " is-on" : "")} onClick={() => setLogMin(n)}>{n} min</button>
+            ))}
+          </div>
+          <div className="tc-inverdicts">
+            {Object.entries(INPUT_VERDICTS).map(([k, v]) => (
+              <button key={k} className="tc-fchip" disabled={!logText.trim()} onClick={() => logOffline(k)}><Bi en={v.en} ja={v.ja} /></button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {panel === "link" && (
+        <div className="tc-card2 tc-inpanel">
+          <p className="tc-eyebrow">add a source of your own</p>
+          <input className="tc-sentinput" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://…" />
+          <input className="tc-sentinput" value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} placeholder="what is it? (optional)" />
+          <p className="tc-smarthint">It starts at your current level and moves as you rate it, same as everything else.</p>
+          <div className="tc-rehnav"><button className="tc-btn tc-btn-sm tc-btn-primary" onClick={addLink}>Add</button></div>
+        </div>
+      )}
+
+      {panel === "cover" && (
+        <div className="tc-card2 tc-inpanel">
+          <p className="tc-eyebrow">paste Japanese — how much of it do you already have?</p>
+          <textarea className="tc-sentinput tc-inarea" value={coverText} onChange={(e) => setCoverText(e.target.value)}
+            placeholder="Paste a paragraph, a subtitle line, an article…" />
+          {coverage && (
+            <>
+              <div className="tc-bignum">{coverage.pct}<span>%</span></div>
+              <p className="tc-donesub">of the words in that text are already in your deck</p>
+              {coverage.unknown.length > 0 && (
+                <>
+                  <p className="tc-eyebrow">not in your deck</p>
+                  <p className="tc-incover">{coverage.unknown.map((u) => u.w).join("　")}</p>
+                </>
+              )}
+              <p className="tc-smarthint">
+                {coverage.pct >= 90 ? "Comfortable — good for reading at speed."
+                  : coverage.pct >= 75 ? "About right: enough support to guess the rest."
+                  : "Below your comfortable range. Fine to skim, hard to actually learn from."}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── conjugation engine ──
+   Class teaches this as rules, not memorised tables (FACT 4-3): godan stems shift across
+   the あいうえお rows, ichidan drops る, する/くる are the two irregulars. So the forms are
+   computed rather than hand-written 8× per word — which also means adding a verb to
+   CONJ_BANK gives you all 8 cells for free.
+   Validated against the 33 hand-authored negatives already in CONJ_BANK: all 33 match. */
+const CONJ_KEY = "jpn101:conj";
+// godan last kana -> [い-row stem, あ-row stem, plain-past ending (音便)]
+const GODAN_ROWS = {
+  "う": ["い", "わ", "った"], "つ": ["ち", "た", "った"], "る": ["り", "ら", "った"],
+  "む": ["み", "ま", "んだ"], "ぶ": ["び", "ば", "んだ"], "ぬ": ["に", "な", "んだ"],
+  "く": ["き", "か", "いた"], "ぐ": ["ぎ", "が", "いだ"], "す": ["し", "さ", "した"],
+};
+function conjugate(dict, type) {
+  const F = (a, b, c, d, e, f, g, h) => ({ formal: { presPos: a, presNeg: b, pastPos: c, pastNeg: d },
+                                           plain:  { presPos: e, presNeg: f, pastPos: g, pastNeg: h } });
+  if (type === "iadj") {
+    const s = dict === "いい" ? "よ" : dict.slice(0, -1);   // いい is the one irregular stem
+    return F(dict + "です", s + "くないです", s + "かったです", s + "くなかったです",
+             dict, s + "くない", s + "かった", s + "くなかった");
+  }
+  if (type === "na") {
+    return F(dict + "です", dict + "じゃないです", dict + "でした", dict + "じゃなかったです",
+             dict + "だ", dict + "じゃない", dict + "だった", dict + "じゃなかった");
+  }
+  if (type === "irregular") {
+    if (dict === "する") return F("します", "しません", "しました", "しませんでした", "する", "しない", "した", "しなかった");
+    if (dict === "くる") return F("きます", "きません", "きました", "きませんでした", "くる", "こない", "きた", "こなかった");
+    if (dict === "ある") return F("あります", "ありません", "ありました", "ありませんでした", "ある", "ない", "あった", "なかった");
+  }
+  if (type === "ichidan") {
+    const s = dict.slice(0, -1);
+    return F(s + "ます", s + "ません", s + "ました", s + "ませんでした", dict, s + "ない", s + "た", s + "なかった");
+  }
+  const g = GODAN_ROWS[dict.slice(-1)];
+  if (!g) return null;
+  const stem = dict.slice(0, -1), [i, a, ta] = g;
+  const past = dict === "いく" ? "った" : ta;      // 行く is the classic exception, not いいた
+  return F(stem + i + "ます", stem + i + "ません", stem + i + "ました", stem + i + "ませんでした",
+           dict, stem + a + "ない", stem + past, stem + a + "なかった");
+}
+// the 8 cells of the class's grid — each is one drillable prompt
+const CONJ_FORMS = [
+  { id: "f-pp", pol: "formal", key: "presPos", chip: "polite", ask: "polite present" },
+  { id: "f-pn", pol: "formal", key: "presNeg", chip: "polite", ask: "polite negative" },
+  { id: "f-ap", pol: "formal", key: "pastPos", chip: "polite", ask: "polite past" },
+  { id: "f-an", pol: "formal", key: "pastNeg", chip: "polite", ask: "polite past negative" },
+  { id: "p-pp", pol: "plain",  key: "presPos", chip: "plain",  ask: "dictionary form" },
+  { id: "p-pn", pol: "plain",  key: "presNeg", chip: "plain",  ask: "plain negative" },
+  { id: "p-ap", pol: "plain",  key: "pastPos", chip: "plain",  ask: "plain past" },
+  { id: "p-an", pol: "plain",  key: "pastNeg", chip: "plain",  ask: "plain past negative" },
+];
+const CONJ_LENGTHS = [10, 20, 40, "all"];
+
 function ConjDrill() {
   const [filter, setFilter] = useState("all");
-  const [polite, setPolite] = useState(false);   // ask for plain or polite negative
+  const [forms, setForms] = useState(() => new Set(CONJ_FORMS.map((f) => f.id)));   // whole grid by default
+  const [len, setLen] = useState(20);
+  const [view, setView] = useState("setup");     // setup | session | summary
+  const [stats, setStats] = useState({});
+  const statsRef = useRef({});
   const [queue, setQueue] = useState([]);
   const [pos, setPos] = useState(0);
+  const [poolSize, setPoolSize] = useState(0);
   const [flipped, setFlipped] = useState(false);
-  const [right, setRight] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [best, setBest] = useState(0);
-  const [running, setRunning] = useState(false);
+  const [passed, setPassed] = useState(() => new Set());
+  const [firstTry, setFirstTry] = useState(() => new Set());
+  const [struggled, setStruggled] = useState(() => new Set());
+  const missRef = useRef({});
+  const shownRef = useRef(0);
+  const thinkRef = useRef(null);
+  const startedRef = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
 
-  const pool = useMemo(
+  useEffect(() => { (async () => {
+    try { const r = await sGet(CONJ_KEY); if (r) { const o = JSON.parse(r); setStats(o); statsRef.current = o; } } catch (e) {}
+  })(); }, []);
+
+  const words = useMemo(
     () => (filter === "all" ? CONJ_BANK : CONJ_BANK.filter((w) => w.type === filter)),
     [filter]
   );
+  // every (word × selected form) pair is its own drillable item with its own history
+  const items = useMemo(() => {
+    const out = [];
+    words.forEach((w) => {
+      const c = conjugate(w.reading, w.type);
+      if (!c) return;
+      CONJ_FORMS.forEach((f) => {
+        if (!forms.has(f.id)) return;
+        out.push({ id: w.reading + "|" + f.id, w, f, answer: c[f.pol][f.key] });
+      });
+    });
+    return out;
+  }, [words, forms]);
 
-  const start = useCallback(() => {
-    const q = [...pool].sort(() => Math.random() - 0.5);
-    setQueue(q); setPos(0); setFlipped(false);
-    setRight(0); setTotal(0); setStreak(0); setBest(0);
-    setRunning(true);
-  }, [pool]);
+  const getS = (m, id) => m[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
+  const needC = (st, now) => statNeed(st, now) + (st.seen ? 0 : Math.random());
+
+  const startSession = useCallback((subset) => {
+    const now = Date.now();
+    const pool0 = subset && subset.length ? subset : items;
+    if (!pool0.length) return;
+    const ordered = pool0
+      .map((x) => ({ x, k: needC(getS(statsRef.current, x.id), now) + Math.random() * 1.2 }))
+      .sort((a, b) => b.k - a.k).map((o) => o.x);
+    const pool = len === "all" ? ordered : ordered.slice(0, len);
+    setQueue(pool); setPos(0); setPoolSize(pool.length);
+    setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
+    missRef.current = {}; startedRef.current = Date.now(); setElapsed(0);
+    setFlipped(false); setView("session");
+  }, [items, len]);
+
+  const cur = queue[pos] || null;
+  const done = view === "session" && queue.length > 0 && pos >= queue.length;
+  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
+  useEffect(() => { if (done) { setElapsed(Date.now() - startedRef.current); setView("summary"); } }, [done]);
 
   const grade = (ok) => {
-    setTotal((t) => t + 1);
+    if (!cur) return;
+    const m = statsRef.current, s0 = getS(m, cur.id), think = thinkRef.current;
+    const ns = { ...s0, seen: s0.seen + 1, correct: s0.correct + (ok ? 1 : 0),
+      level: ok ? Math.min(5, s0.level + 1) : Math.max(0, s0.level - 2),
+      streak: ok ? (s0.streak || 0) + 1 : 0, last: Date.now(),
+      fsrs: statReview(s0, ok, think, Date.now()),
+      ms: (s0.ms || 0) + (think || 0), msN: (s0.msN || 0) + (think ? 1 : 0) };
+    const nx = { ...m, [cur.id]: ns };
+    statsRef.current = nx; setStats(nx); sSet(CONJ_KEY, JSON.stringify(nx));
     if (ok) {
-      setRight((r) => r + 1);
-      setStreak((s) => { const n = s + 1; setBest((b) => Math.max(b, n)); return n; });
+      if (!missRef.current[cur.id]) setFirstTry((p) => { const n = new Set(p); n.add(cur.id); return n; });
+      setPassed((p) => { const n = new Set(p); n.add(cur.id); return n; });
+      setQueue((q) => q.filter((x, i) => i <= pos || x.id !== cur.id));
     } else {
-      setStreak(0);
-      // missed → re-drill it near the end of the queue
-      setQueue((q) => [...q, q[pos]]);
+      setStruggled((p) => { const n = new Set(p); n.add(cur.id); return n; });
+      const c = (missRef.current[cur.id] || 0) + 1;
+      missRef.current[cur.id] = c;
+      if (c <= 2) setQueue((q) => { const n = q.slice(); n.splice(Math.min(pos + 4, n.length), 0, cur); return n; });
     }
-    setFlipped(false);
-    setPos((p) => p + 1);
+    setFlipped(false); setPos((p) => p + 1);
   };
 
-  if (!running) {
+  const toggleForm = (id) => setForms((prev) => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n.size ? n : new Set(["p-pn"]);        // never leave nothing to ask
+  });
+  const mastered = items.filter((x) => getS(stats, x.id).level >= 4).length;
+  const avgSecs = (st) => (st.msN ? (st.ms / st.msN / 1000).toFixed(1) + "s" : "—");
+
+  // ── session ──
+  if (view === "session" && cur) {
+    const meta = CONJ_TYPES[cur.w.type];
     return (
       <div className="tc-conj">
-        <div className="tc-conjintro">
-          <h2 className="tc-conjtitle">Negative form drill</h2>
-          <p className="tc-conjsub">See a word, say its negative out loud, flip, and grade yourself.
-            ① ichidan: drop る + ない · ⑤ godan: shift to the あ row + ない ·
-            い-adj: 〜くない · noun/な-adj: 〜じゃない</p>
-          <div className="tc-conjchips" role="group" aria-label="Word type filter">
-            {CONJ_FILTERS.map(([id, label]) => (
-              <button key={id} className={"tc-conjchip" + (filter === id ? " is-on" : "")}
-                onClick={() => setFilter(id)}>{label}</button>
-            ))}
+        <div className="tc-progress">
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
+          <span className="tc-progtext">{passed.size} / {poolSize}</span>
+          <button className="tc-fchip" onClick={() => setView("setup")}>Quit</button>
+        </div>
+        <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={() => setFlipped((f) => !f)}
+             role="button" tabIndex={0} aria-label="Conjugation card, click to flip">
+          <div className="tc-card-inner">
+            <div className="tc-face tc-front">
+              <span className="tc-kindchip">{meta.chip}</span>
+              <div className="tc-term">{cur.w.dict}</div>
+              <div className="tc-reading-front">{cur.w.reading} · {cur.w.meaning}</div>
+              <div className="tc-conjask">→ {cur.f.ask}?</div>
+              <span className="tc-flipcue">tap to flip</span>
+            </div>
+            <div className="tc-face tc-back">
+              <div className="tc-conjanswer">{cur.answer} <SpeakBtn text={cur.answer} /></div>
+              <div className="tc-conjhow">{cur.f.ask}</div>
+              <div className="tc-conjrule">{meta.rule}</div>
+              {cur.w.note && <p className="tc-conjnote">⚠️ {cur.w.note}</p>}
+            </div>
           </div>
-          <button className={"tc-rpill tc-conjmode" + (polite ? " is-on" : "")} aria-pressed={polite}
-            onClick={() => setPolite((v) => !v)}>
-            {polite ? "Polite negative (〜ません / ないです)" : "Plain negative (〜ない)"}
-          </button>
-          <button className="tc-btn tc-btn-wide" onClick={start}>Start · {pool.length} words</button>
+        </div>
+        <div className="tc-grade">
+          {!flipped ? (
+            <button type="button" className="tc-btn tc-btn-wide"
+              onClick={(e) => { e.stopPropagation(); thinkRef.current = Date.now() - shownRef.current; setFlipped(true); }}>Reveal answer</button>
+          ) : (
+            <>
+              <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
+              <button type="button" className="tc-btn tc-btn-got" onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it</button>
+            </>
+          )}
         </div>
       </div>
     );
   }
 
-  if (pos >= queue.length) {
-    const pct = total ? Math.round((right / total) * 100) : 0;
+  // ── summary ──
+  if (view === "summary") {
+    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    const missed = items.filter((x) => struggled.has(x.id));
     return (
-      <div className="tc-summary">
-        <h2>ドリル終了！</h2>
-        <div className="tc-sumgrid">
-          <div className="tc-sumitem"><b>{pct}%</b><span>accuracy</span></div>
-          <div className="tc-sumitem"><b>{right}/{total}</b><span>correct</span></div>
-          <div className="tc-sumitem"><b>{best}</b><span>best streak</span></div>
-        </div>
-        <div className="tc-gradebtns">
-          <button className="tc-btn" onClick={start}>Go again</button>
-          <button className="tc-btn" onClick={() => setRunning(false)}>Change setup</button>
+      <div className="tc-conj">
+        <div className="tc-done">
+          <p className="tc-eyebrow">Session complete</p>
+          <div className="tc-bignum">{pct}<span>%</span></div>
+          <p className="tc-donesub">{firstTry.size} nailed first try{missed.length ? ` · ${missed.length} missed` : ""} · {poolSize} prompts</p>
+          <p className="tc-donesub">{fmtSecs(elapsed)} total · {(elapsed / (passed.size || 1) / 1000).toFixed(1)}s each</p>
+          {missed.length > 0 && (
+            <div className="tc-kanaweak">
+              <p className="tc-eyebrow">needs the most work</p>
+              {missed.slice(0, 6).map((x) => {
+                const st = getS(stats, x.id);
+                return (
+                  <div key={x.id} className="tc-kanaweakrow">
+                    <span className="tc-kanaweakch" style={{ fontSize: 18 }}>{x.w.dict}</span>
+                    <span className="tc-kanaweakr">{x.f.ask}</span>
+                    <span className="tc-kanaweakmeta">{st.seen ? Math.round((st.correct / st.seen) * 100) + "%" : "—"} · {avgSecs(st)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="tc-donebtns">
+            {missed.length > 0 && <button className="tc-btn tc-btn-primary" onClick={() => startSession(missed)}>Review the {missed.length} you missed</button>}
+            <button className="tc-btn" onClick={() => startSession()}>Go again</button>
+            <button className="tc-btn" onClick={() => setView("setup")}>Done</button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const w = queue[pos];
-  const meta = CONJ_TYPES[w.type];
+  // ── setup ──
   return (
     <div className="tc-conj">
-      <div className="tc-progress">
-        <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${(pos / queue.length) * 100}%` }} /></div>
-        <span className="tc-progtext">{pos + 1} / {queue.length} · 🔥 {streak}</span>
-      </div>
-
-      <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={() => setFlipped((f) => !f)}
-           role="button" tabIndex={0} aria-label="Conjugation card, click to flip">
-        <div className="tc-card-inner">
-          <div className="tc-face tc-front">
-            <span className="tc-kindchip">{meta.chip}</span>
-            <div className="tc-term">{w.dict}</div>
-            <div className="tc-reading-front">{w.reading} · {w.meaning}</div>
-            <div className="tc-conjask">{polite ? "→ polite negative?" : "→ plain negative?"}</div>
-            <span className="tc-flipcue">tap to flip</span>
-          </div>
-          <div className="tc-face tc-back">
-            <div className="tc-conjanswer">{polite ? w.polite : w.neg} <SpeakBtn text={polite ? w.polite.split(" / ")[0] : w.negR || w.neg} /></div>
-            {!polite && w.negR !== w.neg && <div className="tc-romaji">{w.negR}</div>}
-            <div className="tc-conjhow">{w.how}</div>
-            <div className="tc-conjrule">{meta.rule}</div>
-            {w.note && <p className="tc-conjnote">⚠️ {w.note}</p>}
-          </div>
+      <div className="tc-conjintro">
+        <h2 className="tc-conjtitle">Conjugation</h2>
+        <p className="tc-conjsub">The full grid from class — present/past × positive/negative, polite and plain.
+          ① ichidan: drop る · ⑤ godan: shift across the あいうえお rows ·
+          い-adj: 〜く〜 · noun/な-adj: 〜じゃ〜</p>
+        <div className="tc-conjchips" role="group" aria-label="Word type">
+          {CONJ_FILTERS.map(([id, label]) => (
+            <button key={id} className={"tc-conjchip" + (filter === id ? " is-on" : "")}
+              onClick={() => setFilter(id)}>{label}</button>
+          ))}
         </div>
-      </div>
-
-      <div className="tc-grade">
-        {!flipped ? (
-          <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); setFlipped(true); }}>Reveal answer</button>
-        ) : (
-          <>
-            <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
-            <button type="button" className="tc-btn tc-btn-got" onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it</button>
-          </>
-        )}
+        <div className="tc-conjchips" role="group" aria-label="Which forms to drill">
+          {CONJ_FORMS.map((f) => (
+            <button key={f.id} className={"tc-conjchip" + (forms.has(f.id) ? " is-on" : "")}
+              aria-pressed={forms.has(f.id)} onClick={() => toggleForm(f.id)}>{f.ask}</button>
+          ))}
+          <button className="tc-conjchip"
+            onClick={() => setForms(forms.size === CONJ_FORMS.length ? new Set(["p-pn"]) : new Set(CONJ_FORMS.map((f) => f.id)))}>
+            {forms.size === CONJ_FORMS.length ? "just one" : "all 8"}
+          </button>
+        </div>
+        <div className="tc-kanaseg tc-kanalen">
+          <span className="tc-kanalenlabel">session</span>
+          {CONJ_LENGTHS.map((n) => (
+            <button key={n} className={"tc-fchip" + (len === n ? " is-on" : "")} onClick={() => setLen(n)}>
+              {n === "all" ? `all ${items.length}` : n}
+            </button>
+          ))}
+        </div>
+        <button className="tc-btn tc-btn-wide" onClick={() => startSession()}>
+          Start · {len === "all" ? items.length : Math.min(len, items.length)} prompts
+        </button>
+        <p className="tc-conjsub">{mastered}/{items.length} mastered · {words.length} words × {forms.size} form{forms.size === 1 ? "" : "s"}</p>
       </div>
     </div>
   );
@@ -3807,6 +5484,7 @@ function Freq() {
       const ease = Math.max(0.55, Math.min(1.8, (x.ease || 1) + (got ? 0.05 : -0.15)));
       return {
         ...x, ease, last: Date.now(),
+        fsrs: statReview(x, got, t, Date.now()),
         streak: got ? (x.streak || 0) + 1 : 0,
         seen: (x.seen || 0) + 1,
         correct: (x.correct || 0) + (got ? 1 : 0),
@@ -3971,7 +5649,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-card2 .tc-eyebrow{color:rgba(255,255,255,.5);}
 
 /* setup */
-.tc-study-setup{background:transparent;border:0;border-radius:0;padding:6px 2px;}
+.tc-study-setup{background:transparent;border:0;border-radius:0;padding:6px 2px;display:flex;flex-direction:column;gap:10px;}
+.tc-study-setup > *{margin-top:0;margin-bottom:0;}
 .tc-hero{text-align:center;margin:6px 0 22px;}
 .tc-heronum{font-size:96px;font-weight:200;letter-spacing:-.03em;line-height:1;color:#fff;font-family:-apple-system,"SF Pro Display",BlinkMacSystemFont,sans-serif;text-shadow:0 0 44px rgba(124,92,255,.4);}
 .tc-herolabel{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--mut-2);margin:8px 0 0;}
@@ -4139,10 +5818,21 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* focus + insights */
 .tc-focus-btn{margin-top:10px;border-color:var(--shu);color:var(--shu-soft);}
 .tc-focus-btn:hover{background:rgba(216,72,47,.12);}
-.tc-smart-btn{margin-top:12px;background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
+.tc-smart-btn{background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
 .tc-smart-btn:hover{filter:brightness(1.12);}
 .tc-smarthint{margin:8px 0 0;font-size:12px;color:var(--mut-2);line-height:1.5;text-align:center;}
 .tc-kind-prod{background:rgba(216,72,47,.16);border-color:rgba(216,72,47,.4);color:var(--shu-soft);}
+/* Production cards read as a different exercise on purpose — the visual break is part of
+   what stops the session settling into one mode. */
+.tc-prodchip{background:rgba(124,92,255,.2);border-color:rgba(124,92,255,.45);color:#c9b8ff;}
+.tc-prodprompt{font-size:26px;font-weight:600;line-height:1.3;color:#fff;text-align:center;padding:0 14px;max-width:340px;}
+.tc-prodanswer{color:#c9b8ff;}
+.tc-retention{display:flex;flex-direction:column;gap:7px;align-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 12px;}
+.tc-retlabel{font-size:12px;color:var(--mut-2);letter-spacing:.04em;text-transform:uppercase;}
+.tc-retention .tc-smarthint{margin:0;}
+.tc-mnbox{margin-top:10px;display:flex;flex-direction:column;gap:6px;align-items:center;width:100%;}
+.tc-mnin{width:min(100%,300px);box-sizing:border-box;background:rgba(255,255,255,.9);border:1.5px solid rgba(230,162,60,.5);border-radius:9px;padding:8px 11px;font:inherit;font-size:14px;color:var(--sumi);}
+.tc-mnshow{margin:8px 0 0;font-size:13px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.1);border-radius:8px;padding:6px 11px;max-width:300px;}
 .tc-leechtag{margin-top:10px;font-size:12px;color:#e6a23c;background:rgba(230,162,60,.12);border:1px solid rgba(230,162,60,.35);padding:3px 10px;border-radius:99px;}
 .tc-leechpill{font-size:11px;font-weight:600;color:#e6a23c;background:rgba(230,162,60,.13);border:1px solid rgba(230,162,60,.35);padding:2px 8px;border-radius:99px;}
 .tc-coachcard{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:14px 16px;margin-bottom:10px;}
@@ -4156,7 +5846,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-coachai{border-color:rgba(216,72,47,.35);}
 .tc-pre{white-space:pre-wrap;}
 .tc-kanabar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
-.tc-kanaseg{display:flex;gap:6px;}
+.tc-kanaseg{display:flex;gap:6px;flex-wrap:wrap;}   /* must wrap: the set row is 6 chips and overflowed the screen on phones */
 .tc-kanaprog{margin:0 0 12px;font-size:12.5px;color:var(--mut-2);}
 .tc-kanagrid{display:flex;flex-direction:column;gap:6px;}
 .tc-kanarow{display:flex;gap:6px;}
@@ -4171,6 +5861,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kanadrill{text-align:center;}
 .tc-kanaprompt{font-size:44px;font-weight:600;color:#fff;margin:2px 0 12px;letter-spacing:.02em;}
 .tc-kananote{font-size:15px;font-weight:400;color:rgba(255,255,255,.55);}
+.tc-kanaempty{font-size:16px;line-height:1.5;color:var(--washi,#efeae2);margin:2px 0 14px;max-width:34ch;}
+.tc-kanalen{align-items:center;margin:0 0 12px;}
+.tc-kanalenlabel{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut-2);margin-right:2px;}
+.tc-kanaweak{margin-top:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;}
+.tc-kanaweakrow{display:flex;align-items:center;gap:10px;}
+.tc-kanaweakch{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:24px;line-height:1;min-width:2.2ch;color:#fff;}
+.tc-kanaweakr{font-size:14px;color:var(--washi,#efeae2);min-width:4.5ch;}
+.tc-kanaweakmeta{margin-left:auto;font-size:12px;color:var(--mut-2);font-variant-numeric:tabular-nums;}
 .kn-ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px;line-height:1;color:rgba(31,45,84,.15);pointer-events:none;user-select:none;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .kn-ghost-strong{color:rgba(216,72,47,.5);}
 .tc-build{font-size:11px;font-weight:600;color:var(--mut-2);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);padding:2px 7px;border-radius:99px;vertical-align:middle;letter-spacing:.04em;}
@@ -4202,7 +5900,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sum-need b{color:var(--shu-soft);}
 .tc-sum-new b{color:#e6a23c;}
 .tc-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
-.tc-fchip{appearance:none;border:0;background:rgba(255,255,255,.07);color:rgba(255,255,255,.75);font:inherit;font-size:13.5px;font-weight:500;min-height:36px;padding:6px 14px;border-radius:999px;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .1s;}
+.tc-fchip{appearance:none;border:0;background:rgba(255,255,255,.07);color:rgba(255,255,255,.75);font:inherit;font-size:13.5px;font-weight:500;min-height:36px;padding:6px 14px;border-radius:999px;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,transform .1s;}
+@media (max-width:460px){.tc-fchip{font-size:12.5px;padding:6px 11px;}.tc-kanabar{gap:7px;}}
 .tc-fchip:active{transform:scale(.95);}
 .tc-fchip.is-on{background:var(--shu);border-color:var(--shu);color:#fff;}
 .tc-fchip-sort{margin-left:auto;}
@@ -4314,6 +6013,66 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-conjhow{font-size:15px;color:var(--shu-soft,#ff8a7a);font-variant-numeric:tabular-nums;}
 .tc-conjrule{font-size:12.5px;color:var(--mut-2);}
 .tc-conjnote{margin:6px 12px 0;font-size:12.5px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.08);border:1px solid rgba(255,190,90,.2);padding:8px 12px;border-radius:8px;}
+/* ── study buddy ── */
+.tc-buddy{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:12px 14px;margin:0 0 12px;}
+/* Combo counts instant recalls, not correct answers — under 3 seconds means the word is
+   actually there, and that is what predicts remembering it tomorrow. */
+.tc-combo{margin-left:auto;font-size:15px;font-weight:700;color:#8fd6a0;font-variant-numeric:tabular-nums;animation:tc-pop .28s cubic-bezier(.3,1.4,.5,1);}
+.tc-combo i{font-style:normal;font-size:11px;opacity:.7;margin-left:1px;}
+.tc-combo.is-warm{color:#ffd76e;}
+.tc-combo.is-hot{color:#ff9a6e;text-shadow:0 0 12px rgba(255,154,110,.55);}
+@keyframes tc-pop{0%{transform:scale(.6);opacity:.3}60%{transform:scale(1.22)}100%{transform:scale(1);opacity:1}}
+.tc-donecombo{margin:6px 0 0;font-size:13px;color:var(--mut-2);}
+.tc-donecombo b{color:#8fd6a0;font-size:15px;}
+@media (prefers-reduced-motion:reduce){.tc-combo{animation:none;}}
+.tc-mascot{flex:none;image-rendering:pixelated;image-rendering:crisp-edges;filter:drop-shadow(0 4px 8px rgba(0,0,0,.35));user-select:none;}
+.tc-buddytext{min-width:0;display:flex;flex-direction:column;gap:7px;}
+.tc-buddyline{margin:0;font-size:14px;line-height:1.45;color:var(--washi,#efeae2);}
+.tc-buddystats{display:flex;flex-wrap:wrap;gap:6px;}
+.tc-stat{font-size:11.5px;color:var(--mut-2);background:rgba(255,255,255,.06);border-radius:999px;padding:3px 9px;white-space:nowrap;}
+.tc-stat b{color:#fff;font-weight:600;font-size:12.5px;}
+.tc-stat.is-on{background:rgba(255,140,90,.16);color:#ffcbb0;}
+.tc-stat.is-on b{color:#ffb08a;}
+.tc-troublebtn{background:rgba(255,190,90,.1);border:1px solid rgba(255,190,90,.28);color:#ffd9a0;}
+
+
+/* ── 入力 / input ── */
+.tc-input{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
+.tc-inlevels{display:flex;gap:10px;}
+.tc-inlevel{flex:1;display:flex;flex-direction:column;gap:5px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px 12px;}
+.tc-inlevlabel{font-size:12px;color:var(--mut-2);}
+.tc-inlevlabel i,.tc-inband i{font-style:normal;opacity:.55;font-size:.85em;}
+.tc-bi{display:inline-flex;flex-direction:column;align-items:center;line-height:1.15;gap:1px;}
+.tc-bi small{font-size:10px;opacity:.6;font-weight:400;letter-spacing:.02em;}
+.tc-inpickja{display:block;font-style:normal;font-size:13px;font-weight:400;color:var(--mut-2);margin-top:2px;}
+.tc-inloading{color:var(--mut-2);font-weight:400;font-size:15px;}
+.tc-inloading::after{content:"";display:inline-block;width:1em;text-align:left;animation:tc-dots 1.2s steps(4,end) infinite;}
+@keyframes tc-dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.tc-inbar{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;}
+.tc-inbarfill{height:100%;background:linear-gradient(90deg,var(--shu-soft,#ff8a7a),var(--shu));border-radius:999px;transition:width .4s ease;}
+.tc-inband{font-size:13.5px;color:#fff;font-weight:500;}
+.tc-inrate{background:rgba(255,190,90,.08);border:1px solid rgba(255,190,90,.22);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;}
+.tc-inrateitem{display:flex;flex-direction:column;gap:8px;}
+.tc-inraterow1{display:flex;align-items:center;gap:8px;}
+.tc-inratetitle{flex:1;min-width:0;font-size:14px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tc-inx{appearance:none;border:0;background:transparent;color:var(--mut-2);font-size:20px;line-height:1;cursor:pointer;padding:0 4px;min-height:32px;}
+.tc-inverdicts{display:flex;gap:6px;flex-wrap:wrap;}
+.tc-inpicks{display:flex;flex-direction:column;gap:10px;}
+.tc-inpick{align-items:stretch;text-align:left;gap:6px;padding:14px;}
+.tc-inpicktop{display:flex;align-items:center;gap:8px;}
+.tc-indots{display:inline-flex;gap:3px;}
+.tc-indot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.18);}
+.tc-indot.is-on{background:var(--shu-soft,#ff8a7a);}
+.tc-indotlabel{font-size:12px;color:var(--mut-2);}
+.tc-inpicktitle{margin:2px 0 0;font-size:17px;font-weight:600;color:#fff;line-height:1.35;}
+.tc-inpickmeta{margin:0;font-size:12.5px;color:var(--mut-2);}
+.tc-inpicknote{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:rgba(255,255,255,.62);}
+.tc-intools{justify-content:center;}
+.tc-innote{margin:0;text-align:center;font-size:12.5px;color:var(--shu-soft,#ff8a7a);}
+.tc-inpanel{align-items:stretch;text-align:left;gap:10px;padding:14px;}
+.tc-inarea{min-height:120px;resize:vertical;font-size:16px;line-height:1.6;}
+.tc-incover{margin:0;font-family:"Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;font-size:17px;line-height:1.7;color:#ffd9a0;}
+@media (max-width:460px){.tc-inpicktitle{font-size:15.5px;}.tc-inlevel{padding:9px 10px;}}
 .tc-root::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:99;opacity:.05;mix-blend-mode:soft-light;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
 .tc-root :is(button,[role="tab"]):focus-visible{outline:2px solid var(--shu-soft);outline-offset:2px;border-radius:inherit;}
