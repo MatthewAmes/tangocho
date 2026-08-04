@@ -1480,7 +1480,7 @@ export default function JpnFlashcards() {
         ) : tab === "input" ? (
           <Input cards={cards} />
         ) : tab === "kanji" ? (
-          <Kanji />
+          <Kanji cards={cards} />
         ) : tab === "write" ? (
           /* Write keeps its render branch and its component. The tab chip is gone for now,
              not the feature — it is the only production-recall practice in the app and
@@ -5040,7 +5040,32 @@ function kanjiExercise(st) {
   return Math.random() < 0.5 ? "build" : "reading";   // meaning -> kanji, from tiles
 }
 
-function Kanji() {
+/* Which kanji actually appear in the deck, and in which words.
+   Frequency order is right for a general learner and wrong for this one: 412 jōyō kanji
+   appear across these 835 cards, but their median position in the frequency list is 436
+   and the tail runs past 2000. Learning 国 and 年 before 学 (20 of the deck's words), 語
+   (17) and 何 (16) means weeks of practice that never touches the coursework.
+   So: characters carried by the deck come first, the ones inside already-studied words
+   ahead of the rest, and general frequency breaks ties and orders everything after. */
+function deckKanjiIndex(cards) {
+  const map = new Map();
+  for (const c of cards || []) {
+    const studied = (c.seen || 0) > 0;
+    for (const ch of c.term || "") {
+      if (!/[一-龯]/.test(ch)) continue;
+      let e = map.get(ch);
+      if (!e) { e = { words: [], n: 0, studied: false }; map.set(ch, e); }
+      // n counts every word; words[] keeps only a few to show. Ranking must use n — using
+      // the capped list gave 日 (42 of the deck's words) the same boost as one in six.
+      e.n++;
+      if (e.words.length < 6) e.words.push(c);
+      if (studied) e.studied = true;
+    }
+  }
+  return map;
+}
+
+function Kanji({ cards }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
@@ -5064,7 +5089,17 @@ function Kanji() {
   })(); }, []);
   useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, view]);
 
-  const all = data ? data.kanji : [];
+  const deckMap = useMemo(() => deckKanjiIndex(cards), [cards]);
+  const all = useMemo(() => {
+    const list = data ? data.kanji : [];
+    if (!deckMap.size) return list;
+    const rank = (k, i) => {
+      const e = deckMap.get(k.c);
+      if (!e) return 2_000_000 + i;                       // not in the deck at all
+      return (e.studied ? 0 : 1_000_000) + i - Math.min(e.n, 40) * 40;
+    };
+    return list.map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k);
+  }, [data, deckMap]);
   const getS = (id) => statsRef.current[id] || { seen: 0, correct: 0, level: 0, streak: 0 };
   const isMastered = (st) => (st.level || 0) >= 4;
   const masteredCount = useMemo(() => all.filter((k) => isMastered(stats[k.c] || {})).length, [all, stats]);
@@ -5185,6 +5220,9 @@ function Kanji() {
                 <b>{cur.c}</b> {cur.m.join(", ")}
                 {cur.on.length ? " \u00b7 \u97f3 " + cur.on.join("\u30fb") : ""}
                 {cur.kun.length ? " \u00b7 \u8a13 " + cur.kun.join("\u30fb") : ""}
+                {(deckMap.get(cur.c)?.words || []).length > 0
+                  ? " \u2014 " + deckMap.get(cur.c).words.slice(0, 2).map((w) => w.term).join("\u3001")
+                  : ""}
               </p>
             )}
           </div>
@@ -5202,7 +5240,16 @@ function Kanji() {
               <div className="tc-kanjimid">{cur.c}</div>
               <div className="tc-meaning tc-meaning-lg">{cur.m.join(", ")}</div>
               {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {cur.on.join("・")}</div>}
+              {/* Words from the deck that use this character. A kanji met inside vocabulary
+                  already being studied is far easier to hold on to than one met alone. */}
               {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {cur.kun.join("・")}</div>}
+              {(deckMap.get(cur.c)?.words || []).length > 0 && (
+                <p className="tc-kwords">
+                  {deckMap.get(cur.c).words.slice(0, 3).map((w) => (
+                    <span key={w.id} className="tc-kword"><b>{w.term}</b> {shortMeaning(w.meaning)}</span>
+                  ))}
+                </p>
+              )}
               <span className="tc-timetag">{cur.s} strokes{cur.g && cur.g <= 6 ? " · grade " + cur.g : ""}{cur.j ? " · N" + cur.j : ""}</span>
             </div>
           </div>
@@ -5260,8 +5307,9 @@ function Kanji() {
         Practice · {Math.min(15, unlocked.length)} kanji
       </button>
       <p className="tc-smarthint">
-        {unlocked.length} unlocked. More open as these become solid, so the live set never
-        outruns what you are actually keeping.
+        {unlocked.length} unlocked. {deckMap.size > 0
+          ? `Ordered by your own vocabulary first — ${deckMap.size} of these appear in words in your deck.`
+          : "Ordered by how often each character appears in real Japanese."}
       </p>
 
       {nextUp.length > 0 && (
@@ -6373,6 +6421,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 
 /* ── kanji ── */
+.tc-kwords{display:flex;flex-direction:column;gap:3px;margin:8px 0 0;align-items:center;}
+.tc-kword{font-size:13px;color:var(--mut-2);}
+.tc-kword b{color:var(--washi,#efeae2);font-weight:600;margin-right:6px;font-size:15px;}
 .tc-kquiz{display:flex;flex-direction:column;align-items:center;gap:14px;padding:6px 0 4px;}
 .tc-kprompt{margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut-2);}
 .tc-kstem{display:flex;align-items:center;gap:10px;min-height:74px;}
