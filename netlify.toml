@@ -1,0 +1,18 @@
+# The app lives on Cloudflare Workers. Netlify is kept only so old links keep working.
+#
+# This matters because a stale Netlify URL is worse than a dead one. The deploy-preview
+# link from PR #1 was still live weeks later, still building, and still looked exactly
+# like the real app — but on an origin Google's OAuth client does not allow, so sign-in
+# failed with origin_mismatch and the deck showed as empty. Studying there would have
+# written reviews into the orphaned Netlify blob store where they would never be seen
+# again.
+#
+# So: every path, including deploy previews and the old production host, redirects to the
+# live app. The API routes go too, deliberately — an unreachable /.netlify/functions/sync
+# is far better than one that silently accepts writes into storage nobody reads.
+
+[[redirects]]
+  from = "/*"
+  to = "https://tangocho.deskbuddies.workers.dev/:splat"
+  status = 301
+  force = true
