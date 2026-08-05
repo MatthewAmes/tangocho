@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    ────────────────────────────────────────────────────────────────────────── */
 
 import { MASCOT_GIFS } from "./data/mascot.js";
-import { SITUATIONS, makeProps } from "./tools/oral-data.mjs";
+import { SITUATIONS, makeProps, TALK } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
 
 const STORE_KEY = "jpn101:deck";
@@ -1481,7 +1481,7 @@ export default function JpnFlashcards() {
         ) : tab === "input" ? (
           <Input cards={cards} />
         ) : tab === "oral" ? (
-          <Oral />
+          <OralHome />
         ) : tab === "kanji" ? (
           <Kanji cards={cards} />
         ) : tab === "write" ? (
@@ -5004,6 +5004,109 @@ function OralProp({ kind, props }) {
   return null;
 }
 
+/* ── Culture Talk rehearsal ──
+   A prepared presentation needs the opposite of the interview drill: the goal is to stop
+   needing the script at all. Three stages take it away a piece at a time —
+
+     read     full Japanese, romaji and English
+     romaji   the Japanese is gone; the sound is still there to lean on
+     cue      three words on a card and nothing else
+
+   The line is spoken at every stage, because the midterm note was about pitch accent and
+   that cannot be learned from a romaji spelling. Section-opening lines are marked: if the
+   talk falls apart mid-way, jumping to the next 〜ばんめ puts it back on rails. */
+function Talk() {
+  const [stage, setStage] = useState("read");   // read | romaji | cue
+  const [i, setI] = useState(0);
+  const [done, setDone] = useState(() => new Set());
+  const L = TALK.lines[i];
+  const card = L && L.sec ? TALK.cards[L.sec - 1] : null;
+  const sectionCard = useMemo(() => {
+    let c = null;
+    for (let x = 0; x <= i; x++) if (TALK.lines[x].sec) c = TALK.cards[TALK.lines[x].sec - 1];
+    return c;
+  }, [i]);
+  const pitchFor = (line) => TALK.pitch.filter((w) => line.ja.includes(w.w));
+
+  const say = () => { try { speakJa(L.ja, 0.95); } catch (e) {} };
+  useEffect(() => { if (L) say(); }, [i, stage]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const advance = (ok) => {
+    if (ok) setDone((d) => { const x = new Set(d); x.add(L.n); return x; });
+    if (i + 1 < TALK.lines.length) setI(i + 1);
+  };
+
+  return (
+    <div className="tc-oral">
+      <div className="tc-progress">
+        <div className="tc-progtrack"><div className="tc-progfill" style={{ width: ((i + 1) / TALK.lines.length) * 100 + "%" }} /></div>
+        <span className="tc-progtext">{i + 1} / {TALK.lines.length}</span>
+      </div>
+
+      <div className="tc-kanaseg">
+        {[["read", "Read it"], ["romaji", "Rōmaji only"], ["cue", "Cue card only"]].map(([k, label]) => (
+          <button key={k} className={"tc-fchip" + (stage === k ? " is-on" : "")} onClick={() => setStage(k)}>{label}</button>
+        ))}
+      </div>
+
+      <div className="tc-card2 tc-oralcard">
+        <p className="tc-oralwho">{L.tag}{L.sec ? " · section reset" : ""}</p>
+
+        {stage === "read" && <p className="tc-talkja">{L.ja}</p>}
+        {stage !== "cue" && <p className="tc-talkrom">{L.rom}</p>}
+        {stage === "cue" && (
+          sectionCard ? (
+            <div className="tc-talkcue">
+              <p className="tc-talkcuename">{sectionCard.name}</p>
+              {sectionCard.words.map((w) => <span key={w} className="tc-talkcueword">{w}</span>)}
+            </div>
+          ) : <p className="tc-oralcue">No cue card — this line opens or closes the talk.</p>
+        )}
+
+        <div className="tc-rehnav">
+          <button className="tc-btn tc-btn-sm" onClick={say}>🔊 Hear it</button>
+          {stage !== "read" && <button className="tc-btn tc-btn-sm" onClick={() => setStage("read")}>Show the line</button>}
+        </div>
+
+        {stage === "read" && <p className="tc-oralen">{L.en}</p>}
+        {L.g && <p className="tc-oralg">{L.g}</p>}
+        {L.note && <p className="tc-talknote">{L.note}</p>}
+        {pitchFor(L).map((w) => (
+          <p key={w.w} className="tc-talkpitch">
+            <b>{w.w}</b> — say <b>{w.say}</b>, not {w.bad}
+          </p>
+        ))}
+
+        <div className="tc-rehnav">
+          <button className="tc-btn tc-btn-sm" disabled={i === 0} onClick={() => setI(i - 1)}>← Back</button>
+          <button className="tc-btn tc-btn-primary tc-btn-bad" onClick={() => advance(false)}>Fumbled</button>
+          <button className="tc-btn tc-btn-primary tc-btn-good" onClick={() => advance(true)}>Said it ✓</button>
+        </div>
+      </div>
+
+      <p className="tc-smarthint">
+        {done.size} of {TALK.lines.length} lines said cleanly.
+        {" "}Section resets are lines 4, 8 and 11 — if you blank, jump to the next 〜ばんめ.
+      </p>
+    </div>
+  );
+}
+
+/* The tab holds two different things: a mock interview, and a prepared talk. They need
+   different practice, so they get different screens rather than one compromised one. */
+function OralHome() {
+  const [which, setWhich] = useState("interview");
+  return (
+    <div className="tc-oral">
+      <div className="tc-kanaseg">
+        <button className={"tc-fchip" + (which === "interview" ? " is-on" : "")} onClick={() => setWhich("interview")}>Oral final</button>
+        <button className={"tc-fchip" + (which === "talk" ? " is-on" : "")} onClick={() => setWhich("talk")}>Culture talk</button>
+      </div>
+      {which === "interview" ? <Oral /> : <Talk />}
+    </div>
+  );
+}
+
 function Oral() {
   const [props_, setProps] = useState(() => makeProps());
   const [sit, setSit] = useState(0);
@@ -6699,6 +6802,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 
 /* ── oral exam ── */
+.tc-talkja{margin:0;font-size:23px;line-height:1.65;color:#fff;font-family:"Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-talkrom{margin:0;font-size:14px;line-height:1.6;color:var(--shu-soft,#ff8a7a);font-style:italic;}
+.tc-talkcue{display:flex;flex-direction:column;gap:7px;align-items:center;padding:14px 0;}
+.tc-talkcuename{margin:0;font-size:26px;font-weight:600;color:#fff;font-family:"Hiragino Sans","Yu Gothic",sans-serif;}
+.tc-talkcueword{font-size:19px;color:#ffd9a0;font-family:"Hiragino Sans","Yu Gothic",sans-serif;}
+.tc-talknote{margin:0;font-size:12px;color:var(--mut-2);font-style:italic;}
+.tc-talkpitch{margin:0;font-size:13px;line-height:1.6;color:#b6efc4;background:rgba(61,145,80,.12);border-radius:8px;padding:6px 11px;}
+.tc-talkpitch b{color:#fff;}
 .tc-oral{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
 .tc-oralsit{text-align:left;display:flex;flex-direction:column;gap:3px;align-items:flex-start;padding:12px 14px;}
 .tc-oralsit b{font-size:15px;font-weight:600;color:#fff;}

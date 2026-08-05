@@ -217,3 +217,75 @@ export const SITUATIONS = [
     ],
   },
 ];
+
+/* ── Culture Talk ──
+   A prepared presentation, so rehearsal works differently from the interview: the goal is
+   to stop needing the script. Three stages — read it, romaji only, cue card only — and the
+   line is spoken each time so the pitch accent is heard rather than guessed.
+
+   Line 1 was missing from the notes; the greeting below uses only phrases already in the
+   deck (こんにちは, よろしくおねがいします) so nothing new has to be learned to open.
+
+   pitch: the words flagged in the midterm feedback — Japanese starts low and rises on the
+   second mora, and the English habit is to stress the first syllable instead. */
+export const TALK = {
+  title: "Culture Talk — Pokémon and Japanese culture",
+  cards: [
+    { name: "コイキング", words: ["とうりゅうもん", "たき", "がんばって"] },
+    { name: "キュウコン", words: ["きつね", "まほう", "きゅうほん"] },
+    { name: "だるま", words: ["おまもり", "あかくてまるい", "おぼうさん"] },
+  ],
+  pitch: [
+    { w: "きつね", say: "ki-TSU-NE", bad: "KI-tsu-ne" },
+    { w: "たのしい", say: "ta-NO-SHI-i", bad: "TA-no-shi-i" },
+  ],
+  lines: [
+    { n: 1, tag: "Greeting", ja: "みなさん、こんにちは。マシューです。よろしくおねがいします。",
+      rom: "minasan, konnichiwa. Mashū desu. yoroshiku onegai shimasu.",
+      en: "Hello everyone. I'm Matthew. Pleased to meet you.", note: "supplied — line 1 was missing" },
+    { n: 2, tag: "Intro", ja: "きょうはポケモンとにほんのぶんかについてはなします。",
+      rom: "kyō wa Pokemon to Nihon no bunka ni tsuite hanashimasu.",
+      en: "Today I will talk about Pokémon and Japanese culture." },
+    { n: 3, tag: "Why", ja: "ポケモンがだいすきです。ポケモンのなかに、にほんのぶんかがたくさんあります。",
+      rom: "Pokemon ga daisuki desu. Pokemon no naka ni, Nihon no bunka ga takusan arimasu.",
+      en: "I love Pokémon. There is a lot of Japanese culture inside Pokémon." },
+    { n: 4, tag: "① Magikarp", sec: 1, ja: "いちばんめはコイキングとギャラドスです。",
+      rom: "ichi-ban-me wa Koikingu to Gyaradosu desu.",
+      en: "The first is Magikarp and Gyarados.", note: "section reset — jump here if you blank" },
+    { n: 5, tag: "Weak to strong", ja: "コイキングはよわいですが、ギャラドスになります。ギャラドスはとてもつよいです。",
+      rom: "Koikingu wa yowai desu ga, Gyaradosu ni narimasu. Gyaradosu wa totemo tsuyoi desu.",
+      en: "Magikarp is weak, but it becomes Gyarados. Gyarados is very strong.", g: "が as \"but\"" },
+    { n: 6, tag: "The legend", ja: "これは「とうりゅうもん」のはなしです。こいはたきをのぼって、りゅうになります。",
+      rom: "kore wa \"tōryūmon\" no hanashi desu. koi wa taki o nobotte, ryū ni narimasu.",
+      en: "This is the story of the Dragon Gate. A carp climbs the waterfall and becomes a dragon.", g: "て-form link: のぼって" },
+    { n: 7, tag: "Meaning", ja: "いみは「がんばってください」です。",
+      rom: "imi wa \"ganbatte kudasai\" desu.", en: "The meaning is \"do your best.\"" },
+    { n: 8, tag: "② Vulpix", sec: 2, ja: "にばんめはロコンとキュウコンです。キュウコンはきつねです。",
+      rom: "ni-ban-me wa Rokon to Kyūkon desu. Kyūkon wa kitsune desu.",
+      en: "The second is Vulpix and Ninetales. Ninetales is a fox.", note: "section reset" },
+    { n: 9, tag: "Fox lore", ja: "にほんのはなしのなかで、きつねはあたまがよくて、まほうもつかいます。",
+      rom: "Nihon no hanashi no naka de, kitsune wa atama ga yokute, mahō mo tsukaimasu.",
+      en: "In Japanese stories, foxes are smart and also use magic.", g: "て-form: よくて · も for \"also\"" },
+    { n: 10, tag: "Nine tails", ja: "しっぽがきゅうほんあります。しっぽがおおいきつねは、とてもつよいです。",
+      rom: "shippo ga kyū-hon arimasu. shippo ga ōi kitsune wa, totemo tsuyoi desu.",
+      en: "It has nine tails. A fox with many tails is very strong.", g: "counter きゅうほん — ほん, not ぼん or ぽん, after きゅう" },
+    { n: 11, tag: "③ Darumaka", sec: 3, ja: "さんばんめはダルマッカとヒヒダルマです。",
+      rom: "san-ban-me wa Darumakka to Hihidaruma desu.",
+      en: "The third is Darumaka and Darmanitan.", note: "section reset" },
+    { n: 12, tag: "What it is", ja: "だるまはにほんのおまもりです。あかくてまるいです。",
+      rom: "daruma wa Nihon no o-mamori desu. akakute marui desu.",
+      en: "The daruma is a Japanese good-luck charm. It is red and round.", g: "て-form: あかくて" },
+    { n: 13, tag: "Origin", ja: "だるまはむかしのおぼうさんです。",
+      rom: "daruma wa mukashi no o-bō-san desu.", en: "The daruma is a monk from long ago." },
+    { n: 14, tag: "Callback", ja: "だるまのいみも「がんばってください」です。",
+      rom: "daruma no imi mo \"ganbatte kudasai\" desu.",
+      en: "The daruma's meaning is ALSO \"do your best.\"",
+      g: "も — the one emphasis. This ties daruma back to Magikarp and turns three facts into one thesis." },
+    { n: 15, tag: "Close", ja: "ポケモンはたのしくて、にほんのぶんかのせんせいです。",
+      rom: "Pokemon wa tanoshikute, Nihon no bunka no sensei desu.",
+      en: "Pokémon is fun, and it is a teacher of Japanese culture.", g: "て-form: たのしくて" },
+    { n: 16, tag: "End", ja: "ありがとうございました。しつもんがありますか。",
+      rom: "arigatō gozaimashita. shitsumon ga arimasu ka.",
+      en: "Thank you very much. Are there any questions?" },
+  ],
+};
