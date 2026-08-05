@@ -5391,6 +5391,10 @@ function Kanji({ cards }) {
   const [picked, setPicked] = useState(null);
   const [flipped, setFlipped] = useState(false);
   const [pairs, setPairs] = useState({ left: null, done: {} });
+  /* Sometimes you are somewhere you cannot play sound. Rather than forcing a skip or a
+     guess, the hear-it question converts to the same character asked visually, and no
+     further audio questions appear for the rest of the lesson. */
+  const [noAudio, setNoAudio] = useState(false);
   const [right, setRight] = useState([]);
   const [hits, setHits] = useState(0);
   const [total, setTotal] = useState(0);
@@ -5417,6 +5421,28 @@ function Kanji({ cards }) {
     };
     return list.map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k);
   }, [data, deckMap]);
+
+  /* Everything is already persisted per character in jpn101:kanji — seen, correct, level,
+     think time and the full FSRS memory state — and that key syncs to the cloud with the
+     rest of the app. This only surfaces it: data you cannot see is data you cannot trust. */
+  const reviewInfo = useMemo(() => {
+    const vals = Object.values(stats);
+    const now = Date.now();
+    let reps = 0, dueNow = 0, soonest = Infinity;
+    for (const v of vals) {
+      reps += v.seen || 0;
+      const f = v.fsrs;
+      if (!f || !f.due) continue;
+      if (f.due <= now) dueNow++;
+      else soonest = Math.min(soonest, f.due);
+    }
+    let nextDue = null;
+    if (isFinite(soonest)) {
+      const d = Math.round((soonest - now) / 86400000);
+      nextDue = d <= 0 ? "today" : d === 1 ? "tomorrow" : "in " + d + " days";
+    }
+    return { tracked: vals.length, reps, dueNow, nextDue };
+  }, [stats]);
 
   const mastered = useMemo(() => all.filter((k) => ((stats[k.c] || {}).level || 0) >= 4).length, [all, stats]);
   const started = useMemo(() => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0).length, [all, stats]);
@@ -5447,21 +5473,23 @@ function Kanji({ cards }) {
 
   const step = queue[pos] || null;
   const cur = step && step.k ? step.k : null;
+  // what the step actually renders as, once "can't listen" is taken into account
+  const mode = step ? (mode === "audio" && noAudio ? "meaning" : step.mode) : null;
 
   // lay out whatever the current step needs
   useEffect(() => {
     if (view !== "session" || !step) return;
     shownRef.current = Date.now(); thinkRef.current = null;
     setPicked(null); setFlipped(false); setPairs({ left: null, done: {} });
-    if (step.mode === "match") {
+    if (mode === "match") {
       setChoices([]);
       setRight(step.pool.slice().sort(() => Math.random() - 0.5));
       return;
     }
     setRight([]);
-    if (step.mode === "learn") { setChoices([]); speak(step.k); return; }
-    if (step.mode === "audio") speak(step.k);
-    const field = step.mode === "reading" ? "reading" : "meaning";
+    if (mode === "learn") { setChoices([]); if (!noAudio) speak(step.k); return; }
+    if (mode === "audio" && !noAudio) speak(step.k);
+    const field = mode === "reading" ? "reading" : "meaning";
     const wrong = kanjiDistractors(all, step.k, 3, field);
     setChoices([step.k, ...wrong].sort(() => Math.random() - 0.5));
   }, [pos, view]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -5502,7 +5530,7 @@ function Kanji({ cards }) {
       missRef.current[cur.c] = m;
       if (m <= 2) setQueue((q) => {
         const n = q.slice();
-        n.splice(Math.min(pos + 4, n.length), 0, { k: cur, mode: step.mode, wave: 9 });
+        n.splice(Math.min(pos + 4, n.length), 0, { k: cur, mode, wave: 9 });
         return n;
       });
     }
@@ -5546,7 +5574,7 @@ function Kanji({ cards }) {
           <button className="tc-fchip" onClick={() => setView("home")}>Quit</button>
         </div>
 
-        {step.mode === "match" ? (
+        {mode === "match" ? (
           <div className="tc-kmatch">
             <p className="tc-kprompt">Tap the matching pairs</p>
             <div className="tc-kmatchgrid">
@@ -5573,7 +5601,7 @@ function Kanji({ cards }) {
                 learner who cannot place one of them is stuck with nothing but Quit. */}
             <button className="tc-btn tc-btn-sm" onClick={advance}>Skip this round</button>
           </div>
-        ) : step.mode === "learn" ? (
+        ) : mode === "learn" ? (
           <>
             <div className={"tc-card" + (flipped ? " is-flipped" : "")}
               onClick={() => { if (!flipped && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped((f) => !f); }}
@@ -5612,14 +5640,17 @@ function Kanji({ cards }) {
           <div className="tc-kquiz">
             <p className="tc-kprompt">
               {step.mode === "meaning" ? "What does this mean?"
-                : step.mode === "reading" ? "How is this read?"
-                : step.mode === "audio" ? "Which character did you hear?"
+                : mode === "reading" ? "How is this read?"
+                : mode === "audio" ? "Which character did you hear?"
                 : "Which character is this?"}
             </p>
             <div className="tc-kstem">
-              {step.mode === "build" ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
-                : step.mode === "audio" ? (
-                  <button className="tc-kaudio" onClick={() => speak(cur)} aria-label="Play again">🔊</button>
+              {mode === "build" ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
+                : mode === "audio" ? (
+                  <div className="tc-kaudiowrap">
+                    <button className="tc-kaudio" onClick={() => speak(cur)} aria-label="Play again">🔊</button>
+                    <button className="tc-btn tc-btn-sm" onClick={() => setNoAudio(true)}>Can't listen now</button>
+                  </div>
                 ) : (
                   <>
                     <span className="tc-kanjimid">{cur.c}</span>
@@ -5627,7 +5658,7 @@ function Kanji({ cards }) {
                   </>
                 )}
             </div>
-            <div className={"tc-kopts" + (step.mode === "build" || step.mode === "audio" ? " is-tiles" : "")}>
+            <div className={"tc-kopts" + (mode === "build" || mode === "audio" ? " is-tiles" : "")}>
               {choices.map((k) => {
                 const state = !picked ? ""
                   : k.c === cur.c ? " is-right"
@@ -5635,14 +5666,14 @@ function Kanji({ cards }) {
                 return (
                   <button key={k.c} className={"tc-kopt" + state} disabled={!!picked} onClick={() => answer(k)}>
                     {step.mode === "meaning" ? k.m[0]
-                      : step.mode === "reading" ? (k.on[0] || k.kun[0])
+                      : mode === "reading" ? (k.on[0] || k.kun[0])
                       : <span className="tc-kopttile">{k.c}</span>}
                   </button>
                 );
               })}
             </div>
-            {picked && picked.c !== cur.c && (
-              <p className="tc-kcorrect">
+            {picked && (
+              <p className={"tc-kcorrect" + (picked.c === cur.c ? " is-ok" : "")}>
                 <b>{cur.c}</b> {cur.m.join(", ")}
                 {cur.on.length ? " · 音 " + cur.on.join("・") : ""}
                 {(deckMap.get(cur.c) || {}).words ? " — " + deckMap.get(cur.c).words.slice(0, 2).map((w) => w.term).join("、") : ""}
@@ -5689,6 +5720,19 @@ function Kanji({ cards }) {
         </div>
       </div>
       <button className="tc-btn tc-btn-primary tc-start" onClick={startSession}>Start lesson · 6 kanji</button>
+      <p className="tc-smarthint">
+        Practising {Math.min(6, unlocked.length)} characters a lesson, drawn from {unlocked.length} unlocked.
+        {" "}The set only grows as characters go solid — {KANJI_BATCH - (mastered % KANJI_BATCH)} more
+        mastered opens the next {KANJI_BATCH}.
+      </p>
+      {reviewInfo.tracked > 0 && (
+        <p className="tc-smarthint">
+          Tracked: {reviewInfo.tracked} characters, {reviewInfo.reps} reviews saved.
+          {reviewInfo.dueNow > 0
+            ? " " + reviewInfo.dueNow + " due now."
+            : reviewInfo.nextDue ? " Next due " + reviewInfo.nextDue + "." : ""}
+        </p>
+      )}
       <p className="tc-smarthint">
         {unlocked.length} unlocked. {deckMap.size > 0
           ? "Ordered by your own vocabulary first — " + deckMap.size + " of these appear in words in your deck."
@@ -6864,6 +6908,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kopt.is-right{background:rgba(61,145,80,.22);border-color:#3d9150;color:#b6efc4;}
 .tc-kopt.is-wrong{background:rgba(194,58,38,.2);border-color:#c23a26;color:#ffc0b4;}
 .tc-kopt.is-dim{opacity:.4;}
+.tc-kcorrect.is-ok{color:#b6efc4;background:rgba(61,145,80,.14);}
+.tc-kaudiowrap{display:flex;flex-direction:column;align-items:center;gap:9px;}
 .tc-kcorrect{margin:0;font-size:14px;line-height:1.6;color:#ffd9a0;background:rgba(255,190,90,.1);
   border-radius:10px;padding:9px 13px;text-align:center;max-width:340px;}
 .tc-kcorrect b{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:22px;margin-right:6px;}
