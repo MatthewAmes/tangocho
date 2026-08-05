@@ -5395,6 +5395,7 @@ function Kanji({ cards }) {
      guess, the hear-it question converts to the same character asked visually, and no
      further audio questions appear for the rest of the lesson. */
   const [noAudio, setNoAudio] = useState(false);
+  const [inspect, setInspect] = useState(null);   // character opened from the collection grid
   const [right, setRight] = useState([]);
   const [hits, setHits] = useState(0);
   const [total, setTotal] = useState(0);
@@ -5443,6 +5444,10 @@ function Kanji({ cards }) {
     }
     return { tracked: vals.length, reps, dueNow, nextDue };
   }, [stats]);
+
+  // every character actually met, in the order the lesson introduced them
+  const collected = useMemo(
+    () => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0), [all, stats]);
 
   const mastered = useMemo(() => all.filter((k) => ((stats[k.c] || {}).level || 0) >= 4).length, [all, stats]);
   const started = useMemo(() => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0).length, [all, stats]);
@@ -5738,6 +5743,66 @@ function Kanji({ cards }) {
           ? "Ordered by your own vocabulary first — " + deckMap.size + " of these appear in words in your deck."
           : "Ordered by how often each character appears in real Japanese."}
       </p>
+      {/* The collection. Every character met, newest last, tinted by how solid it is —
+          the point is watching it fill up, which a counter alone does not give you.
+          Tapping one opens what it means, how it sounds, and the words you already have
+          that use it. */}
+      {collected.length > 0 && (
+        <div className="tc-kanjinext">
+          <p className="tc-eyebrow">your kanji · {collected.length}</p>
+          <div className="tc-kgrid">
+            {collected.map((k) => {
+              const st = stats[k.c] || {};
+              const lv = st.level || 0;
+              const tier = lv >= 4 ? " is-solid" : lv >= 2 ? " is-ok" : " is-new";
+              return (
+                <button key={k.c} className={"tc-kcell" + tier} onClick={() => setInspect(k)}
+                  title={k.m.slice(0, 2).join(", ")}>
+                  {k.c}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {inspect && (
+        <div className="tc-kmodal" onClick={() => setInspect(null)}>
+          <div className="tc-kmodalcard" onClick={(ev) => ev.stopPropagation()}>
+            <button className="tc-inx" onClick={() => setInspect(null)} aria-label="close">×</button>
+            {inspect.e && <div className="tc-kemoji">{inspect.e}</div>}
+            <div className="tc-kanjibig">{inspect.c}</div>
+            <button className="tc-btn tc-btn-sm" onClick={() => speak(inspect)}>🔊 How it sounds</button>
+            <div className="tc-meaning tc-meaning-lg">{inspect.m.join(", ")}</div>
+            {inspect.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {inspect.on.join("・")}</div>}
+            {inspect.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {inspect.kun.join("・")}</div>}
+            {(deckMap.get(inspect.c) || {}).words && (
+              <p className="tc-kwords">
+                {deckMap.get(inspect.c).words.slice(0, 5).map((w) => (
+                  <span key={w.id} className="tc-kword"><b>{w.term}</b> {shortMeaning(w.meaning)}</span>
+                ))}
+              </p>
+            )}
+            <span className="tc-timetag">
+              {inspect.s} strokes{inspect.g && inspect.g <= 6 ? " · grade " + inspect.g : ""}{inspect.j ? " · N" + inspect.j : ""}
+              {inspect.f ? " · #" + inspect.f + " most used" : ""}
+            </span>
+            {(() => {
+              const st = stats[inspect.c] || {};
+              if (!st.seen) return null;
+              const due = st.fsrs && st.fsrs.due;
+              const d = due ? Math.round((due - Date.now()) / 86400000) : null;
+              return (
+                <p className="tc-kstat">
+                  seen {st.seen}× · {Math.round(((st.correct || 0) / st.seen) * 100)}% right
+                  {d != null ? " · next review " + (d <= 0 ? "now" : d === 1 ? "tomorrow" : "in " + d + " days") : ""}
+                </p>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {nextUp.length > 0 && (
         <div className="tc-kanjinext">
           <p className="tc-eyebrow">next up</p>
@@ -6928,6 +6993,20 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kanjinext{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 13px;}
 .tc-kanjirow{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px;}
 .tc-kanjichip{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;color:#fff;background:rgba(255,255,255,.07);border-radius:9px;width:42px;height:42px;display:flex;align-items:center;justify-content:center;}
+.tc-kgrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.tc-kcell{appearance:none;font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;line-height:1;
+  width:44px;height:44px;border-radius:9px;cursor:pointer;color:#fff;
+  border:1.5px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);transition:transform .08s;}
+.tc-kcell:active{transform:scale(.93);}
+.tc-kcell.is-new{border-color:rgba(255,255,255,.14);}
+.tc-kcell.is-ok{border-color:rgba(255,190,90,.5);background:rgba(255,190,90,.1);}
+.tc-kcell.is-solid{border-color:#3d9150;background:rgba(61,145,80,.18);}
+.tc-kmodal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;
+  justify-content:center;padding:20px;z-index:50;}
+.tc-kmodalcard{position:relative;background:#1b2030;border:1px solid rgba(255,255,255,.12);border-radius:18px;
+  padding:22px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;max-width:340px;width:100%;
+  max-height:82vh;overflow-y:auto;}
+.tc-kstat{margin:2px 0 0;font-size:12px;color:var(--mut-2);}
 .tc-kanjicredit{margin:4px 0 0;font-size:10.5px;line-height:1.5;color:var(--mut-2);opacity:.75;text-align:center;}
 @media (max-width:460px){.tc-kanjibig{font-size:88px;}}
 
