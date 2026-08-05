@@ -62,9 +62,12 @@ const rows = list
   .filter(Boolean)
   .map((k) => ({
     c: k.kanji,
-    m: (k.meanings || []).slice(0, 3),
-    on: (k.on_readings || []).slice(0, 3),
-    kun: (k.kun_readings || []).slice(0, 3),
+    // All of them. A kanji carries several distinct senses and picking three at random
+    // teaches a partial word: 生 is life AND raw AND birth AND student, and which one is
+    // meant depends entirely on the compound it sits in.
+    m: (k.meanings || []).slice(0, 8),
+    on: (k.on_readings || []).slice(0, 4),
+    kun: (k.kun_readings || []).slice(0, 4),
     g: k.grade || 0,
     f: k.freq_mainichi_shinbun || 0,
     s: k.stroke_count || 0,

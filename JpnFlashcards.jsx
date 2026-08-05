@@ -5271,16 +5271,51 @@ function loadKanji() {
    knowing nothing; three plausible ones force a real discrimination. Candidates come from
    a nearby frequency band (characters you might plausibly confuse) and are ranked by
    closeness in stroke count, which stands in for visual similarity. */
+/* On-readings look like katakana because that IS the convention: 音読み are the
+   Chinese-derived readings and dictionaries write them in katakana so you can tell them
+   from 訓読み, the native Japanese readings, written in hiragana. Nothing here is a
+   loanword. Unlabelled it just looks like the app is drilling katakana at random, so every
+   reading is shown with its marker.
+
+   A standalone kun reading (人 → ひと) is what a beginner meets first, so it wins when the
+   character has one — 218 of the first 500 do. Where the kun reading is a verb stem the
+   dictionary writes it with a dot, い.きる meaning the kanji is い and きる is okurigana;
+   truncating that to い leaves a single kana that collides with every other stem, so those
+   fall through to the on-reading and are only rendered as い(きる) when there is no other
+   choice. */
+/* KANJIDIC writes okurigana with a dot and affix position with a hyphen: おお.きい means
+   the kanji reads おお and きい is the trailing kana; -おお.いに attaches to something
+   before it. That notation is unreadable unless you already know it, so the okurigana is
+   parenthesised and the affix hyphens dropped. */
+function readingText(r) {
+  const [stem, oku] = r.replace(/^-|-$/g, "").split(".");
+  return oku ? stem + "(" + oku + ")" : stem;
+}
+const readingList = (arr) => arr.map(readingText).join("・");
+
+function readingLabel(k) {
+  const plain = (k.kun || []).find((r) => !/[.-]/.test(r));
+  if (plain) return { mark: "訓", text: plain };
+  if (k.on && k.on.length) return { mark: "音", text: k.on[0] };
+  const dotted = (k.kun || [])[0];
+  if (dotted) return { mark: "訓", text: readingText(dotted) };
+  return { mark: "", text: "" };
+}
+
 function kanjiDistractors(all, target, n, field) {
   const idx = all.indexOf(target);
   const band = all.slice(Math.max(0, idx - 90), Math.min(all.length, idx + 90))
     .filter((k) => k !== target && (field === "reading" ? (k.on.length || k.kun.length) : k.m.length));
-  const val = (k) => (field === "reading" ? (k.on[0] || k.kun[0]) : k.m[0]);
+  // Must match what the option actually renders, or two tiles can show the same kun
+  // reading while deduping on different on-readings.
+  const val = (k) => (field === "reading" ? readingLabel(k).text : k.m[0]);
   /* Rejecting only exact duplicates is not enough. 中 (inside) drew a distractor whose
      gloss was "in" — a different string, the same answer, and a question with no correct
      option. Anything that overlaps ANY of the target meanings, in either direction, is out. */
   const norm = (t) => t.toLowerCase().replace(/[^a-z ]/g, "").trim();
-  const targetWords = target.m.map(norm);
+  // A gloss like "10**16" normalises to the empty string, and every candidate contains
+  // the empty string — ten kanji were rejecting their entire distractor pool this way.
+  const targetWords = target.m.map(norm).filter(Boolean);
   /* Only meaningful for English glosses. Applying it to readings normalised every
      katakana option to an empty string and rejected the entire distractor pool, leaving
      reading questions with exactly one option to choose from. */
@@ -5290,13 +5325,28 @@ function kanjiDistractors(all, target, n, field) {
     if (!n) return true;
     return targetWords.some((t) => t === n || t.includes(n) || n.includes(t));
   };
-  const seen = new Set();
+  // Seeded with the target's own value: 回 drew a distractor that also reads カイ, which
+  // renders as two identical tiles and no way to be right.
+  const seen = new Set([val(target)]);
   const pool = [];
   for (const k of band) {
     const v = val(k);
     if (!v || seen.has(v) || clashes(v)) continue;
     seen.add(v);
     pool.push(k);
+  }
+  // Carrying every sense of the target into the clash test is stricter than carrying three,
+  // and for a character with many glosses it can starve the local band. Widen rather than
+  // ship a question with two options.
+  if (pool.length < n) {
+    for (const k of all) {
+      if (pool.length >= n * 2) break;
+      if (k === target || pool.includes(k)) continue;
+      const v = val(k);
+      if (!v || seen.has(v) || clashes(v)) continue;
+      seen.add(v);
+      pool.push(k);
+    }
   }
   pool.sort((a, b) => Math.abs(a.s - target.s) - Math.abs(b.s - target.s));
   return pool.slice(0, Math.max(n * 3, 9)).sort(() => Math.random() - 0.5).slice(0, n);
@@ -5394,7 +5444,7 @@ function Kanji({ cards }) {
   const [choices, setChoices] = useState([]);
   const [picked, setPicked] = useState(null);
   const [flipped, setFlipped] = useState(false);
-  const [pairs, setPairs] = useState({ left: null, done: {} });
+  const [pairs, setPairs] = useState({ sel: null, side: null, done: {} });
   /* Sometimes you are somewhere you cannot play sound. Rather than forcing a skip or a
      guess, the hear-it question converts to the same character asked visually, and no
      further audio questions appear for the rest of the lesson. */
@@ -5492,7 +5542,7 @@ function Kanji({ cards }) {
   useEffect(() => {
     if (view !== "session" || !step) return;
     shownRef.current = Date.now(); thinkRef.current = null;
-    setPicked(null); setFlipped(false); setPairs({ left: null, done: {} });
+    setPicked(null); setFlipped(false); setPairs({ sel: null, side: null, done: {} });
     if (mode === "match") {
       setChoices([]);
       setRight(step.pool.slice().sort(() => Math.random() - 0.5));
@@ -5556,7 +5606,7 @@ function Kanji({ cards }) {
         return n;
       });
     }
-    setTimeout(advance, ok ? 550 : 1700);
+    // no auto-advance — the reveal below is the teaching, and it is read at the user's pace
   };
 
   const learnDone = () => {
@@ -5567,19 +5617,23 @@ function Kanji({ cards }) {
 
   const tapPair = (k, side) => {
     if (pairs.done[k.c]) return;
-    if (side === "left") { setPairs((s2) => ({ ...s2, left: k.c })); return; }
-    if (!pairs.left) return;
-    const ok = pairs.left === k.c;
+    // Either column may go first. The first tap arms a side; the second resolves against
+    // it. Tapping the same side again just moves the selection.
+    if (!pairs.sel || pairs.side === side) {
+      setPairs((s2) => ({ ...s2, sel: k.c, side }));
+      return;
+    }
+    const ok = pairs.sel === k.c;
     if (ok) {
       const done = { ...pairs.done, [k.c]: true };
-      setPairs({ left: null, done });
+      setPairs({ sel: null, side: null, done });
       setHits((h) => h + 1); setTotal((t) => t + 1);
       save(k, true, 0);
       if (Object.keys(done).length >= step.pool.length) setTimeout(advance, 500);
     } else {
       setTotal((t) => t + 1);
       save(k, false, 0);
-      setPairs((s2) => ({ ...s2, left: null }));
+      setPairs((s2) => ({ ...s2, sel: null, side: null }));
     }
   };
 
@@ -5603,7 +5657,7 @@ function Kanji({ cards }) {
               <div className="tc-kmatchcol">
                 {step.pool.map((k) => (
                   <button key={k.c} disabled={!!pairs.done[k.c]}
-                    className={"tc-kmatchbtn" + (pairs.done[k.c] ? " is-done" : "") + (pairs.left === k.c ? " is-sel" : "")}
+                    className={"tc-kmatchbtn" + (pairs.done[k.c] ? " is-done" : "") + (pairs.sel === k.c && pairs.side === "left" ? " is-sel" : "")}
                     onClick={() => tapPair(k, "left")}>
                     <span className="tc-kmatchkanji">{k.c}</span>
                   </button>
@@ -5612,7 +5666,7 @@ function Kanji({ cards }) {
               <div className="tc-kmatchcol">
                 {right.map((k) => (
                   <button key={k.c} disabled={!!pairs.done[k.c]}
-                    className={"tc-kmatchbtn" + (pairs.done[k.c] ? " is-done" : "")}
+                    className={"tc-kmatchbtn" + (pairs.done[k.c] ? " is-done" : "") + (pairs.sel === k.c && pairs.side === "right" ? " is-sel" : "")}
                     onClick={() => tapPair(k, "right")}>
                     {k.m[0]}
                   </button>
@@ -5638,8 +5692,8 @@ function Kanji({ cards }) {
                 <div className="tc-face tc-back">
                   <div className="tc-kanjimid">{cur.e ? cur.e + " " : ""}{cur.c}</div>
                   <div className="tc-meaning tc-meaning-lg">{cur.m.join(", ")}</div>
-                  {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {cur.on.join("・")}</div>}
-                  {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {cur.kun.join("・")}</div>}
+                  {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {readingList(cur.on)}</div>}
+                  {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {readingList(cur.kun)}</div>}
                   {(deckMap.get(cur.c) || {}).words && (
                     <p className="tc-kwords">
                       {deckMap.get(cur.c).words.slice(0, 3).map((w) => (
@@ -5703,8 +5757,11 @@ function Kanji({ cards }) {
                   : k.c === picked.c ? " is-wrong" : " is-dim";
                 return (
                   <button key={k.c} className={"tc-kopt" + state} disabled={!!picked} onClick={() => answer(k)}>
-                    {step.mode === "meaning" ? k.m[0]
-                      : mode === "reading" ? (k.on[0] || k.kun[0])
+                    {/* mode, not step.mode — an audio step converted by "can't listen now"
+                        keeps step.mode "audio" and would render tiles over an English question */}
+                    {mode === "meaning" ? k.m[0]
+                      : mode === "reading"
+                        ? (() => { const r = readingLabel(k); return <><b className="tc-kmark">{r.mark}</b>{r.text}</>; })()
                       : <span className="tc-kopttile">{k.c}</span>}
                   </button>
                 );
@@ -5719,9 +5776,15 @@ function Kanji({ cards }) {
             {picked && (
               <p className={"tc-kcorrect" + (picked.c === cur.c ? " is-ok" : "")}>
                 <b>{cur.c}</b> {cur.m.join(", ")}
-                {cur.on.length ? " · 音 " + cur.on.join("・") : ""}
+                {cur.kun.length ? " · 訓 " + readingList(cur.kun) : ""}
+                {cur.on.length ? " · 音 " + readingList(cur.on) : ""}
                 {(deckMap.get(cur.c) || {}).words ? " — " + deckMap.get(cur.c).words.slice(0, 2).map((w) => w.term).join("、") : ""}
               </p>
+            )}
+            {picked && (
+              <button className="tc-btn tc-btn-primary tc-kcontinue" onClick={advance} autoFocus>
+                Continue
+              </button>
             )}
           </div>
         )}
@@ -5813,8 +5876,8 @@ function Kanji({ cards }) {
             <div className="tc-kanjibig">{inspect.c}</div>
             <button className="tc-btn tc-btn-sm" onClick={() => speak(inspect)}>🔊 How it sounds</button>
             <div className="tc-meaning tc-meaning-lg">{inspect.m.join(", ")}</div>
-            {inspect.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {inspect.on.join("・")}</div>}
-            {inspect.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {inspect.kun.join("・")}</div>}
+            {inspect.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {readingList(inspect.on)}</div>}
+            {inspect.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {readingList(inspect.kun)}</div>}
             {(deckMap.get(inspect.c) || {}).words && (
               <p className="tc-kwords">
                 {deckMap.get(inspect.c).words.slice(0, 5).map((w) => (
@@ -7050,6 +7113,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
   line-height:1.15;color:#fff;letter-spacing:.02em;}
 .tc-kblank{color:#7c5cff;font-weight:400;}
 .tc-kclozeen{font-size:14px;color:var(--mut-2);}
+.tc-kmark{color:#ffbe5a;font-size:11px;font-weight:700;margin-right:5px;vertical-align:2px;}
+.tc-kcontinue{width:100%;max-width:340px;margin-top:4px;}
 .tc-kstat{margin:2px 0 0;font-size:12px;color:var(--mut-2);}
 .tc-kanjicredit{margin:4px 0 0;font-size:10.5px;line-height:1.5;color:var(--mut-2);opacity:.75;text-align:center;}
 @media (max-width:460px){.tc-kanjibig{font-size:88px;}}
