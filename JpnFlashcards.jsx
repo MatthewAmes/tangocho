@@ -5315,16 +5315,20 @@ function kanjiDistractors(all, target, n, field) {
    Each new character gets four touches; a character already known gets two. A matching
    round of five drops in every eight or so questions, drawn from what the session has
    already covered, so it is revision rather than a cold quiz. */
-const KANJI_TOUCHES_NEW = ["learn", "meaning", "audio", "reading"];
-const KANJI_TOUCHES_KNOWN = ["reading", "build"];
-
-function buildLesson(pool, statsOf) {
+/* Cloze is the format worth having above the others: kanji never appear alone in real
+   Japanese, they appear inside words. Blanking the character out of a word already in the
+   deck drills the character and revises the vocabulary in the same question. It is only
+   offered where the deck actually supplies a word — inventing one would defeat the point. */
+function buildLesson(pool, statsOf, hasWord) {
   const items = [];
   for (const k of pool) {
     const st = statsOf(k.c);
-    const seq = (st.seen || 0) === 0 ? KANJI_TOUCHES_NEW
-      : (st.level || 0) <= 2 ? ["meaning", "audio", "build"]
-      : KANJI_TOUCHES_KNOWN;
+    const w = hasWord ? hasWord(k.c) : false;
+    const seq = (st.seen || 0) === 0
+        ? (w ? ["learn", "meaning", "cloze", "audio"] : ["learn", "meaning", "audio", "reading"])
+      : (st.level || 0) <= 2
+        ? (w ? ["cloze", "meaning", "build"] : ["meaning", "audio", "build"])
+        : (w ? ["cloze", "reading"] : ["reading", "build"]);
     seq.forEach((mode, i) => items.push({ k, mode, wave: i }));
   }
   // Interleave by wave: every character's first touch, then every second touch, and so on.
@@ -5396,6 +5400,7 @@ function Kanji({ cards }) {
      further audio questions appear for the rest of the lesson. */
   const [noAudio, setNoAudio] = useState(false);
   const [inspect, setInspect] = useState(null);   // character opened from the collection grid
+  const [cloze, setCloze] = useState(null);      // the deck word a cloze question blanks
   const [right, setRight] = useState([]);
   const [hits, setHits] = useState(0);
   const [total, setTotal] = useState(0);
@@ -5471,15 +5476,17 @@ function Kanji({ cards }) {
     const chosen = unlocked
       .map((k) => ({ k, s: statNeed(getS(k.c), now) + Math.random() * 0.4 }))
       .sort((a, b) => b.s - a.s).map((x) => x.k).slice(0, 6);
-    const lesson = buildLesson(chosen, getS);
+    const lesson = buildLesson(chosen, getS, (c) => !!(deckMap.get(c) || {}).words);
     setQueue(lesson); setPos(0); setHits(0); setTotal(0);
     missRef.current = {}; setView("session");
-  }, [unlocked, getS]);
+  }, [unlocked, getS, deckMap]);
 
   const step = queue[pos] || null;
   const cur = step && step.k ? step.k : null;
   // what the step actually renders as, once "can't listen" is taken into account
-  const mode = step ? (mode === "audio" && noAudio ? "meaning" : step.mode) : null;
+  // NB step.mode, not mode: a blanket rename caught this line and made the initialiser
+  // reference the variable it was defining, which crashed the whole tab.
+  const mode = step ? (step.mode === "audio" && noAudio ? "meaning" : step.mode) : null;
 
   // lay out whatever the current step needs
   useEffect(() => {
@@ -5493,6 +5500,16 @@ function Kanji({ cards }) {
     }
     setRight([]);
     if (mode === "learn") { setChoices([]); if (!noAudio) speak(step.k); return; }
+    if (mode === "cloze") {
+      // shortest word wins: fewer unknown characters around the blank means the question
+      // is about the target and not about everything else in the compound
+      const words = ((deckMap.get(step.k.c) || {}).words || [])
+        .slice().sort((a, b) => (a.term || "").length - (b.term || "").length);
+      setCloze(words[0] || null);
+      const wrong = kanjiDistractors(all, step.k, 3, "meaning");
+      setChoices([step.k, ...wrong].sort(() => Math.random() - 0.5));
+      return;
+    }
     if (mode === "audio" && !noAudio) speak(step.k);
     const field = mode === "reading" ? "reading" : "meaning";
     const wrong = kanjiDistractors(all, step.k, 3, field);
@@ -5644,13 +5661,29 @@ function Kanji({ cards }) {
         ) : (
           <div className="tc-kquiz">
             <p className="tc-kprompt">
-              {step.mode === "meaning" ? "What does this mean?"
+              {/* was step.mode: an audio step converted by "can't listen now" has mode
+                  "meaning" but step.mode "audio", so this branch never fired and the
+                  question showed the wrong prompt over English options. */}
+              {mode === "cloze" ? "Which kanji completes the word?"
+                : mode === "meaning" ? "What does this mean?"
                 : mode === "reading" ? "How is this read?"
                 : mode === "audio" ? "Which character did you hear?"
                 : "Which character is this?"}
             </p>
             <div className="tc-kstem">
-              {mode === "build" ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
+              {mode === "cloze" ? (
+                <div className="tc-kcloze">
+                  <span className="tc-kclozeword">
+                    {cloze
+                      ? Array.from(cloze.term).map((ch, ix) =>
+                          ch === cur.c
+                            ? <b key={ix} className="tc-kblank">〇</b>
+                            : <span key={ix}>{ch}</span>)
+                      : cur.m[0]}
+                  </span>
+                  {cloze && <span className="tc-kclozeen">{shortMeaning(cloze.meaning)}</span>}
+                </div>
+              ) : mode === "build" ? <span className="tc-kstemword">{cur.m.join(", ")}</span>
                 : mode === "audio" ? (
                   <div className="tc-kaudiowrap">
                     <button className="tc-kaudio" onClick={() => speak(cur)} aria-label="Play again">🔊</button>
@@ -5663,7 +5696,7 @@ function Kanji({ cards }) {
                   </>
                 )}
             </div>
-            <div className={"tc-kopts" + (mode === "build" || mode === "audio" ? " is-tiles" : "")}>
+            <div className={"tc-kopts" + (mode === "build" || mode === "audio" || mode === "cloze" ? " is-tiles" : "")}>
               {choices.map((k) => {
                 const state = !picked ? ""
                   : k.c === cur.c ? " is-right"
@@ -5677,6 +5710,12 @@ function Kanji({ cards }) {
                 );
               })}
             </div>
+            {picked && mode === "cloze" && cloze && (
+              <p className={"tc-kcorrect" + (picked.c === cur.c ? " is-ok" : "")}>
+                <b>{cloze.term}</b> {cloze.reading ? "· " + cloze.reading + " " : ""}
+                {shortMeaning(cloze.meaning)}
+              </p>
+            )}
             {picked && (
               <p className={"tc-kcorrect" + (picked.c === cur.c ? " is-ok" : "")}>
                 <b>{cur.c}</b> {cur.m.join(", ")}
@@ -7006,6 +7045,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kmodalcard{position:relative;background:#1b2030;border:1px solid rgba(255,255,255,.12);border-radius:18px;
   padding:22px 18px;display:flex;flex-direction:column;align-items:center;gap:8px;max-width:340px;width:100%;
   max-height:82vh;overflow-y:auto;}
+.tc-kcloze{display:flex;flex-direction:column;align-items:center;gap:6px;}
+.tc-kclozeword{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;font-size:40px;
+  line-height:1.15;color:#fff;letter-spacing:.02em;}
+.tc-kblank{color:#7c5cff;font-weight:400;}
+.tc-kclozeen{font-size:14px;color:var(--mut-2);}
 .tc-kstat{margin:2px 0 0;font-size:12px;color:var(--mut-2);}
 .tc-kanjicredit{margin:4px 0 0;font-size:10.5px;line-height:1.5;color:var(--mut-2);opacity:.75;text-align:center;}
 @media (max-width:460px){.tc-kanjibig{font-size:88px;}}
