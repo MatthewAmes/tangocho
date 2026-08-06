@@ -15,6 +15,7 @@
 import { build } from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // fileURLToPath, not url.pathname — the project path contains a space ("Jpn App"),
@@ -59,6 +60,18 @@ for (const [what, re] of must) {
 // The feed source list is split across the app and the Worker for good reasons (see
 // check-feeds.mjs); a mismatch fails quietly at runtime, so catch it at build time.
 await import("./check-feeds.mjs");
+
+/* The counter and date readings are exam material. A wrong one would be drilled into him
+   as confidently as a right one, so the tables are checked against a hand-written copy on
+   every build rather than only when someone remembers to run the tests. */
+for (const suite of ["test-counters.mjs", "test-romaji.mjs"]) {
+  const r = spawnSync(process.execPath, [path.join(ROOT, "tools", suite)], { encoding: "utf8" });
+  if (r.status !== 0) {
+    console.error(`\n${suite} FAILED — refusing to build\n${r.stdout || ""}${r.stderr || ""}`);
+    process.exit(1);
+  }
+  console.log(`    ${suite.replace(/^test-|\.mjs$/g, "")} ${(r.stdout.match(/(\d+) passed/) || [])[1]} readings verified`);
+}
 
 // ── splice into index.html ────────────────────────────────────────────────────
 // The <head> has an attributed <script src="…gsi/client" …> tag; matching the exact

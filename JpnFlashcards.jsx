@@ -9,6 +9,12 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
+import {
+  buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
+  acceptedReadings, COUNTERS, DAY_READING, MONTH_READING, MONTH_KANJI, HOUR_READING,
+  WEEKDAYS, WEEKDAY_EN, counterForm, ordinal,
+} from "./tools/counters-data.mjs";
+import { toKana, kanaEqual } from "./tools/romaji.mjs";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -1006,6 +1012,21 @@ function mergeInput(localRaw, cloudRaw) {
     }).slice(0, 6),
   });
 }
+/* Two per-item stat blobs keyed by item id. Whichever side has drilled an item more times
+   knows more about it, so that record wins; items only one side has are kept outright.
+   Losing a study session because the other device synced later is the exact failure this
+   avoids. */
+function mergeStats(localRaw, cloudRaw) {
+  let a = {}, b = {};
+  try { a = JSON.parse(localRaw || "{}") || {}; } catch (e) {}
+  try { b = JSON.parse(cloudRaw || "{}") || {}; } catch (e) {}
+  const out = { ...a };
+  for (const [id, v] of Object.entries(b)) {
+    const ex = out[id];
+    if (!ex || (v.seen || 0) > (ex.seen || 0)) out[id] = v;
+  }
+  return JSON.stringify(out);
+}
 function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
   const out = { ...localSnap };
   const keys = new Set([...Object.keys(localSnap), ...Object.keys(cloudSnap)]);
@@ -1014,6 +1035,7 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
     if (k === "jpn101:days") { out[k] = mergeDays(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:input") { out[k] = mergeInput(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:kanji" || k === "jpn101:dates") { out[k] = mergeStats(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:deckVersion") { out[k] = String(Math.max(Number(localSnap[k] || 0), Number(cloudSnap[k] || 0))); return; }
     if (!(k in localSnap)) { out[k] = cloudSnap[k]; return; }   // new key we don't have locally yet
     if (k in cloudSnap && cloudUpdatedAt && cloudUpdatedAt > (localLastPulled || 0)) out[k] = cloudSnap[k];   // secondary keys: newer whole snapshot wins
@@ -1462,7 +1484,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["oral", "Oral"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["oral", "Oral"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -1484,6 +1506,8 @@ export default function JpnFlashcards() {
           <OralHome />
         ) : tab === "kanji" ? (
           <Kanji cards={cards} />
+        ) : tab === "dates" ? (
+          <Dates />
         ) : tab === "write" ? (
           /* Write keeps its render branch and its component. The tab chip is gone for now,
              not the feature — it is the only production-recall practice in the app and
@@ -5234,7 +5258,447 @@ function Oral() {
 
    Scheduling reuses statReview/statNeed, so kanji sit on the same FSRS memory model as
    everything else rather than getting a fourth hand-rolled scorer. */
+/* ── Dates, times and counters ──
+   The part of the course that is pure recall with no way to reason it out mid-sentence:
+   四月 is しがつ and never よんがつ, 二十日 is はつか and never にじゅうにち, 一分 is
+   いっぷん. There is nothing to understand, only to know, and reading it off a chart is a
+   completely different skill from producing it under exam pressure.
+
+   So the tab has three stages rather than one drill: a chart to read, learn cards for
+   anything not yet met, and then drilling that is typed rather than multiple choice
+   wherever an item is solid enough — picking ようか out of four options can be done by
+   elimination, typing it cannot. Sequence questions ("Thursday, April 8 at 7:00 PM") come
+   last because they are the shape the midterm asks for and they only work once the pieces
+   are individually known.
+
+   Every fact is its own scheduled item, so missing 二十日 drills 二十日 and does not drag
+   十五日 back with it. */
+const DATES_KEY = "jpn101:dates";
+
+const DATE_GROUPS = [
+  { id: "weekday", label: "Days of the week", hint: "七曜", match: (i) => i.kind === "weekday" },
+  { id: "month", label: "Months", hint: "月", match: (i) => i.kind === "month" },
+  { id: "day", label: "Days of the month", hint: "日", match: (i) => i.kind === "day" },
+  { id: "time", label: "Hours & minutes", hint: "時・分", match: (i) => i.id.startsWith("ctr:ji:") || i.id.startsWith("ctr:fun:") },
+  { id: "counter", label: "Counters", hint: "助数詞", match: (i) => i.kind === "counter" && !i.id.startsWith("ctr:ji:") && !i.id.startsWith("ctr:fun:") },
+];
+
+const DATE_ITEMS = buildDateItems();
+const dateGroupOf = (i) => (DATE_GROUPS.find((g) => g.match(i)) || DATE_GROUPS[4]).id;
+
+const pickN = (arr, n) => arr.slice().sort(() => Math.random() - 0.5).slice(0, n);
+const randOf = (a) => a[Math.floor(Math.random() * a.length)];
+
+/* Distractors come from the same group, so a 〜日 question is answered against other 〜日
+   readings. Anything else makes the question answerable by shape alone. */
+function dateDistractors(item, n) {
+  const g = dateGroupOf(item);
+  const sameCounter = item.id.startsWith("ctr:") ? item.id.split(":")[1] : null;
+  const pool = DATE_ITEMS.filter((x) => {
+    if (x.id === item.id || x.reading === item.reading) return false;
+    if (sameCounter) return x.id.startsWith("ctr:" + sameCounter + ":");
+    return dateGroupOf(x) === g;
+  });
+  const near = pool.filter((x) => Math.abs(num(x.id) - num(item.id)) <= 6);
+  const chosen = pickN(near.length >= n ? near : pool, n);
+  return chosen.length >= n ? chosen : pickN(pool, n);
+}
+const num = (id) => Number(id.split(":").pop()) || 0;
+
+/* A full exam-shaped prompt, assembled from pieces he has already met. */
+function makeSequence() {
+  const month = 1 + Math.floor(Math.random() * 12);
+  const day = 1 + Math.floor(Math.random() * 28);
+  const dow = Math.floor(Math.random() * 7);
+  const hour = 1 + Math.floor(Math.random() * 23);
+  const minute = randOf([0, 0, 15, 30, 30, 45, 10, 20]);
+  return sequenceForm(month, day, dow, hour, minute);
+}
+
+function Dates() {
+  const [stats, setStats] = useState({});
+  const [view, setView] = useState("home");
+  const [queue, setQueue] = useState([]);
+  const [pos, setPos] = useState(0);
+  const [typed, setTyped] = useState("");
+  const [picked, setPicked] = useState(null);
+  const [judged, setJudged] = useState(null);     // {ok, want} once an answer is committed
+  const [hits, setHits] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [chart, setChart] = useState(null);       // which group's reference chart is open
+  const statsRef = useRef({});
+  const shownRef = useRef(Date.now());
+  const thinkRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    sGet(DATES_KEY).then((raw) => {
+      if (!live) return;
+      let v = {};
+      try { v = JSON.parse(raw || "{}") || {}; } catch (e) {}
+      statsRef.current = v; setStats(v);
+    });
+    return () => { live = false; };
+  }, []);
+
+  const getS = useCallback((id) => statsRef.current[id] || {}, []);
+
+  const save = (item, ok, ms) => {
+    const st = getS(item.id);
+    const ns = {
+      ...st, seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
+      level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
+      streak: ok ? (st.streak || 0) + 1 : 0, last: Date.now(),
+      fsrs: statReview(st, ok, ms, Date.now()),
+      ms: (st.ms || 0) + (ms || 0), msN: (st.msN || 0) + (ms ? 1 : 0),
+    };
+    const nx = { ...statsRef.current, [item.id]: ns };
+    statsRef.current = nx; setStats(nx); sSet(DATES_KEY, JSON.stringify(nx));
+    logDay({ ok, ms: ms || 0, deck: "dates" });
+  };
+
+  const speak = useCallback((text) => {
+    try { speakJa(String(text), 0.95); } catch (e) {}
+  }, []);
+
+  const solid = useCallback((id) => ((stats[id] || {}).level || 0) >= 4, [stats]);
+  const met = useCallback((id) => ((stats[id] || {}).seen || 0) > 0, [stats]);
+
+  const groupProgress = useMemo(() => DATE_GROUPS.map((g) => {
+    const items = DATE_ITEMS.filter(g.match);
+    return {
+      ...g, items,
+      solid: items.filter((i) => solid(i.id)).length,
+      met: items.filter((i) => met(i.id)).length,
+    };
+  }), [solid, met]);
+
+  const overall = useMemo(() => {
+    const done = DATE_ITEMS.filter((i) => solid(i.id)).length;
+    return { done, total: DATE_ITEMS.length, pct: Math.round((done / DATE_ITEMS.length) * 100) };
+  }, [solid]);
+
+  const dueNow = useMemo(() => {
+    const now = Date.now();
+    return DATE_ITEMS.filter((i) => {
+      const f = (stats[i.id] || {}).fsrs;
+      return f && f.due && f.due <= now;
+    }).length;
+  }, [stats]);
+
+  /* A question's form follows how well the item is known: meet it, then recognise it, then
+     produce it. Typing is the goal state — it is the only one that proves recall rather
+     than recognition. */
+  const formFor = (item) => {
+    const st = getS(item.id);
+    if (!(st.seen > 0)) return "learn";
+    if ((st.level || 0) >= 3) return "type";
+    if ((st.level || 0) >= 1) return Math.random() < 0.5 ? "type" : "mc";
+    return "mc";
+  };
+
+  const startSession = useCallback((groupId) => {
+    const now = Date.now();
+    const pool = groupId ? DATE_ITEMS.filter((i) => dateGroupOf(i) === groupId) : DATE_ITEMS;
+    /* Review and new material are picked separately.
+
+       Scoring everything together does not work here: on a fresh install all 210 items tie
+       at the same need, the trap bonus then sorts every one of the ~70 traps ahead of every
+       regular, and the first sessions are nothing but ついたち…ここのか and 四月・七月・九月
+       with 五月 nowhere in sight. Traps are what cost marks, but they are irregularities in
+       a pattern, and the pattern has to exist first.
+
+       So: due items come back by need, with traps bumped among them, and new items are
+       introduced in chart order — 日曜日 through 土曜日, 一月 through 十二月, the 1st through
+       the 31st. That is the order the material is learnable in. */
+    const isSeen = (i) => ((statsRef.current[i.id] || {}).seen || 0) > 0;
+    const review = pool.filter(isSeen)
+      .map((i) => ({ i, need: statNeed(statsRef.current[i.id], now) + (i.trap ? 0.6 : 0) }))
+      .sort((a, b) => b.need - a.need)
+      .slice(0, 8).map((x) => x.i);
+    const fresh = pool.filter((i) => !isSeen(i)).slice(0, Math.max(4, 12 - review.length));
+    const chosen = [...review, ...fresh].slice(0, 12);
+    const steps = [];
+    for (const item of chosen) {
+      const form = formFor(item);
+      if (form === "learn") steps.push({ kind: "learn", item }, { kind: "mc", item });
+      else steps.push({ kind: form, item });
+    }
+    // Interleave rather than run each item's steps back to back.
+    const waves = [];
+    let depth = 0;
+    while (steps.some((s) => s.wave === undefined)) {
+      for (const item of chosen) {
+        const next = steps.find((s) => s.item.id === item.id && s.wave === undefined);
+        if (next) { next.wave = depth; waves.push(next); }
+      }
+      depth++;
+    }
+    /* Sequences last: they assemble the pieces, so they are only fair once the pieces have
+       been seen this session. Skipped entirely for a single-group drill, where there is
+       nothing to assemble. */
+    if (!groupId) for (let i = 0; i < 3; i++) waves.push({ kind: "seq", seq: makeSequence() });
+
+    setQueue(waves);
+    setPos(0); setHits(0); setTotal(0);
+    setTyped(""); setPicked(null); setJudged(null);
+    shownRef.current = Date.now(); thinkRef.current = null;
+    setView("session");
+  }, []);
+
+  const step = queue[pos] || null;
+  const item = step ? step.item : null;
+
+  /* Options for a multiple-choice step, stable for the life of the step. */
+  const choices = useMemo(() => {
+    if (!step || step.kind !== "mc" || !item) return [];
+    return [item, ...dateDistractors(item, 3)].sort(() => Math.random() - 0.5);
+  }, [step, item]);
+
+  useEffect(() => {
+    shownRef.current = Date.now(); thinkRef.current = null;
+    setTyped(""); setPicked(null); setJudged(null);
+    if (step && (step.kind === "type" || step.kind === "seq")) {
+      setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 30);
+    }
+    if (step && step.kind === "learn" && step.item) setTimeout(() => speak(step.item.reading), 250);
+    /* Keyed on position only. Requeueing a missed item replaces the queue array, and
+       keying this on the queue made the effect re-run and clear "judged" the instant an
+       answer was marked wrong — so a wrong answer showed no feedback at all and simply
+       asked itself again, forever. */
+  }, [pos, speak]);
+
+  useEffect(() => {
+    if (view === "session" && queue.length && pos >= queue.length) setView("summary");
+  }, [pos, queue.length, view]);
+
+  const advance = () => setPos((x) => x + 1);
+
+  const commit = (ok, want) => {
+    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+    setJudged({ ok, want });
+    setTotal((t) => t + 1);
+    if (ok) setHits((h) => h + 1);
+    if (item) save(item, ok, thinkRef.current);
+    speak(want);
+    if (!ok && item) {
+      /* A miss comes back later in the same session, as multiple choice so the correct
+         form is seen again before it is asked for cold. */
+      setQueue((q) => {
+        const nq = q.slice();
+        nq.splice(Math.min(nq.length, pos + 4), 0, { kind: "mc", item });
+        return nq;
+      });
+    }
+  };
+
+  const answerMC = (opt) => {
+    if (judged || !item) return;
+    setPicked(opt);
+    commit(opt.id === item.id, item.reading);
+  };
+
+  const submitTyped = () => {
+    if (judged) return;
+    const kana = toKana(typed);
+    if (!kana) return;
+    if (step.kind === "seq") {
+      const ok = acceptedReadings(step.seq.reading).some((r) => kanaEqual(kana, r));
+      if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+      setJudged({ ok, want: step.seq.reading });
+      setTotal((t) => t + 1);
+      if (ok) setHits((h) => h + 1);
+      /* A sequence is scored against its three components, so getting it wrong schedules
+         the pieces rather than a composite that will never be asked again. */
+      for (const part of ["date", "weekday", "time"]) {
+        const piece = step.seq.parts[part];
+        const sub = DATE_ITEMS.find((x) => x.reading === piece.reading);
+        if (sub) save(sub, ok, thinkRef.current);
+      }
+      logDay({ ok, ms: thinkRef.current || 0, deck: "dates" });
+      speak(step.seq.reading);
+      return;
+    }
+    const strictSeven = item.kind === "month" || item.kind === "day";
+    const ok = acceptedReadings(item.reading, { strictSeven }).some((r) => kanaEqual(kana, r));
+    commit(ok, item.reading);
+  };
+
+  /* ── reference chart ── */
+  if (chart) {
+    const g = groupProgress.find((x) => x.id === chart);
+    return (
+      <div className="tc-dates">
+        <div className="tc-dhead">
+          <button className="tc-fchip" onClick={() => setChart(null)}>← Back</button>
+          <h2 className="tc-dtitle">{g.label}</h2>
+        </div>
+        <p className="tc-smarthint">Tap any row to hear it. Red rows are the ones that break the pattern.</p>
+        <div className="tc-dchart">
+          {g.items.map((i) => (
+            <button key={i.id} className={"tc-drow" + (i.trap ? " is-trap" : "") + (solid(i.id) ? " is-solid" : "")}
+              onClick={() => speak(i.reading)}>
+              <span className="tc-drowk">{i.kanji}</span>
+              <span className="tc-drowr">{i.reading}</span>
+              <span className="tc-drowe">{i.en}</span>
+            </button>
+          ))}
+        </div>
+        <button className="tc-btn tc-btn-primary tc-dwide" onClick={() => { setChart(null); startSession(g.id); }}>
+          Drill {g.label.toLowerCase()}
+        </button>
+      </div>
+    );
+  }
+
+  /* ── session ── */
+  if (view === "session" && step) {
+    const pct = queue.length ? (pos / queue.length) * 100 : 0;
+    const isSeq = step.kind === "seq";
+    const kana = toKana(typed);
+    return (
+      <div className="tc-dates">
+        <div className="tc-progress">
+          <div className="tc-progtrack"><div className="tc-progfill" style={{ width: pct + "%" }} /></div>
+          <span className="tc-progtext">{pos} / {queue.length}</span>
+          <button className="tc-fchip" onClick={() => setView("home")}>Quit</button>
+        </div>
+
+        {step.kind === "learn" ? (
+          <div className="tc-dcard">
+            <p className="tc-eyebrow">new</p>
+            <div className="tc-dbig">{item.kanji}</div>
+            <div className="tc-dread">{item.reading}</div>
+            <div className="tc-den">{item.en}</div>
+            <button className="tc-btn tc-btn-sm" onClick={() => speak(item.reading)}>🔊 Hear it</button>
+            {item.trap && <p className="tc-dnote">⚠ {item.note || "This one breaks the pattern — learn it as its own word."}</p>}
+            <button className="tc-btn tc-btn-primary tc-dwide" onClick={advance}>Got it</button>
+          </div>
+        ) : (
+          <div className="tc-dq">
+            <p className="tc-kprompt">
+              {isSeq ? "Write this out in Japanese"
+                : step.kind === "type" ? "Type the reading"
+                : "Which reading is this?"}
+            </p>
+            <div className="tc-dstem">
+              {isSeq ? <span className="tc-dseqen">{step.seq.en}</span> : (
+                <>
+                  <span className="tc-dbig">{item.kanji}</span>
+                  <span className="tc-den">{item.en}</span>
+                </>
+              )}
+            </div>
+
+            {step.kind === "mc" ? (
+              <div className="tc-kopts">
+                {choices.map((o) => {
+                  const state = !judged ? ""
+                    : o.id === item.id ? " is-right"
+                    : picked && o.id === picked.id ? " is-wrong" : " is-dim";
+                  return (
+                    <button key={o.id} className={"tc-kopt" + state} disabled={!!judged}
+                      onClick={() => answerMC(o)}>{o.reading}</button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="tc-dtype">
+                <input ref={inputRef} className="tc-dinput" value={typed} disabled={!!judged}
+                  onChange={(e) => setTyped(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { judged ? advance() : submitTyped(); } }}
+                  placeholder="type in romaji — shigatsu youka"
+                  autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" />
+                <div className="tc-dkana">{kana || "　"}</div>
+                {!judged && (
+                  <button className="tc-btn tc-btn-primary tc-dwide" onClick={submitTyped} disabled={!kana}>
+                    Check
+                  </button>
+                )}
+              </div>
+            )}
+
+            {judged && (
+              <div className={"tc-dfeed" + (judged.ok ? " is-ok" : "")}>
+                <p className="tc-dfeedline">
+                  {judged.ok ? "✓ " : "✗ "}
+                  <b>{isSeq ? step.seq.kanji : item.kanji}</b> — {judged.want}
+                </p>
+                {isSeq && <p className="tc-dfeedsub">{step.seq.en}</p>}
+                {!isSeq && item.note && <p className="tc-dfeedsub">{item.note}</p>}
+                <button className="tc-btn tc-btn-primary tc-dwide" onClick={advance} autoFocus>Continue</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ── summary ── */
+  if (view === "summary") {
+    const pct = total ? Math.round((hits / total) * 100) : 0;
+    return (
+      <div className="tc-dates">
+        <div className="tc-done">
+          <p className="tc-eyebrow">Drill complete</p>
+          <div className="tc-bignum">{pct}<span>%</span></div>
+          <p className="tc-donesub">{hits} right of {total}</p>
+          <div className="tc-donebtns">
+            <button className="tc-btn tc-btn-primary" onClick={() => startSession(null)}>Another round</button>
+            <button className="tc-btn" onClick={() => setView("home")}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── home ── */
+  return (
+    <div className="tc-dates">
+      <div className="tc-dhero">
+        <p className="tc-eyebrow">dates · times · counters</p>
+        <div className="tc-bignum">{overall.done}<span>/{overall.total}</span></div>
+        <p className="tc-donesub">{overall.pct}% solid{dueNow > 0 ? ` · ${dueNow} due for review` : ""}</p>
+      </div>
+
+      <button className="tc-btn tc-btn-primary tc-dwide" onClick={() => startSession(null)}>
+        Start mixed drill
+      </button>
+      <p className="tc-smarthint">
+        Mixed drills end with full exam-shaped prompts — “Thursday, April 8 at 7:00 PM” —
+        written out from scratch. Everything is typed in romaji and converted as you go, so
+        no Japanese keyboard is needed.
+      </p>
+
+      <div className="tc-dgroups">
+        {groupProgress.map((g) => (
+          <div key={g.id} className="tc-dgroup">
+            <div className="tc-dgroupinfo">
+              <b>{g.label}</b>
+              <span className="tc-dgrouphint">{g.hint} · {g.solid}/{g.items.length} solid</span>
+              <div className="tc-dbar"><div className="tc-dbarfill" style={{ width: (g.solid / g.items.length) * 100 + "%" }} /></div>
+            </div>
+            <div className="tc-dgroupbtns">
+              <button className="tc-btn tc-btn-sm" onClick={() => setChart(g.id)}>Chart</button>
+              <button className="tc-btn tc-btn-sm" onClick={() => startSession(g.id)}>Drill</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="tc-smarthint">
+        Every reading is stored and scheduled on its own, so missing 二十日 brings back
+        二十日 and not the whole list. Traps — the readings that break the pattern — are
+        drilled sooner than the regular ones.
+      </p>
+    </div>
+  );
+}
+
 const KANJI_KEY = "jpn101:kanji";
+
 const KANJI_URL = "/kanji.json";
 const KANJI_CACHE = "jpn101:kanjiData";
 const KANJI_BATCH = 12;              // how many new characters unlock at a time
@@ -7095,6 +7559,46 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kanjinext{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 13px;}
 .tc-kanjirow{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px;}
 .tc-kanjichip{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;color:#fff;background:rgba(255,255,255,.07);border-radius:9px;width:42px;height:42px;display:flex;align-items:center;justify-content:center;}
+.tc-dates{display:flex;flex-direction:column;gap:12px;}
+.tc-dhead{display:flex;align-items:center;gap:10px;}
+.tc-dtitle{margin:0;font-size:17px;color:#fff;}
+.tc-dhero{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0 2px;}
+.tc-dwide{width:100%;max-width:420px;align-self:center;}
+.tc-dgroups{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+.tc-dgroup{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);}
+.tc-dgroupinfo{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0;}
+.tc-dgroupinfo b{color:#fff;font-size:14px;}
+.tc-dgrouphint{font-size:12px;color:var(--mut-2);}
+.tc-dbar{height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:2px;}
+.tc-dbarfill{height:100%;background:#3d9150;border-radius:2px;transition:width .3s;}
+.tc-dgroupbtns{display:flex;gap:6px;flex-shrink:0;}
+.tc-dchart{display:flex;flex-direction:column;gap:4px;max-height:60vh;overflow-y:auto;padding-right:2px;}
+.tc-drow{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:baseline;text-align:left;
+  padding:8px 12px;border-radius:9px;cursor:pointer;color:#fff;
+  border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);}
+.tc-drow.is-trap{border-color:rgba(255,120,110,.45);background:rgba(255,120,110,.09);}
+.tc-drow.is-solid{border-left:3px solid #3d9150;}
+.tc-drowk{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:17px;min-width:62px;}
+.tc-drowr{font-size:15px;color:#ffd9a0;}
+.tc-drowe{font-size:12px;color:var(--mut-2);}
+.tc-dcard,.tc-dq{display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 0;}
+.tc-dstem{display:flex;flex-direction:column;align-items:center;gap:4px;margin:4px 0 8px;}
+.tc-dbig{font-family:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;font-size:46px;line-height:1.1;color:#fff;}
+.tc-dseqen{font-size:22px;line-height:1.35;color:#fff;text-align:center;max-width:340px;}
+.tc-dread{font-size:20px;color:#ffd9a0;}
+.tc-den{font-size:14px;color:var(--mut-2);}
+.tc-dnote{margin:2px 0;font-size:13px;color:#ffb3ab;text-align:center;max-width:340px;}
+.tc-dtype{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;max-width:420px;}
+.tc-dinput{width:100%;padding:12px 14px;border-radius:11px;font-size:16px;color:#fff;
+  background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.16);outline:none;}
+.tc-dinput:focus{border-color:#7c5cff;}
+.tc-dkana{min-height:30px;font-size:24px;color:#ffd9a0;letter-spacing:.04em;}
+.tc-dfeed{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;max-width:420px;
+  padding:12px;border-radius:12px;background:rgba(255,120,110,.12);border:1px solid rgba(255,120,110,.3);}
+.tc-dfeed.is-ok{background:rgba(61,145,80,.14);border-color:rgba(61,145,80,.4);}
+.tc-dfeedline{margin:0;font-size:16px;color:#fff;text-align:center;}
+.tc-dfeedsub{margin:0;font-size:12.5px;color:var(--mut-2);text-align:center;}
 .tc-kgrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .tc-kcell{appearance:none;font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;line-height:1;
   width:44px;height:44px;border-radius:9px;cursor:pointer;color:#fff;
