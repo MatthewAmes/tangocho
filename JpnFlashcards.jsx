@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
    ────────────────────────────────────────────────────────────────────────── */
 
 import { MASCOT_GIFS } from "./data/mascot.js";
-import { SITUATIONS, makeProps, TALK } from "./tools/oral-data.mjs";
+import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
@@ -5199,9 +5199,19 @@ function Oral() {
           Full mock interview · all {total} prompts
         </button>
         <p className="tc-smarthint">
-          The flier, receipt and budget change every run, exactly as the study guide warns
-          they will on the day. Answer out loud before revealing anything.
+          The date, time, copy count, price and pizza order change every run, exactly as the
+          study guide warns they may on the day. Answer out loud before revealing anything.
         </p>
+        {/* What the marks are actually for. The three sections are only the excuse to use
+            these, so they sit on the way in rather than buried in a menu. */}
+        <details className="tc-oralcheck">
+          <summary>What they are marking · quick checklist</summary>
+          <dl className="tc-oralchecklist">
+            {CHECKLIST.map((c) => (
+              <div key={c.k}><dt>{c.k}</dt><dd>{c.v}</dd></div>
+            ))}
+          </dl>
+        </details>
       </div>
     );
   }
@@ -5217,12 +5227,29 @@ function Oral() {
 
       {S.prop !== "none" && <OralProp kind={S.prop} props={props_} />}
 
-      <div className="tc-card2 tc-oralcard">
-        <p className="tc-oralwho">examiner</p>
-        <p className="tc-oralq">{q.q} <SpeakBtn text={q.r} /></p>
+      {/* Two turns in the rundown are marked INITIATE: nobody prompts you, you have to
+          open your mouth first. Those are the ones that get failed, so they do not get an
+          examiner line to react to — just the instruction and silence. */}
+      <div className={"tc-card2 tc-oralcard" + (q.initiate ? " tc-oralinit" : "")}>
+        {q.initiate ? (
+          <>
+            <p className="tc-oralwho tc-oralwhoyou">▶ you start · nobody asks you this</p>
+            <p className="tc-oralq tc-oralqinit">{q.en.replace(/^NOW YOU START — /, "")}</p>
+          </>
+        ) : (
+          <>
+            <p className="tc-oralwho">examiner{q.star ? " · watch this one" : ""}</p>
+            <p className="tc-oralq">
+              {typeof q.q === "function" ? q.q(props_) : q.q}{" "}
+              <SpeakBtn text={typeof q.r === "function" ? q.r(props_) : q.r} />
+            </p>
+          </>
+        )}
         {!shown ? (
           <>
-            <p className="tc-oralcue">Say your answer out loud, then check.</p>
+            <p className="tc-oralcue">
+              {q.initiate ? "Say it out loud from scratch, then check." : "Say your answer out loud, then check."}
+            </p>
             <div className="tc-rehnav">
               <button className="tc-btn tc-btn-primary" onClick={() => {
                 if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
@@ -5232,7 +5259,7 @@ function Oral() {
           </>
         ) : (
           <>
-            <p className="tc-oralen">{q.en}</p>
+            {!q.initiate && <p className="tc-oralen">{q.en}</p>}
             <p className="tc-orala">{q.a(props_)} <SpeakBtn text={q.a(props_)} /></p>
             <p className="tc-oralg">{q.g}</p>
             <div className="tc-rehnav">
@@ -7669,6 +7696,16 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-dfeedsub{margin:0;align-self:flex-start;font-size:12.5px;color:#cfd3dc;text-align:left;}
 /* the question must be able to scroll clear of the pinned banner */
 .tc-dq{padding-bottom:210px;}
+.tc-oralinit{border-color:rgba(124,92,255,.55);background:rgba(124,92,255,.09);}
+.tc-oralwhoyou{color:#b9a6ff;font-weight:700;}
+.tc-oralqinit{font-size:17px;line-height:1.4;color:#fff;}
+.tc-oralcheck{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:10px 13px;
+  background:rgba(255,255,255,.03);}
+.tc-oralcheck summary{cursor:pointer;font-size:13.5px;color:#ffd9a0;font-weight:600;}
+.tc-oralchecklist{margin:9px 0 0;display:flex;flex-direction:column;gap:7px;}
+.tc-oralchecklist div{display:flex;flex-direction:column;gap:1px;}
+.tc-oralchecklist dt{font-size:13px;font-weight:700;color:#fff;}
+.tc-oralchecklist dd{margin:0;font-size:12.5px;color:var(--mut-2);line-height:1.4;}
 .tc-kgrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .tc-kcell{appearance:none;font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;line-height:1;
   width:44px;height:44px;border-radius:9px;cursor:pointer;color:#fff;

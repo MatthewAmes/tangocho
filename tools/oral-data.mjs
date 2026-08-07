@@ -83,11 +83,22 @@ export function dollarsReading(n) {
 
 /* ── the randomised props ── */
 const PIZZA_PLACES = ["リトルシーザーズ", "ドミノピザ", "コストコ", "パパジョンズ"];
-const ROOMS = [
-  { en: "JFSB FLAC (basement)", ja: "JFSBのちかのFLAC", read: "ジェイエフエスビーのちかのフラック" },
-  { en: "JFSB B037", ja: "JFSBのB037", read: "ジェイエフエスビーのビーゼロさんななごうしつ" },
-  { en: "Wilkinson Center 3220", ja: "ウィルキンソンセンターの3220", read: "ウィルキンソンセンターのさんにーにーまる" },
-];
+/* The venue is not a variable. The rundown asks "What is FLAC? and where is it?" as its own
+   turn and expects the whole phrase spoken out, so the room is always the FLAC in the JFSB
+   and the long katakana name is something to rehearse rather than something to pick. */
+const FLAC = {
+  en: "JFSB FLAC (basement)",
+  ja: "JFSBのFLAC",
+  read: "ジェイエフエスビーのフラック",
+  full: "フォーリン・ランゲージ・アクティビティー・センター",
+  fullRead: "フォーリンランゲージアクティビティーセンター",
+  where: "JFSBのちかにあります。",
+  whereRead: "ジェイエフエスビーのちかにあります。",
+};
+
+// the classmate the examiner will wrongly credit with the flier, and who you hand the
+// drinks job to
+const CLASSMATE = ["田中", "山田", "スミス", "ジョンソン", "ブラウン"];
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const between = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 
@@ -99,21 +110,32 @@ export function makeProps() {
   const startHalf = Math.random() < 0.5;
   const hours = pick([2, 3]);
   const endHour = startHour + hours;
-  const room = pick(ROOMS);
+  const room = FLAC;
+  /* The examiner deliberately names the wrong weekday and waits to be corrected, so the
+     wrong one has to be generated too — and it has to differ from the real one, or the
+     turn quietly becomes a normal confirmation with nothing to correct. */
+  const wrongDow = (dow + between(1, 6)) % 7;
 
   const copies = pick([80, 100, 120, 150, 200]);
   const price = (copies * pick([0.28, 0.32, 0.35])).toFixed(2);
 
   const budget = pick([150, 200, 250]);
   const people = pick([60, 80, 100, 120]);
-  const youOrderPizza = Math.random() < 0.5;
+  /* Fixed, not random. The rundown settles it: "Who is ordering? — I am", and then you
+     hand the drinks and refreshments to someone else with ください. */
+  const youOrderPizza = true;
+  const classmate = pick(CLASSMATE);
 
   // a sensible number of pizzas: roughly one large per six or seven people
   const pizzas = Math.max(4, Math.round(people / pick([6, 7, 8])));
 
   return {
+    classmate,
     flyer: {
-      month, day, dow, startHour, startHalf, endHour, room,
+      month, day, dow, startHour, startHalf, endHour, room, wrongDow,
+      wrongDowJa: WEEKDAYS[wrongDow][1],
+      dowJa: WEEKDAYS[dow][1],
+      monthDayJa: MONTH_READING[month] + DAY_READING[day],
       dateEn: `${month}/${day} (${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]})`,
       timeEn: `${startHour}:${startHalf ? "30" : "00"} pm – ${endHour}:${startHalf ? "30" : "00"} pm`,
       dateJa: `${MONTH_READING[month]}${DAY_READING[day]}の${WEEKDAYS[dow][1]}`,
@@ -144,78 +166,103 @@ export function makeProps() {
 export const SITUATIONS = [
   {
     id: "s1",
-    title: "Situation 1 — a member asks about the party",
+    title: "Section 1 — the party details",
     mins: "1–2 min",
     prop: "flyer",
-    intro: "You are on the J-kaiwa committee. Another member asks about the end-of-semester party. Answer from the flier.",
+    intro: "The examiner asks about the party and gets the day of the week wrong on purpose. Correct them politely, then give the time, the place, and what FLAC actually stands for.",
     questions: [
       { q: "パーティーはいつですか。", r: "パーティーはいつですか。", en: "When is the party?",
-        a: (p) => `${p.flyer.dateJa}です。`, g: "date + weekday" },
+        a: (p) => `${p.flyer.monthDayJa}です。`, g: "month + day — 月 and 日 readings" },
+      { q: (p) => `${p.flyer.wrongDowJa}ですね。`, r: (p) => `${p.flyer.wrongDowJa}ですね。`,
+        en: "“It's on [wrong weekday], right?” — CORRECT THEM POLITELY",
+        a: (p) => `あれ、${p.flyer.dowJa}じゃなかったですか。`,
+        g: "polite correction with the negative — じゃなかったですか", initiate: false, star: true },
       { q: "何時から何時までですか。", r: "なんじからなんじまでですか。", en: "From what time to what time?",
         a: (p) => `${p.flyer.timeJa}です。`, g: "〜から〜まで" },
-      { q: "どこでしますか。", r: "どこでしますか。", en: "Where is it being held?",
-        a: (p) => `${p.flyer.room.read}でします。`, g: "location で" },
-      { q: "何を食べますか。", r: "なにをたべますか。", en: "What will you eat?",
-        a: () => "ピザを食べます。飲み物もあります。", g: "を + verb" },
-      { q: "パーティーは土曜日ですね。", r: "パーティーはどようびですね。", en: "The party is on Saturday, right? — CORRECT THE MISTAKE",
-        a: (p) => `いいえ、${WEEKDAYS[p.flyer.dow][1]}です。`, g: "correcting a misunderstanding (ACT 4 BTS 21)" },
-      { q: "パーティーは何時間ぐらいですか。", r: "パーティーはなんじかんぐらいですか。", en: "About how many hours is the party?",
-        a: (p) => `${numReading(p.flyer.hours)}じかんぐらいです。`, g: "〜時間 duration" },
+      { q: "どこでしますか。", r: "どこでしますか。", en: "Where is it?",
+        a: (p) => `${p.flyer.room.read}でします。`, g: "location + で" },
+      { q: "FLACは何ですか。", r: "フラックはなんですか。", en: "What is FLAC? — SAY THE WHOLE PHRASE",
+        a: (p) => `${p.flyer.room.full}です。`, g: "the full katakana name, said cleanly", star: true },
+      { q: "FLACはどこにありますか。", r: "フラックはどこにありますか。", en: "Where is FLAC?",
+        a: (p) => p.flyer.room.whereRead, g: "〜にあります + location" },
     ],
   },
   {
     id: "s2",
-    title: "Situation 2 — your TA asks about the flier and budget",
-    mins: "1–2 min",
+    title: "Section 2 — the flier, then the food",
+    mins: "2–3 min",
     prop: "receipt",
-    intro: "You made the flier. Your TA asks about it, and you need to settle the pizza plan. Use the receipt and the budget.",
+    intro: "They credit someone else with the flier — put them right with が. Then you have to START two turns yourself: proposing the pizza, and asking someone to buy the drinks.",
     questions: [
-      { q: "ちらしはいつ作りましたか。", r: "ちらしはいつつくりましたか。", en: "When did you make the flier?",
-        a: (p) => `${p.made.day}に作りました。`, g: "past tense 〜ました" },
-      { q: "どのくらいかかりましたか。", r: "どのくらいかかりましたか。", en: "How long did it take?",
-        a: (p) => `${minutesReading(p.made.mins)}ぐらいかかりました。`, g: "duration + かかりました" },
+      { q: (p) => `${p.classmate}さんがちらしを作りましたね。`, r: (p) => `${p.classmate}さんがちらしをつくりましたね。`,
+        en: "“[Name] made the flier, right?” — NO, YOU DID",
+        a: () => "いいえ、私が作りました。", g: "が marks who did it — the point of the turn", star: true },
+      { q: "いつ作りましたか。", r: "いつつくりましたか。", en: "When did you make it?",
+        a: (p) => `${p.made.day}に作りました。`, g: "past 〜ました + time word" },
+      { q: "どのくらいかかりましたか。大変でしたか。", r: "どのくらいかかりましたか。たいへんでしたか。",
+        en: "How long did it take? Was it tough?",
+        a: (p) => `${minutesReading(p.made.mins)}ぐらいかかりました。ちょっと大変でした。`,
+        g: "ぐらい for approximate + 大変でした" },
       { q: "何枚コピーしましたか。", r: "なんまいコピーしましたか。", en: "How many copies did you make?",
-        a: (p) => `${p.receipt.copiesJa}コピーしました。`, g: "〜枚 counter" },
-      { q: "いくらでしたか。", r: "いくらでしたか。", en: "How much was it?",
-        a: (p) => `${p.receipt.priceJa}ぐらいでした。`, g: "price, past copula" },
-      { q: "ピザはどこで買いますか。", r: "ピザはどこでかいますか。", en: "Where will you buy the pizza? — ASK PERMISSION",
-        a: (p) => `${p.budget.place}で買ってもいいですか。`, g: "〜てもいいですか (ACT 5)" },
-      { q: "ピザは何枚買いましょうか。", r: "ピザはなんまいかいましょうか。", en: "How many pizzas should we buy? — PROPOSE A NUMBER",
-        a: (p) => `${p.budget.peopleJa}ですから、${p.budget.pizzasJa}ぐらい買いましょう。`, g: "〜ましょう, ですから" },
-      { q: "だれが何をしますか。", r: "だれがなにをしますか。", en: "Who does what? — MAKE A REQUEST with を",
-        a: (p) => p.budget.youOrderPizza
-          ? "私がピザを注文します。飲み物を買ってください。"
-          : "私が飲み物を買います。ピザを注文してください。",
-        g: "〜てください + を (ACT 5)" },
+        a: (p) => `${p.receipt.copiesJa}コピーしました。`, g: "〜枚 counter — read it off the receipt" },
+      { q: "高くなかったですか。", r: "たかくなかったですか。", en: "Wasn't it expensive?",
+        a: (p) => `そうですね、${p.receipt.priceJa}でしたから、ちょっと高かったです。`,
+        g: "DON'T say はい here — to 高くなかったですか, はい means “right, it wasn't”. そうですね dodges it." },
+      { q: null, r: null,
+        en: "NOW YOU START — propose the pizza place with 〜でもいいですか",
+        a: (p) => `食べ物ですが、${p.budget.place}のピザでもいいですか。`,
+        g: "YOU INITIATE · noun + でもいいですか (permission)", initiate: true, star: true },
+      { q: "ピザは何枚買いますか。", r: "ピザはなんまいかいますか。", en: "How many pizzas are you buying?",
+        a: (p) => `${p.budget.pizzasJa}買います。`, g: "〜枚 for pizzas" },
+      { q: "だれが買いますか。", r: "だれがかいますか。", en: "Who is ordering?",
+        a: () => "私が買います。", g: "が again — I'm the one who does it" },
+      { q: null, r: null,
+        en: "NOW YOU START — ask them to buy the drinks and refreshments",
+        a: (p) => `${p.classmate}さん、飲み物と食べ物を買ってください。`,
+        g: "YOU INITIATE · 〜てください + を", initiate: true, star: true },
     ],
   },
   {
     id: "s3",
-    title: "Situation 3 — meeting a new Japanese student",
-    mins: "3–4 min",
+    title: "Section 3 — free conversation",
+    mins: "2–3 min",
     prop: "none",
-    intro: "Someone new has come to J-kaiwa. Ask to sit down, introduce yourself, and keep the conversation going. The longest section — most of your marks are here.",
+    intro: "No props and no script. Four topics they are likely to reach for. Answer in full sentences and add one extra detail each time — a one-word answer ends the conversation and costs you the section.",
     questions: [
-      { q: "（席のとなりに立っています）", r: "せきのとなりにたっています。", en: "You are standing beside their seat — ASK PERMISSION TO SIT",
-        a: () => "すみません、ここに座ってもいいですか。", g: "座って + もいいですか (5-2)" },
-      { q: "はじめまして。お名前は？", r: "はじめまして。おなまえは。", en: "Nice to meet you. Your name?",
-        a: () => "はじめまして。マットです。どうぞよろしくお願いします。", g: "self-introduction" },
-      { q: "日本のどこから来ましたか。", r: "にほんのどこからきましたか。", en: "Where in Japan are you from? — YOU ASK THIS",
-        a: () => "日本のどこから来ましたか。", g: "〜から来ました" },
-      { q: "いつユタに来ましたか。", r: "いつユタにきましたか。", en: "When did you come to Utah? — YOU ASK THIS",
-        a: () => "いつユタに来ましたか。", g: "past tense question" },
-      { q: "今日は何をしましたか。", r: "きょうはなにをしましたか。", en: "What did you do today? — USE 〜て FOR SEQUENCE",
-        a: () => "朝ご飯を食べて、クラスに行って、勉強しました。", g: "〜て sequence (ACT 5 BTS 4) + past" },
-      { q: "専攻は何ですか。", r: "せんこうはなんですか。", en: "What is your major?",
-        a: () => "専攻はビジネスです。", g: "専攻 (4-2)" },
-      { q: "今学期どんなクラスを取りましたか。", r: "こんがっきどんなクラスをとりましたか。", en: "What kind of classes did you take this semester?",
-        a: () => "日本語とビジネスと数学のクラスを取りました。", g: "どんな + 取りました (4-2)" },
-      { q: "クラスは難しかったですか。", r: "クラスはむずかしかったですか。", en: "Were your classes difficult?",
-        a: () => "はい、日本語のクラスはちょっと難しかったです。でも、おもしろかったです。", g: "い-adjective past (難しかった)" },
-      { q: "どのクラスがいちばんおもしろかったですか。", r: "どのクラスがいちばんおもしろかったですか。", en: "Which class was the most interesting?",
-        a: () => "日本語のクラスがいちばんおもしろかったです。", g: "いちばん + past adjective" },
+      { q: "専攻は何ですか。", r: "せんこうはなんですか。", en: "What's your major?",
+        a: () => "専攻はビジネスです。", g: "専攻 — swap in your real major" },
+      { q: "今日は何をしましたか。", r: "きょうはなにをしましたか。", en: "What did you do today?",
+        a: () => "朝ご飯を食べて、授業に行って、勉強しました。", g: "〜て to chain actions, then past" },
+      { q: "明日は何をしますか。", r: "あしたはなにをしますか。", en: "What are you doing tomorrow?",
+        a: () => "明日は日本語を勉強して、友達に会います。", g: "same chain, non-past" },
+      { q: "どちらから来ましたか。", r: "どちらからきましたか。", en: "Where are you from?",
+        a: () => "ユタのプロボから来ました。", g: "どちら (polite どこ) + 〜から来ました" },
+      { q: "今学期は何の授業を取っていますか。", r: "こんがっきはなんのじゅぎょうをとっていますか。",
+        en: "What classes are you taking this semester?",
+        a: () => "日本語と数学の授業を取っています。", g: "何の + 授業 — 何の, not 何が / 何を" },
+      { q: "授業は難しいですか。", r: "じゅぎょうはむずかしいですか。", en: "Are your classes hard?",
+        a: () => "日本語の授業はちょっと難しいです。でも、おもしろいです。",
+        g: "い-adjective, then でも to add the other half" },
+      { q: "先学期はどうでしたか。", r: "せんがっきはどうでしたか。", en: "How was last semester?",
+        a: () => "先学期の授業は易しかったです。でも、今学期はちょっと大変です。",
+        g: "past adjective 易しかった — last semester vs this one" },
     ],
   },
+];
+
+/* The grammar checklist from the study guide, kept where it can be read a minute before
+   walking in. These are what the marks are actually for; the situations above are just the
+   excuse to use them. */
+export const CHECKLIST = [
+  { k: "Time words", v: "days, months, years, today, tomorrow, this/last/next week, semester" },
+  { k: "Polite correction", v: "じゃなかったですか — used the moment they get the weekday wrong" },
+  { k: "Particles", v: "が・は・を・に・も — が for who did it, は for the topic" },
+  { k: "Classifiers", v: "〜枚 copies and pizzas, 〜時間, 〜ヶ月, 〜年" },
+  { k: "ぐらい", v: "approximately — for how long it took and how much it cost" },
+  { k: "て forms", v: "大きくて / 教室で / 歩いて — adjectives, nouns and verbs each differ" },
+  { k: "Past vs present", v: "ます→ました, です→でした, 高い→高かった" },
+  { k: "Question words", v: "どの・何・どこ／どちら・いつ — and 何の vs 何が / 何を / 何に" },
+  { k: "English words", v: "JFSB, FLAC — say them as Japanese katakana, not English" },
 ];
 
 /* ── Culture Talk ──
