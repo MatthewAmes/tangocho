@@ -5323,6 +5323,8 @@ function Dates() {
   const [typed, setTyped] = useState("");
   const [picked, setPicked] = useState(null);
   const [judged, setJudged] = useState(null);     // {ok, want} once an answer is committed
+  const [lastAnswer, setLastAnswer] = useState(""); // what he actually gave, shown back on a miss
+  const judgedAtRef = useRef(0);                  // guards Enter auto-repeat from skipping the answer
   const [hits, setHits] = useState(0);
   const [total, setTotal] = useState(0);
   const [chart, setChart] = useState(null);       // which group's reference chart is open
@@ -5458,7 +5460,7 @@ function Dates() {
 
   useEffect(() => {
     shownRef.current = Date.now(); thinkRef.current = null;
-    setTyped(""); setPicked(null); setJudged(null);
+    setTyped(""); setPicked(null); setJudged(null); setLastAnswer("");
     if (step && (step.kind === "type" || step.kind === "seq")) {
       setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 30);
     }
@@ -5475,9 +5477,27 @@ function Dates() {
 
   const advance = () => setPos((x) => x + 1);
 
+  /* Enter continues from the correction, but only as a fresh press. The input is disabled
+     once an answer is judged, which drops focus, so this has to listen on the window
+     rather than on the field. `e.repeat` filters auto-repeat from a held key and the time
+     guard covers a fast double tap — between them, Enter cannot carry through from
+     submitting the answer to dismissing the correction before it has been read. */
+  useEffect(() => {
+    if (!judged) return;
+    const onKey = (e) => {
+      if (e.key !== "Enter") return;
+      if (e.repeat || Date.now() - judgedAtRef.current < 600) return;
+      e.preventDefault();
+      advance();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [judged]);
+
   const commit = (ok, want) => {
     if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
     setJudged({ ok, want });
+    judgedAtRef.current = Date.now();
     setTotal((t) => t + 1);
     if (ok) setHits((h) => h + 1);
     if (item) save(item, ok, thinkRef.current);
@@ -5496,6 +5516,7 @@ function Dates() {
   const answerMC = (opt) => {
     if (judged || !item) return;
     setPicked(opt);
+    setLastAnswer(opt.reading);
     commit(opt.id === item.id, item.reading);
   };
 
@@ -5503,10 +5524,12 @@ function Dates() {
     if (judged) return;
     const kana = toKana(typed);
     if (!kana) return;
+    setLastAnswer(kana);
     if (step.kind === "seq") {
       const ok = acceptedReadings(step.seq.reading).some((r) => kanaEqual(kana, r));
       if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
       setJudged({ ok, want: step.seq.reading });
+      judgedAtRef.current = Date.now();
       setTotal((t) => t + 1);
       if (ok) setHits((h) => h + 1);
       /* A sequence is scored against its three components, so getting it wrong schedules
@@ -5607,7 +5630,15 @@ function Dates() {
               <div className="tc-dtype">
                 <input ref={inputRef} className="tc-dinput" value={typed} disabled={!!judged}
                   onChange={(e) => setTyped(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { judged ? advance() : submitTyped(); } }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    /* Enter submits, and only advances once the answer has been on screen
+                       long enough to read. Without the gap a held key or a double tap of
+                       Enter answers and skips straight past the correction. */
+                    if (!judged) { submitTyped(); return; }
+                    if (Date.now() - judgedAtRef.current > 600) advance();
+                  }}
                   placeholder="type in romaji — shigatsu youka"
                   autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false" />
                 <div className="tc-dkana">{kana || "　"}</div>
@@ -5619,15 +5650,33 @@ function Dates() {
               </div>
             )}
 
+            {/* Pinned to the bottom of the viewport rather than placed after the options.
+                In the flow it sat at y=698–825 on a 375x812 phone, so the correct answer
+                and the Continue button were both below the fold: answering appeared to do
+                nothing at all. It is also the one thing on screen that has to be read, so
+                it gets the fixed spot and the question scrolls behind it.
+
+                No autoFocus here. Enter submits the typed answer, and focusing a button
+                under the cursor's own keystroke means one auto-repeat — or the very normal
+                habit of pressing Enter twice — activates Continue and skips the answer. */}
             {judged && (
-              <div className={"tc-dfeed" + (judged.ok ? " is-ok" : "")}>
-                <p className="tc-dfeedline">
-                  {judged.ok ? "✓ " : "✗ "}
-                  <b>{isSeq ? step.seq.kanji : item.kanji}</b> — {judged.want}
-                </p>
-                {isSeq && <p className="tc-dfeedsub">{step.seq.en}</p>}
-                {!isSeq && item.note && <p className="tc-dfeedsub">{item.note}</p>}
-                <button className="tc-btn tc-btn-primary tc-dwide" onClick={advance} autoFocus>Continue</button>
+              <div className={"tc-dfeedwrap" + (judged.ok ? " is-ok" : "")}>
+                <div className="tc-dfeed">
+                  <div className="tc-dfeedhead">
+                    <span className="tc-dfeedmark">{judged.ok ? "✓" : "✗"}</span>
+                    <span className="tc-dfeedverdict">{judged.ok ? "Correct" : "Not quite"}</span>
+                  </div>
+                  {!judged.ok && lastAnswer && (
+                    <p className="tc-dfeedyours">you wrote <b>{lastAnswer}</b></p>
+                  )}
+                  <p className="tc-dfeedans">
+                    <b>{isSeq ? step.seq.kanji : item.kanji}</b>
+                    <span className="tc-dfeedread">{judged.want}</span>
+                  </p>
+                  {isSeq && <p className="tc-dfeedsub">{step.seq.en}</p>}
+                  {!isSeq && item.note && <p className="tc-dfeedsub">{item.note}</p>}
+                  <button className="tc-btn tc-btn-primary tc-dwide" onClick={advance}>Continue</button>
+                </div>
               </div>
             )}
           </div>
@@ -7594,11 +7643,32 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.16);outline:none;}
 .tc-dinput:focus{border-color:#7c5cff;}
 .tc-dkana{min-height:30px;font-size:24px;color:#ffd9a0;letter-spacing:.04em;}
-.tc-dfeed{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;max-width:420px;
-  padding:12px;border-radius:12px;background:rgba(255,120,110,.12);border:1px solid rgba(255,120,110,.3);}
-.tc-dfeed.is-ok{background:rgba(61,145,80,.14);border-color:rgba(61,145,80,.4);}
-.tc-dfeedline{margin:0;font-size:16px;color:#fff;text-align:center;}
-.tc-dfeedsub{margin:0;font-size:12.5px;color:var(--mut-2);text-align:center;}
+/* Pinned to the bottom of the viewport. In normal flow this sat below the fold on a
+   phone, so the correct answer and the Continue button were both invisible and answering
+   looked like it did nothing. */
+.tc-dfeedwrap{position:fixed;left:0;right:0;bottom:0;z-index:40;
+  padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));
+  background:#3a1f1f;border-top:2px solid rgba(255,120,110,.55);
+  animation:tc-dfeedin .18s ease-out;}
+.tc-dfeedwrap.is-ok{background:#16301d;border-top-color:rgba(88,190,110,.6);}
+/* Fade only. Sliding it in meant the final resting position depended on the animation
+   having finished — a backgrounded tab leaves the transform at its first frame and the
+   banner sits low, half off the screen. Opacity cannot strand it anywhere. */
+@keyframes tc-dfeedin{from{opacity:0;}to{opacity:1;}}
+.tc-dfeed{display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;max-width:420px;margin:0 auto;}
+.tc-dfeedhead{display:flex;align-items:center;gap:8px;align-self:flex-start;}
+.tc-dfeedmark{font-size:22px;line-height:1;color:#ff8f84;}
+.tc-dfeedwrap.is-ok .tc-dfeedmark{color:#7fdc95;}
+.tc-dfeedverdict{font-size:16px;font-weight:700;color:#ff8f84;}
+.tc-dfeedwrap.is-ok .tc-dfeedverdict{color:#7fdc95;}
+.tc-dfeedyours{margin:0;align-self:flex-start;font-size:13px;color:#ffc9c3;}
+.tc-dfeedyours b{font-weight:600;text-decoration:line-through;}
+.tc-dfeedans{margin:0;align-self:flex-start;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+.tc-dfeedans b{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:21px;color:#fff;}
+.tc-dfeedread{font-size:19px;color:#ffd9a0;font-weight:600;}
+.tc-dfeedsub{margin:0;align-self:flex-start;font-size:12.5px;color:#cfd3dc;text-align:left;}
+/* the question must be able to scroll clear of the pinned banner */
+.tc-dq{padding-bottom:210px;}
 .tc-kgrid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
 .tc-kcell{appearance:none;font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:24px;line-height:1;
   width:44px;height:44px;border-radius:9px;cursor:pointer;color:#fff;
