@@ -61,6 +61,10 @@ for (const [what, re] of must) {
 // check-feeds.mjs); a mismatch fails quietly at runtime, so catch it at build time.
 await import("./check-feeds.mjs");
 
+// The Oral tab is rehearsed out loud by someone who cannot read kanji yet, so a stray
+// character there is not a cosmetic problem — it is a line he cannot practise.
+await import("./check-oral-kana.mjs");
+
 /* The counter and date readings are exam material. A wrong one would be drilled into him
    as confidently as a right one, so the tables are checked against a hand-written copy on
    every build rather than only when someone remembers to run the tests. */
