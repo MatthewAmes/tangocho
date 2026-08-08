@@ -1,0 +1,28 @@
+# Cross-machine safety rules. This project is developed on two computers (a laptop and a
+# Windows PC), so the same source has to produce the same bytes on both, and the generated
+# artifacts must never be merged by hand.
+
+# Normalise line endings everywhere. Without this, a Windows checkout with the default
+# core.autocrlf=true rewrites index.html's HTML wrapper to CRLF, the build splices in an
+# LF bundle, and the two machines emit files that differ by one byte per header line for
+# no reason. Checked: the deployed artifact and the dev build differed by exactly 16 bytes
+# this way, all of it newlines.
+* text=auto eol=lf
+
+# index.html is a ~620KB generated artifact: tools/build.mjs bundles JpnFlashcards.jsx and
+# splices it into the inline <script>. It is committed (Netlify/Workers run no build step)
+# but it is NOT source.
+#
+# -merge is the important one. A three-way textual merge of minified JS produces a file
+# that still parses and still loads, and then renders a blank or broken page — the exact
+# failure tools/build.mjs was written to prevent. With -merge, git leaves the file alone
+# and reports a conflict, and the only correct resolution is to rebuild:
+#
+#     git checkout --ours index.html && cd tools && node build.mjs
+#
+# Resolve conflicts in JpnFlashcards.jsx, never in index.html.
+index.html  -merge -diff linguist-generated
+
+# Same reasoning: a generated data file (tools/yt-index.mjs), meaningless to merge line by
+# line. Regenerate it rather than reconciling it — see tools/REFRESH-VIDEO-INDEX.md.
+data/videos.json  -merge -diff linguist-generated
