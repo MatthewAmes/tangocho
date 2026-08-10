@@ -5505,8 +5505,12 @@ function Dates() {
        introduced in chart order — 日曜日 through 土曜日, 一月 through 十二月, the 1st through
        the 31st. That is the order the material is learnable in. */
     const isSeen = (i) => ((statsRef.current[i.id] || {}).seen || 0) > 0;
+    /* Difficulty is graded, not a flag. Every irregular used to get the same +0.6, so a
+       drill of the days of the month spent as much of itself on 十七日 — regular once you
+       know 七 is しち there — as on 二十日, which cannot be derived from anything. Items
+       carry their own weight now; anything without one keeps the old flat bonus. */
     const review = pool.filter(isSeen)
-      .map((i) => ({ i, need: statNeed(statsRef.current[i.id], now) + (i.trap ? 0.6 : 0) }))
+      .map((i) => ({ i, need: statNeed(statsRef.current[i.id], now) + (i.weight ?? (i.trap ? 0.6 : 0)) }))
       .sort((a, b) => b.need - a.need)
       .slice(0, 8).map((x) => x.i);
     const fresh = pool.filter((i) => !isSeen(i)).slice(0, Math.max(4, 12 - review.length));
