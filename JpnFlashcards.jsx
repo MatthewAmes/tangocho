@@ -3466,6 +3466,7 @@ function prefetchJa(text, rate, voice) {
   // same card/line later, it's served instantly from disk — no network round-trip at all.
   // Plain unauthenticated GET on purpose: on a cache hit this is free and instant; on a
   // cache miss it just 401s harmlessly (never forces a real Google TTS generation call).
+  if (typeof text !== "string" && typeof text !== "number") return;   // see speakJa
   if (!text) return;
   const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
   try { fetch(url, { cache: "force-cache" }).catch(() => {}); } catch (e) {}
@@ -3474,6 +3475,11 @@ let _ttsAudioEl = null;
 let _ttsObjectUrl = null;
 let _ttsToken = 0;   // invalidates stale/superseded calls so a slow fallback can't play over a newer request
 function speakJa(text, rate, voice) {
+  // Anything that isn't a string or number is a caller that forgot to resolve a
+  // prop-dependent line into text. encodeURIComponent below stringifies whatever it is
+  // given, so a stray function reaches the TTS service as its own source and gets read
+  // aloud — which is how the oral exam started reciting JavaScript. Refuse it instead.
+  if (typeof text !== "string" && typeof text !== "number") return;
   if (!text) return;
   const myToken = ++_ttsToken;
   const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
@@ -5202,10 +5208,17 @@ function Oral() {
   const key = S.id + ":" + qi;
   const st = statsRef.current[key] || { seen: 0, correct: 0, level: 0, streak: 0 };
 
-  // speak the examiner's line the moment it appears — the exam is heard, not read
+  // Speak the examiner's line the moment it appears — the exam is heard, not read.
+  // q.r is a function wherever the line quotes a randomised prop (a date, a name), exactly
+  // like q.q and q.a, so it has to be called with the props on screen. Passing the function
+  // straight to speakJa read its own source code aloud from the second prompt onwards.
+  // The INITIATE turns are silent by design — nobody prompts you — so they are skipped here
+  // rather than relying on those entries happening to have no r.
   useEffect(() => {
-    if (running && q) { try { speakJa(q.r, 0.95); } catch (e) {} }
-  }, [running, sit, qi]);   // eslint-disable-line react-hooks/exhaustive-deps
+    if (!running || !q || q.initiate) return;
+    const line = typeof q.r === "function" ? q.r(props_) : q.r;
+    if (line) { try { speakJa(line, 0.95); } catch (e) {} }
+  }, [running, sit, qi, props_]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const record = (ok) => {
     const think = thinkRef.current;
