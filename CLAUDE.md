@@ -9,8 +9,8 @@ sign-in, an authorize button), give click-by-click steps and say which step is h
 
 ## Two machines, one repo
 
-This project is worked on from **two computers** — a laptop and a Windows PC — using Claude
-Code on both. Claude Code conversations are stored per-machine and **do not sync**. Git is
+This project is worked on from **several computers** — a laptop, a home Windows PC and a
+work machine — using Claude Code on all of them. Claude Code conversations are stored per-machine and **do not sync**. Git is
 the only thing that crosses over, which is why this file exists: it is the shared briefing
 both sides read.
 
@@ -27,7 +27,7 @@ app inlined. **`JpnFlashcards.jsx` is the source; `index.html` is output.** Neve
 `index.html`.
 
 ```
-cd tools && node build.mjs
+npm run build          # or: cd tools && node build.mjs
 ```
 
 `tools/build.mjs` bundles with esbuild, runs sanity checks (a ReactDOM mount call must
@@ -36,13 +36,19 @@ splices the result into `index.html`, mirroring it to `cf/public/`. It hard-fail
 than writing an `index.html` that loads but renders nothing — a build once shipped without
 its mount call and produced a blank page. Trust its refusals.
 
-Node modules live in `tools/`, deliberately not at the repo root: a root `package.json`
-would make Netlify start auto-detecting a build step.
+The build's own dependencies live in `tools/`. There is also a thin root `package.json`
+holding convenience scripts (`npm run dev` / `build` / `test` / `deploy` / `login`) and a
+pinned wrangler; its postinstall installs `tools/` too, so a fresh machine needs one
+`npm install`. See `SETUP.md` for the new-machine checklist.
+
+A root `package.json` used to be forbidden because Netlify would auto-detect a build from
+it. `netlify.toml` now pins `[build]` to a no-op explicitly, so that hazard is stated in
+config rather than resting on a file staying absent.
 
 ## Deploy
 
 ```
-cd cf && wrangler deploy
+npm run deploy         # builds first, then deploys
 ```
 
 Cloudflare Workers serves `cf/public/` as static assets and handles `/api/sync`, `/api/tts`
@@ -60,7 +66,7 @@ Don't merge it. It is generated, and a textual merge of minified JS yields a pag
 loads and renders garbage. Take either side and rebuild:
 
 ```
-git checkout --ours index.html && cd tools && node build.mjs
+git checkout --ours index.html && npm run build
 ```
 
 Resolve real conflicts in `JpnFlashcards.jsx`. `.gitattributes` marks both `index.html` and
