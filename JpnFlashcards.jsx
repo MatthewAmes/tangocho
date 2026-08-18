@@ -1599,6 +1599,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     } catch (e) { setHook({ term: card.term, err: true }); }
   }, []);
   const [flipped, setFlipped] = useState(false);
+  const [typed, setTyped] = useState("");        // rōmaji the learner types on a production card
+  const [verdict, setVerdict] = useState(null);  // {ok, got, want} once that answer is checked
   const [running, setRunning] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
@@ -1790,7 +1792,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setProdSet(new Set(owed.slice(0, 6).map((c) => c.id)));
     missRef.current = {};
     setHook(null); setDebrief(null);
-    setFlipped(false); setRunning(true);
+    setFlipped(false); setTyped(""); setVerdict(null); setRunning(true);
   }, [cards, coverage]);
 
   const card = queue[pos];
@@ -1835,8 +1837,27 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       }
     }
     setFlipped(false);
+    setTyped(""); setVerdict(null);
     setPos((p) => p + 1);
   }, [queue, pos, onResult]);
+
+  /* ── spelling ──
+     A production card used to be self-graded: see the English, think of the Japanese,
+     flip, decide whether you were right. That grades recognition of your own answer, not
+     production of it, and it is generous in exactly the way that keeps a word feeling
+     learned while it isn't. Typing the reading settles it objectively — the same argument
+     the Kanji tab already makes for its own exercises.
+
+     Rōmaji in, kana out, via the converter the Dates tab already uses: no IME needed, and
+     "si"/"shi", "tu"/"tsu", "zyuppun"/"jyuppun" all land on the same kana. */
+  const checkSpelling = useCallback(() => {
+    const c = queue[pos];
+    if (!c || !typed.trim()) return;
+    const want = c.reading || c.term;
+    const ok = kanaEqual(toKana(typed.trim()), want);
+    setVerdict({ ok, got: toKana(typed.trim()), want });
+    setFlipped(true);
+  }, [queue, pos, typed]);
 
   // keyboard: space/enter flips; when flipped → →/Enter = got it, ←/Backspace = review
   useEffect(() => {
@@ -2057,7 +2078,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 <span className="tc-kindchip tc-prodchip">→ 日本語</span>
                 {card.emoji && <div className="tc-emoji">{card.emoji}</div>}
                 <div className="tc-prodprompt">{card.meaning}</div>
-                <span className="tc-flipcue">say it, then tap</span>
+                {/* Type the reading in rōmaji. Clicks and keys are kept off the card so
+                    typing an "s" doesn't trigger the space-to-flip shortcut and hand you
+                    the answer mid-word. */}
+                <div className="tc-spellbox" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    className="tc-spellinput" type="text" value={typed} autoFocus
+                    autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false"
+                    placeholder="type the reading in rōmaji"
+                    aria-label="Type the reading in rōmaji"
+                    onChange={(e) => setTyped(e.target.value)}
+                    onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") checkSpelling(); }}
+                  />
+                  <div className="tc-spellkana">{typed.trim() ? toKana(typed.trim()) : " "}</div>
+                  <button type="button" className="tc-btn tc-btn-wide" onClick={checkSpelling} disabled={!typed.trim()}>Check</button>
+                </div>
+                <span className="tc-flipcue">or tap to just say it aloud</span>
               </>
             ) : (
               <>
@@ -2072,7 +2108,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           {/* BACK — meaning + picture + pronunciation (rōmaji always shown) */}
           <div className="tc-face tc-back">
             {isProd ? (
-              <div className="tc-term tc-prodanswer">{card.term}</div>
+              <>
+                {/* What you actually wrote, against what it should have been. Seeing the
+                    two side by side is where a spelling slip becomes learnable. */}
+                {verdict && (
+                  <div className={"tc-spellverdict" + (verdict.ok ? " is-right" : " is-wrong")}>
+                    {verdict.ok ? "✓ spelled it" : <>✗ you wrote <b>{verdict.got}</b></>}
+                  </div>
+                )}
+                <div className="tc-term tc-prodanswer">{card.term}</div>
+              </>
             ) : (
               card.emoji && <div className="tc-emoji">{card.emoji}</div>
             )}
@@ -2107,6 +2152,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       <div className="tc-grade">
         {!flipped ? (
           <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); flip(); }}>Reveal answer</button>
+        ) : verdict ? (
+          /* The typed answer already settled this one. Offering "Got it" here would just
+             invite overruling the check, which is the self-grading this replaces. */
+          <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
+                  onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
+            {verdict.ok ? "Next →" : "Noted — next →"}
+          </button>
         ) : (
           <>
             <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
@@ -7531,6 +7583,18 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-prodchip{background:rgba(124,92,255,.2);border-color:rgba(124,92,255,.45);color:#c9b8ff;}
 .tc-prodprompt{font-size:26px;font-weight:600;line-height:1.3;color:#fff;text-align:center;padding:0 14px;max-width:340px;}
 .tc-prodanswer{color:#c9b8ff;}
+/* Typed spelling on a production card. The kana line under the box echoes the conversion
+   live, so a mistyped reading is visible as kana before it is committed — the point is to
+   test the spelling, not to punish an unfamiliar rōmaji convention. */
+.tc-spellbox{margin-top:14px;display:flex;flex-direction:column;gap:7px;align-items:center;width:100%;}
+.tc-spellinput{width:min(100%,300px);box-sizing:border-box;background:rgba(255,255,255,.94);border:1.5px solid rgba(201,184,255,.55);border-radius:9px;padding:9px 12px;font:inherit;font-size:15px;text-align:center;color:var(--sumi);}
+.tc-spellinput:focus{outline:2px solid rgba(201,184,255,.8);outline-offset:1px;}
+.tc-spellkana{min-height:22px;font-size:19px;letter-spacing:.04em;color:#c9b8ff;}
+.tc-spellbox .tc-btn{width:min(100%,300px);}
+.tc-spellverdict{font-family:var(--mono);font-size:12px;letter-spacing:.06em;padding:5px 11px;border-radius:7px;margin-bottom:8px;}
+.tc-spellverdict.is-right{color:#b8f0d0;background:rgba(90,220,150,.13);}
+.tc-spellverdict.is-wrong{color:#ffc2bb;background:rgba(255,120,100,.13);}
+.tc-spellverdict b{font-weight:700;letter-spacing:.02em;}
 .tc-retention{display:flex;flex-direction:column;gap:7px;align-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px 12px;}
 .tc-retlabel{font-size:12px;color:var(--mut-2);letter-spacing:.04em;text-transform:uppercase;}
 .tc-retention .tc-smarthint{margin:0;}
