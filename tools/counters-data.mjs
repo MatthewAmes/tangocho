@@ -61,6 +61,48 @@ function withIrregulars(fn, irregulars) {
   return (n) => (irregulars[n] !== undefined ? irregulars[n] : fn(n));
 }
 
+/* ── days of the month: the rule behind each irregular one ──
+   The 1st through the 10th are not arbitrary. They are the native counting words — ふたつ,
+   みっつ, よっつ — ending in か instead of つ. Learned as nine unrelated sounds they are
+   nine things to forget; learned as one swap they are one rule with a few vowel shifts.
+   The old note said only "the first ten days use native readings", which states that a
+   pattern exists without saying what it is.
+
+   Past ten the rule is number + にち, and every exception is one of three things: the 4th's
+   よっか carrying up into 14 and 24, 七 and 九 keeping their しち and く readings, and 二十日
+   being its own word. The 14th, 17th, 19th, 24th, 27th and 29th previously had no note at
+   all — they were flagged as traps and then explained nothing when missed. */
+const DAY_NOTE = {
+  1: "ついたち — its own word, from the month starting. Never いちにち.",
+  2: "ふたつ → ふつか. Native number, か instead of つ.",
+  3: "みっつ → みっか.",
+  4: "よっつ → よっか. Never よんにち — and 14 and 24 keep this too.",
+  5: "いつつ → いつか.",
+  6: "むっつ → むいか.",
+  7: "ななつ → なのか.",
+  8: "やっつ → ようか.",
+  9: "ここのつ → ここのか.",
+  10: "とお → とおか. Last of the native ones; 11 onward is number + にち.",
+  14: "じゅう + よっか. The 4th's reading carries up — never じゅうよんにち.",
+  17: "しち, not なな — じゅうしちにち.",
+  19: "く, not きゅう — じゅうくにち.",
+  20: "はつか — its own word, not にじゅうにち. Same はつ as はたち, 20 years old.",
+  24: "にじゅう + よっか, exactly like the 14th.",
+  27: "しち again — にじゅうしちにち.",
+  29: "く again — にじゅうくにち.",
+};
+
+/* Extra pull in the session scorer, by how hard the item actually is to recall rather than
+   by whether it is irregular at all. 一日 and 二十日 are single words with nothing to derive
+   them from; the native ten share one rule; 十四日 and 二十四日 only need the 4th; and the
+   しち/く days are regular apart from which reading of the digit wins. */
+const DAY_WEIGHT = {
+  1: 1.4, 20: 1.4,
+  2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0, 6: 1.0, 7: 1.0, 8: 1.0, 9: 1.0, 10: 1.0,
+  14: 1.1, 24: 1.1,
+  17: 0.7, 19: 0.7, 27: 0.7, 29: 0.7,
+};
+
 /* ── the counters his course actually teaches ──
    Taken from the vocabulary deck rather than a general list, so nothing here is a counter
    he has never been shown and everything he has been shown is here. `traps` marks the
@@ -232,8 +274,14 @@ export function sequenceForm(month, day, dow, hour24, minute) {
    can weight them. */
 export function buildItems() {
   const items = [];
-  const add = (id, kind, kanji, reading, en, trap, note) =>
-    items.push({ id, kind, kanji, reading, en, trap: !!trap, note: note || "" });
+  /* `weight` is how much extra pull an item gets in the session scorer. A flat trap bonus
+     treats 二十日 and 十七日 as equally hard, and they are not: one is a word you either
+     know or do not, the other is a regular form with a predictable reading of 七. Items
+     that carry no weight fall back to the old flat bonus so months and counters are
+     unchanged. */
+  const add = (id, kind, kanji, reading, en, trap, note, weight) =>
+    items.push({ id, kind, kanji, reading, en, trap: !!trap, note: note || "",
+      weight: weight == null ? (trap ? 0.6 : 0) : weight });
 
   for (let d = 0; d < 7; d++) {
     const w = weekdayForm(d);
@@ -246,10 +294,10 @@ export function buildItems() {
       trap ? "し / しち / く — never よん, なな or きゅう before 月." : "");
   }
   for (let d = 1; d <= 31; d++) {
-    const trap = d <= 10 || d === 14 || d === 17 || d === 19 || d === 20 || d === 24 || d === 27 || d === 29;
-    add(`day:${d}`, "day", `${d}日`, DAY_READING[d], `the ${ordinal(d)}`, trap,
-      d === 20 ? "はつか is its own word — not にじゅうにち." :
-      d <= 10 ? "The first ten days use native readings, not number + にち." : "");
+    const note = DAY_NOTE[d] || "";
+    // Exactly the days that carry a note are the days that break the number+にち pattern,
+    // so the two lists cannot drift apart the way they did when both were written by hand.
+    add(`day:${d}`, "day", `${d}日`, DAY_READING[d], `the ${ordinal(d)}`, !!note, note, DAY_WEIGHT[d] || 0);
   }
   for (const c of COUNTERS) {
     const max = Math.min(c.max || 10, 10);

@@ -18,7 +18,7 @@ import { toKana, kanaEqual } from "./tools/romaji.mjs";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
-const SEED_VERSION = 30; // bump this each time I add/update words
+const SEED_VERSION = 31; // bump this each time I add/update words
 
 // Matthew's JPN 101 vocabulary. New batches get appended here with the version bumped.
 const SEED = [
@@ -865,6 +865,42 @@ const SEED = [
   { term: "王", reading: "おう", romaji: "ō", meaning: "king", kind: "kanji", emoji: "👑", lesson: 54, sec: "7/30" },
   { term: "喜び", reading: "よろこび", romaji: "yorokobi", meaning: "joy; delight", kind: "kanji", emoji: "🎉", lesson: 54, sec: "7/30" },
   { term: "我", reading: "われ", romaji: "ware", meaning: "I; we (literary/formal — 我々 wareware = 'we')", kind: "kanji", emoji: "🙋", lesson: 54, sec: "7/30" },
+
+  // ── Dragon Ball, read page by page ────────────────────────────────────────────
+  // Vocabulary lifted from the manga itself rather than a syllabus, so these sections
+  // are named for the pages they came from and sort above the coursework (sectionRank).
+  //
+  // Two rules this batch has to respect, because the seed merge keys on `term`
+  // (see loadCardsAndSync): a term may appear only ONCE in SEED, and a term that already
+  // exists in an earlier section must not be repeated here — the merge would overwrite
+  // that card's meaning in place while leaving it stranded in its old section. なに/何 and
+  // なあ were on the page list and are already in the deck, so they are deliberately absent.
+  // For the same reason 薪 and 腹 appear as vocabulary only, with their 音/訓 readings folded
+  // into the meaning, instead of getting a second card in the kanji block below.
+  { term: "薪", reading: "まき", romaji: "maki", meaning: "firewood; kindling (音 シン ・ 訓 まき・たきぎ)", kind: "kanji", emoji: "🪵", lesson: 55, sec: "DB 8–9" },
+  { term: "薪割り", reading: "まきわり", romaji: "makiwari", meaning: "chopping firewood — 薪 (firewood) + 割り (splitting)", kind: "kanji", emoji: "🪓", lesson: 55, sec: "DB 8–9" },
+  { term: "割る", reading: "わる", romaji: "waru", meaning: "to split; to chop; to break in two — the verb behind 割り", kind: "kanji", emoji: "🔪", lesson: 55, sec: "DB 8–9" },
+  { term: "おしまい", reading: "おしまい", romaji: "oshimai", meaning: "the end; all done; that's it for that", kind: "hiragana", emoji: "🔚", lesson: 55, sec: "DB 8–9" },
+  { term: "っと", reading: "っと", romaji: "tto", meaning: "the little grunt you make finishing a job — 'there we go'; tacked onto the end of your own sentence", kind: "hiragana", emoji: "✅", lesson: 55, sec: "DB 8–9" },
+  { term: "腹", reading: "はら", romaji: "hara", meaning: "stomach; belly (音 フク ・ 訓 はら). Written ハラ in katakana on the page for emphasis; 腹が減った = I'm hungry", kind: "kanji", emoji: "🍽️", lesson: 55, sec: "DB 8–9" },
+  { term: "減った", reading: "へった", romaji: "hetta", meaning: "went down; got less — past of 減る. 腹が減った is the everyday way to say 'I'm starving'", kind: "kanji", emoji: "📉", lesson: 55, sec: "DB 8–9" },
+  { term: "な", reading: "な", romaji: "na", meaning: "sentence-final particle: softens a thought you're half-saying to yourself", kind: "hiragana", emoji: "💭", lesson: 55, sec: "DB 8–9" },
+  { term: "じいちゃん", reading: "じいちゃん", romaji: "jiichan", meaning: "grandpa (affectionate, casual — おじいさん is the polite form)", kind: "hiragana", emoji: "👴", lesson: 55, sec: "DB 8–9" },
+  { term: "エサ", reading: "エサ", romaji: "esa", meaning: "animal feed; bait. Written in katakana here; the kanji is 餌", kind: "katakana", emoji: "🍖", lesson: 55, sec: "DB 8–9" },
+  { term: "とって", reading: "とって", romaji: "totte", meaning: "fetch/take and… — te-form of 取る, used here to chain onto the next verb", kind: "hiragana", emoji: "✋", lesson: 55, sec: "DB 8–9" },
+  { term: "来る", reading: "くる", romaji: "kuru", meaning: "to come. とってくる = go get it and come back (often written くる in kana)", kind: "kanji", emoji: "🚶", lesson: 55, sec: "DB 8–9" },
+  { term: "食おうか", reading: "くおうか", romaji: "kuō ka", meaning: "shall I eat? — volitional of 食う (rough, masculine 'eat') + か. Contracted to 食おか in speech", kind: "kanji", emoji: "🤤", lesson: 55, sec: "DB 8–9" },
+
+  // New kanji introduced by these pages, in the Kanji tab's own format: the bare character,
+  // its meanings, then 音 (on) and 訓 (kun) readings — kun okurigana parenthesised the way
+  // readingText() renders it, so both places in the app read the same. Readings and meanings
+  // come from data/kanji.json rather than being written by hand.
+  { term: "割", reading: "わり", romaji: "wari", meaning: "divide; split; cut; proportion — 音 カツ ・ 訓 わ(る)・わり・わ(れる)", kind: "kanji", emoji: "🪓", lesson: 55, sec: "DB 8–9" },
+  { term: "減", reading: "げん", romaji: "gen", meaning: "dwindle; decrease; get hungry — 音 ゲン ・ 訓 へ(る)・へ(らす)", kind: "kanji", emoji: "⬇️", lesson: 55, sec: "DB 8–9" },
+  { term: "餌", reading: "えさ", romaji: "esa", meaning: "food; bait; prey — 音 ジ・ニ ・ 訓 えさ・え", kind: "kanji", emoji: "🍱", lesson: 55, sec: "DB 8–9" },
+  { term: "取", reading: "とり", romaji: "tori", meaning: "take; fetch; take up — 音 シュ ・ 訓 と(る)・とり", kind: "kanji", emoji: "⬆️", lesson: 55, sec: "DB 8–9" },
+  { term: "来", reading: "らい", romaji: "rai", meaning: "come; next; due — 音 ライ・タイ ・ 訓 く(る)・きた(る)", kind: "kanji", emoji: "🏃", lesson: 55, sec: "DB 8–9" },
+  { term: "食", reading: "しょく", romaji: "shoku", meaning: "eat; food — 音 ショク・ジキ ・ 訓 く(う)・た(べる)", kind: "kanji", emoji: "🍱", lesson: 55, sec: "DB 8–9" },
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -1357,7 +1393,11 @@ export default function JpnFlashcards() {
       const byTerm = new Map(list.map((c) => [c.term, c]));
       SEED.forEach((s) => {
         const ex = byTerm.get(s.term);
-        if (ex) Object.assign(ex, { reading: s.reading, romaji: s.romaji, meaning: s.meaning, kind: s.kind, emoji: s.emoji, pitch: s.pitch, lesson: s.lesson });
+        // `sec` is only copied when the seed actually sets one, never cleared: re-sectioning a
+        // word by editing SEED has to work (without it the card keeps its old section forever
+        // and the edit looks like it did nothing), but a blank seed field must not wipe a
+        // section a card already has.
+        if (ex) Object.assign(ex, { reading: s.reading, romaji: s.romaji, meaning: s.meaning, kind: s.kind, emoji: s.emoji, pitch: s.pitch, lesson: s.lesson }, s.sec ? { sec: s.sec } : {});
         else { const nc = { id: uid(), seen: 0, correct: 0, ...s }; list.push(nc); byTerm.set(s.term, nc); }
       });
       await sSet(STORE_KEY, JSON.stringify(list));
@@ -2186,9 +2226,13 @@ function sectionOf(c) {
   return c.sec || SECTION_MAP[c.term] || ((c.lesson || 0) <= 6 ? "Act 1" : "Class notes");
 }
 const SECTION_HUES = [258, 214, 186, 152, 96, 42, 22, 350, 320, 282];
+const DB_SECTION = /^DB (\d+)(?:[–-]\d+)?$/;   // "DB 8–9" — manga pages, en dash or hyphen
 function hueFor(name) {
   if (name === "Act 1") return 214;
   if (name === "Class notes") return 42;
+  // Every manga section shares one hue. They accumulate a page at a time, and hashing each
+  // range separately would make the top of the study list a different colour every two pages.
+  if (DB_SECTION.test(name)) return 22;
   let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return SECTION_HUES[h % SECTION_HUES.length];
 }
@@ -2198,6 +2242,12 @@ function sectionArt(cardsInSec) {   // single most-used emoji in this section �
   return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 1).map((e) => e[0]);
 }
 function sectionRank(s) {
+  // Manga sections sit above the coursework: this is the thing being read every day, and
+  // burying it under a year of lessons is how it stops getting opened. Ranked by first page
+  // so the list stays in reading order, and offset far enough below Act 1 that no page
+  // number can ever climb back into the lessons.
+  const db = DB_SECTION.exec(s);
+  if (db) return -1e6 + parseInt(db[1], 10);
   if (s === "Act 1") return 100;
   const dm = /^Act (\d+) Dry Run$/.exec(s);
   if (dm) return 1000 + parseInt(dm[1], 10) * 100 + 99; // after every scene of that act
@@ -3416,6 +3466,7 @@ function prefetchJa(text, rate, voice) {
   // same card/line later, it's served instantly from disk — no network round-trip at all.
   // Plain unauthenticated GET on purpose: on a cache hit this is free and instant; on a
   // cache miss it just 401s harmlessly (never forces a real Google TTS generation call).
+  if (typeof text !== "string" && typeof text !== "number") return;   // see speakJa
   if (!text) return;
   const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
   try { fetch(url, { cache: "force-cache" }).catch(() => {}); } catch (e) {}
@@ -3424,6 +3475,11 @@ let _ttsAudioEl = null;
 let _ttsObjectUrl = null;
 let _ttsToken = 0;   // invalidates stale/superseded calls so a slow fallback can't play over a newer request
 function speakJa(text, rate, voice) {
+  // Anything that isn't a string or number is a caller that forgot to resolve a
+  // prop-dependent line into text. encodeURIComponent below stringifies whatever it is
+  // given, so a stray function reaches the TTS service as its own source and gets read
+  // aloud — which is how the oral exam started reciting JavaScript. Refuse it instead.
+  if (typeof text !== "string" && typeof text !== "number") return;
   if (!text) return;
   const myToken = ++_ttsToken;
   const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
@@ -5152,10 +5208,17 @@ function Oral() {
   const key = S.id + ":" + qi;
   const st = statsRef.current[key] || { seen: 0, correct: 0, level: 0, streak: 0 };
 
-  // speak the examiner's line the moment it appears — the exam is heard, not read
+  // Speak the examiner's line the moment it appears — the exam is heard, not read.
+  // q.r is a function wherever the line quotes a randomised prop (a date, a name), exactly
+  // like q.q and q.a, so it has to be called with the props on screen. Passing the function
+  // straight to speakJa read its own source code aloud from the second prompt onwards.
+  // The INITIATE turns are silent by design — nobody prompts you — so they are skipped here
+  // rather than relying on those entries happening to have no r.
   useEffect(() => {
-    if (running && q) { try { speakJa(q.r, 0.95); } catch (e) {} }
-  }, [running, sit, qi]);   // eslint-disable-line react-hooks/exhaustive-deps
+    if (!running || !q || q.initiate) return;
+    const line = typeof q.r === "function" ? q.r(props_) : q.r;
+    if (line) { try { speakJa(line, 0.95); } catch (e) {} }
+  }, [running, sit, qi, props_]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const record = (ok) => {
     const think = thinkRef.current;
@@ -5442,8 +5505,12 @@ function Dates() {
        introduced in chart order — 日曜日 through 土曜日, 一月 through 十二月, the 1st through
        the 31st. That is the order the material is learnable in. */
     const isSeen = (i) => ((statsRef.current[i.id] || {}).seen || 0) > 0;
+    /* Difficulty is graded, not a flag. Every irregular used to get the same +0.6, so a
+       drill of the days of the month spent as much of itself on 十七日 — regular once you
+       know 七 is しち there — as on 二十日, which cannot be derived from anything. Items
+       carry their own weight now; anything without one keeps the old flat bonus. */
     const review = pool.filter(isSeen)
-      .map((i) => ({ i, need: statNeed(statsRef.current[i.id], now) + (i.trap ? 0.6 : 0) }))
+      .map((i) => ({ i, need: statNeed(statsRef.current[i.id], now) + (i.weight ?? (i.trap ? 0.6 : 0)) }))
       .sort((a, b) => b.need - a.need)
       .slice(0, 8).map((x) => x.i);
     const fresh = pool.filter((i) => !isSeen(i)).slice(0, Math.max(4, 12 - review.length));
