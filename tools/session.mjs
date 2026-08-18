@@ -43,7 +43,8 @@ export const DEFAULTS = {
   typeAtStability: 14,  // produce-and-spell only once a word is genuinely solid
   listenAtStability: 5, // audio recall a little earlier — it is easier than producing
   minItems: 8,
-  maxItems: 28,
+  maxItems: 60,
+  itemsPerMinute: 4,    // the ceiling tracks the time budget instead of being a fixed cap
   stepGaps: [3, 8],     // a new item comes back after ~3 cards, then ~8 more
   fallbackMs: 4200,     // assumed per-item cost before there's latency history
 };
@@ -123,12 +124,18 @@ export function pacePerItem(sources, fallbackMs = DEFAULTS.fallbackMs) {
   return Math.min(12000, Math.max(1800, (ms / n) * 1.45));
 }
 
-/* How many items fit the time budget, clamped so a session is never trivial or endless. */
+/* How many items fit the time budget, clamped so a session is never trivial or endless.
+
+   The ceiling scales with the requested minutes. A fixed cap made the whole pace setting
+   inert: at any realistic answer speed a five-minute and a twenty-minute session both
+   computed well past the cap and came out the same length, so "I only have five minutes"
+   silently bought you the same twenty-minute session. */
 export function budgetFor(sources, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const per = pacePerItem(sources, o.fallbackMs);
   const raw = Math.round((o.minutes * 60000) / per);
-  return Math.max(o.minItems, Math.min(o.maxItems, raw));
+  const ceiling = Math.max(o.minItems, Math.min(o.maxItems, Math.round(o.minutes * o.itemsPerMinute)));
+  return Math.max(Math.min(o.minItems, ceiling), Math.min(ceiling, raw));
 }
 
 /* Flatten every deck into one scored list of candidates. */

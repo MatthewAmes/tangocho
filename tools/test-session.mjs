@@ -103,12 +103,31 @@ t("pace comes from real latency when there is history", () => {
 t("pace falls back cleanly with no history at all", () => {
   eq(pacePerItem([{ deck: "v", items: [], stats: {} }]), DEFAULTS.fallbackMs);
 });
-t("a slower learner gets a shorter session for the same minutes", () => {
-  // Short budget on purpose: at 10 minutes both learners hit the maxItems clamp, which
-  // would hide the effect being tested.
-  const fast = [deck("v", 60, () => studied("x", 10, 5, { ms: 2000 * 5 }))];
-  const slow = [deck("v", 60, () => studied("x", 10, 5, { ms: 9000 * 5 }))];
-  gt(budgetFor(fast, { minutes: 2 }), budgetFor(slow, { minutes: 2 }));
+t("the chosen pace, not answer speed, is what sets session length", () => {
+  /* This replaces a test that asserted a slower learner gets a shorter session. That
+     property is gone, deliberately. Measured answer latency is capped at 12s per item,
+     and the minutes-scaled ceiling sits below what that produces at every realistic
+     speed — so the ceiling binds and the pace control is the real lever. Keeping the old
+     test would have meant weakening the ceiling, which is the thing that actually made
+     "I only have five minutes" mean anything. Latency still trims a session when someone
+     is answering slowly enough to fall under the ceiling. */
+  const fast = [deck("v", 200, () => studied("x", 10, 5, { ms: 2000 * 5 }))];
+  const slow = [deck("v", 200, () => studied("x", 10, 5, { ms: 9000 * 5 }))];
+  eq(budgetFor(fast, { minutes: 10 }), budgetFor(slow, { minutes: 10 }),
+    "at a normal pace the ceiling governs both");
+  gt(budgetFor(fast, { minutes: 20 }), budgetFor(fast, { minutes: 5 }),
+    "and the pace itself must still matter");
+});
+t("the requested minutes actually change the session length", () => {
+  /* This was inert: the ceiling was a fixed 28, every pace computed well past it at any
+     realistic answer speed, and "I only have five minutes" bought the same session as
+     "I have twenty". A pace setting that changes nothing is worse than none. */
+  const src = [deck("v", 200, () => studied("x", 10, 5))];
+  const short = budgetFor(src, { minutes: 5 });
+  const normal = budgetFor(src, { minutes: 10 });
+  const deep = budgetFor(src, { minutes: 20 });
+  gt(normal, short, "ten minutes should beat five");
+  gt(deep, normal, "twenty minutes should beat ten");
 });
 t("session size stays within its clamps however extreme the pace", () => {
   const crawl = [deck("v", 99, () => studied("x", 10, 5, { ms: 60000 * 5 }))];

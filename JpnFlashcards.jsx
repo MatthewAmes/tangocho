@@ -1267,12 +1267,17 @@ async function loadDays() {
   if (_days === null) { try { const r = await sGet(DAYS_KEY); _days = r ? JSON.parse(r) : {}; } catch (e) { _days = {}; } }
   return _days;
 }
-async function logDay({ ok, ms, deck, fnew }) {
+async function logDay({ ok, ms, deck, fnew, area }) {
   await loadDays();
   const k = new Date().toISOString().slice(0, 10);
   const d = _days[k] || (_days[k] = { rev: 0, ok: 0, ms: 0, frev: 0, fnew: 0 });
   d.rev += 1; if (ok) d.ok += 1; if (ms) d.ms += ms;
   if (deck === "freq") { d.frev += 1; if (fnew) d.fnew += 1; }
+  /* Per-deck counts, so the study plan can report which SKILL AREAS actually got worked
+     rather than only how many reviews happened. Without this the plan is a wish list: it
+     can state that listening matters and never notice that listening never happens. */
+  const a = area || (deck ? areaForDeck(deck) : null);
+  if (a) { (d.by || (d.by = {}))[a] = (d.by[a] || 0) + 1; }
   sSet(DAYS_KEY, JSON.stringify(_days));
 }
 
@@ -1453,9 +1458,9 @@ export default function JpnFlashcards() {
     });
   }, []);
 
-  const recordResult = useCallback((id, got, dir, ms) => {
+  const recordResult = useCallback((id, got, dir, ms, area) => {
     const t = ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0;  // sanity bounds: ignore misfires & walked-away cards
-    logDay({ ok: got, ms: t, deck: "class" });
+    logDay({ ok: got, ms: t, deck: "class", area });
     setCards((prev) => {
       const next = prev.map((c) => {
         if (c.id !== id) return c;
@@ -1525,7 +1530,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -1557,6 +1562,8 @@ export default function JpnFlashcards() {
              not the feature — it is the only production-recall practice in the app and
              deleting it to make room would be throwing away the harder retrieval. */
           <Write cards={cards} onResult={recordResult} />
+        ) : tab === "plan" ? (
+          <Plan />
         ) : tab === "kana" ? (
           <Kana />
         ) : tab === "scripts" ? (
@@ -1655,16 +1662,25 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      vocabulary-only, which is also the correct behaviour on a machine that has never
      opened the Kana or Kanji tabs. */
   const [foreign, setForeign] = useState([]);
-  useEffect(() => { loadForeignDecks().then(setForeign).catch(() => {}); }, []);
+  useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length]);
+
+  /* The study plan reaches the scheduler here: pace decides how long a session runs, and
+     the area priorities weight which decks it draws from. */
+  const [plan, setPlan] = useState(PLAN_DEFAULT);
+  useEffect(() => {
+    loadPlan().then(setPlan).catch(() => {});
+    return subscribePlan(setPlan);
+  }, []);
 
   const smartPicks = useMemo(() => {
     const items = cards.map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
     const source = [
-      { deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])) },
-      ...foreign,
+      { deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])),
+        weight: deckWeight(plan, "class") },
+      ...foreign.map((s) => ({ ...s, weight: deckWeight(plan, s.deck) })),
     ];
-    return buildSession(source, { now: Date.now(), isLeech });
-  }, [cards, foreign]);
+    return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace) });
+  }, [cards, foreign, plan]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -1863,9 +1879,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
       setFlash(Date.now());
     } else if (!got) setCombo(0);
+    /* Credit the area the exercise actually worked, not the deck it came from. A typed
+       answer is writing practice and a listening question is listening practice even
+       when the word is ordinary vocabulary — otherwise the coverage report says you
+       never listen while you have been listening all week. */
+    const workedArea = fmt === "listen" ? "listening" : fmt === "type" ? "writing" : areaForDeck(c.src || "class");
     // Kana, kanji and 10k cards belong to their own decks and go home to their own keys.
-    if (c.src) recordForeign(c, got, thinkRef.current || 0);
-    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined);
+    if (c.src) recordForeign(c, got, thinkRef.current || 0, workedArea);
+    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined, workedArea);
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       setPassed((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -2141,7 +2162,17 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               <p className="tc-learnnote">Tap to hear it again</p>
             </div>
           ) : (
-            <div className="tc-mcterm">{card.term}</div>
+            <div className="tc-mcprompt">
+              {/* The reading sits above the word, furigana-style. This is a MEANING
+                  question, and a kanji compound you cannot pronounce is unanswerable —
+                  you end up guessing from the options rather than retrieving anything.
+                  Reading practice belongs to the formats that ask for it. */}
+              {card.reading && card.reading !== card.term && (
+                <div className="tc-mcfurigana">{card.reading}</div>
+              )}
+              <div className="tc-mcterm">{card.term}</div>
+              <SpeakBtn text={card.reading || card.term} />
+            </div>
           )}
           <div className="tc-mcopts">
             {choices.map((c) => {
@@ -2285,6 +2316,170 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   );
 }
 
+/* ── the study plan tab ──
+   Everything here is editable and everything here has an effect. The vision and goals are
+   the motivational half — the professor's point that knowing WHY keeps you going on the
+   days you do not feel like it. The priorities, the pace and the coverage report are the
+   mechanical half: they change what the Smart Review button gives you, and they say
+   plainly which areas you have been neglecting. */
+function Plan() {
+  const [plan, setPlan] = useState(PLAN_DEFAULT);
+  const [days, setDays] = useState(null);
+  const [draft, setDraft] = useState("");
+  useEffect(() => { loadPlan().then(setPlan); loadDays().then((d) => setDays({ ...d })); }, []);
+
+  const update = (patch) => { const next = { ...plan, ...patch }; setPlan(next); savePlan(next); };
+  const cover = useMemo(() => coverageFrom(days, 14), [days]);
+  const busiest = Math.max(1, ...Object.values(cover));
+  const totalReviews = Object.values(cover).reduce((a, b) => a + b, 0);
+
+  const addGoal = () => {
+    const text = draft.trim();
+    if (!text || plan.goals.length >= 5) return;
+    update({ goals: [...plan.goals, { id: Date.now(), text, area: "vocabulary", done: false }] });
+    setDraft("");
+  };
+  const setGoal = (id, patch) =>
+    update({ goals: plan.goals.map((g) => (g.id === id ? { ...g, ...patch } : g)) });
+  const dropGoal = (id) => update({ goals: plan.goals.filter((g) => g.id !== id) });
+
+  /* Neglect is the whole reason to show coverage: an area you called important and have
+     not touched in a fortnight is the single most useful thing this page can tell you. */
+  const neglected = AREAS.filter(([k]) => (plan.priorities[k] || 1) >= 2 && (cover[k] || 0) === 0);
+
+  return (
+    <div className="tc-plan">
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Why you're doing this</h2>
+        <p className="tc-planhint">
+          Knowing the answer is what gets you studying on the days you don't feel like it.
+          Write these once, roughly — they're for you, not for marking.
+        </p>
+        {[["fiveYear", "In five years, I want to…"], ["oneYear", "In a year, I want to…"], ["term", "By the end of this term…"]].map(([k, label]) => (
+          <label key={k} className="tc-planfield">
+            <span>{label}</span>
+            <textarea rows={2} value={plan.vision[k]} placeholder="…"
+              onChange={(e) => update({ vision: { ...plan.vision, [k]: e.target.value } })} />
+          </label>
+        ))}
+      </section>
+
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Goals <span className="tc-planh-sub">{plan.goals.length}/5</span></h2>
+        <p className="tc-planhint">Three to five things that move you toward that vision.</p>
+        <div className="tc-goals">
+          {plan.goals.map((g) => (
+            <div key={g.id} className={"tc-goal" + (g.done ? " is-done" : "")}>
+              <button className="tc-goalcheck" aria-pressed={g.done} title="Mark done"
+                onClick={() => setGoal(g.id, { done: !g.done })}>{g.done ? "✓" : ""}</button>
+              <span className="tc-goaltext">{g.text}</span>
+              <select className="tc-goalarea" value={g.area} onChange={(e) => setGoal(g.id, { area: e.target.value })}>
+                {AREAS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+              <button className="tc-goaldrop" onClick={() => dropGoal(g.id)} title="Remove">×</button>
+            </div>
+          ))}
+        </div>
+        {plan.goals.length < 5 && (
+          <div className="tc-goaladd">
+            <input value={draft} placeholder="e.g. Watch an episode without subtitles"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addGoal(); }} />
+            <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={addGoal}>Add</button>
+          </div>
+        )}
+      </section>
+
+      <section className="tc-plansec">
+        <h2 className="tc-planh">What matters most right now</h2>
+        <p className="tc-planhint">
+          Eight areas is a lot to carry at once, so it's fine to prioritise. This changes
+          what Smart Review actually serves you — it nudges the order, it won't let
+          something you've nearly forgotten slide.
+        </p>
+        <div className="tc-prios">
+          {AREAS.map(([k, label, icon]) => {
+            const v = plan.priorities[k] || 1;
+            return (
+              <div key={k} className="tc-prio">
+                <span className="tc-prioname">{icon} {label}</span>
+                <div className="tc-priobtns">
+                  {[[1, "Later"], [2, "Yes"], [3, "Focus"]].map(([n, t]) => (
+                    <button key={n} className={"tc-priobtn" + (v === n ? " is-on" : "")}
+                      onClick={() => update({ priorities: { ...plan.priorities, [k]: n } })}>{t}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="tc-plansec">
+        <h2 className="tc-planh">How long today?</h2>
+        <p className="tc-planhint">
+          Five focused minutes three times a day beats one long session you won't repeat.
+          Change this whenever — it sets the length of your next Smart Review.
+        </p>
+        <div className="tc-paces">
+          {PACES.map(([k, label, mins, note]) => (
+            <button key={k} className={"tc-pace" + (plan.pace === k ? " is-on" : "")}
+              onClick={() => update({ pace: k })}>
+              <span className="tc-pacelabel">{label}</span>
+              <span className="tc-pacemins">≈{mins} min</span>
+              <span className="tc-pacenote">{note}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="tc-plansec">
+        <h2 className="tc-planh">What you've actually practised <span className="tc-planh-sub">last 14 days</span></h2>
+        {totalReviews === 0 ? (
+          <p className="tc-planhint">Nothing logged yet — do a session and this fills in.</p>
+        ) : (
+          <>
+            <div className="tc-cover">
+              {AREAS.map(([k, label, icon]) => {
+                const n = cover[k] || 0;
+                const pri = plan.priorities[k] || 1;
+                return (
+                  <div key={k} className="tc-coverrow">
+                    <span className="tc-covername">{icon} {label}</span>
+                    <div className="tc-coverbar">
+                      <div className={"tc-coverfill" + (n === 0 && pri >= 2 ? " is-gap" : "")}
+                        style={{ width: Math.round((n / busiest) * 100) + "%" }} />
+                    </div>
+                    <span className="tc-covernum">{n}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {neglected.length > 0 && (
+              <p className="tc-covergap">
+                You said {neglected.map(([, l]) => l.toLowerCase()).join(" and ")} matter
+                {neglected.length === 1 ? "s" : ""}, but {neglected.length === 1 ? "it hasn't" : "they haven't"} come
+                up in two weeks. The Input tab covers listening and reading; speaking and
+                culture need practice outside this app.
+              </p>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="tc-plansec tc-planfoot">
+        <h2 className="tc-planh">A few things worth remembering</h2>
+        <ul className="tc-planlist">
+          <li><b>Use more than one method.</b> Students who mix flashcards, shows, mnemonics and reading do better than those who only ever do one.</li>
+          <li><b>Study what you actually like.</b> Anime, card games, music, cooking — vocabulary you care about sticks, and you'll keep going once nobody's grading you.</li>
+          <li><b>Media only counts when you're paying attention.</b> Look words up, notice grammar you've studied, sing along. Passive listening slides past.</li>
+          <li><b>Some days are five-minute days.</b> That's the plan working, not you failing.</li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
 function weakness(c) {
   const seen = c.seen || 0;
   if (seen === 0) return 1.0;                 // unseen first
@@ -2376,6 +2571,134 @@ function prodDue(c, now) {
   return (c.rfsrs.due || 0) <= now;
 }
 
+/* ── the study plan ──
+   Straight out of the notes Matthew's JPN 101 professor left for continued study: start
+   from a vision, set three to five goals pointing at it, cover the eight areas of the
+   language while accepting that some matter more right now, favour short frequent
+   sessions over rare long ones, use several different strategies rather than one, and
+   leave room for the days when you are tired or short of time.
+
+   The part that makes this more than a notes page: the plan drives the scheduler. The
+   priorities weight what Smart Review serves, and the pace sets how long a session runs.
+   A plan the app ignores is a wish list. */
+const PLAN_KEY = "jpn101:plan";
+
+export const AREAS = [
+  ["vocabulary", "Vocabulary", "📖"],
+  ["kanji", "Kanji", "🈷️"],
+  ["listening", "Listening", "👂"],
+  ["reading", "Reading", "📕"],
+  ["writing", "Writing", "✍️"],
+  ["speaking", "Speaking", "💬"],
+  ["grammar", "Grammar", "🔧"],
+  ["culture", "Culture", "🏮"],
+];
+
+/* Which area a piece of practice counted towards. Kept explicit rather than guessed, so
+   the coverage report cannot quietly flatter itself. */
+function areaForDeck(deck) {
+  if (deck === "kanji") return "kanji";
+  if (deck === "kana" || deck === "scripts") return "reading";
+  if (deck === "conj" || deck === "dates") return "grammar";
+  if (deck === "input") return "listening";
+  if (deck === "oral") return "speaking";
+  return "vocabulary";
+}
+
+/* Three honest paces, because some days are not study days. The professor's point about
+   "small and simple things" is the default: five focused minutes, three times a day,
+   beats one heroic session you will not repeat. */
+const PACES = [
+  ["short", "Short", 5, "Tired, busy, or between things. Five minutes still counts."],
+  ["normal", "Normal", 10, "The daily default — enough to make real progress."],
+  ["deep", "Deep", 20, "Motivated and have the time. Bigger backlog, more new words."],
+];
+
+const PLAN_DEFAULT = {
+  vision: { fiveYear: "", oneYear: "", term: "" },
+  goals: [],
+  priorities: { vocabulary: 2, kanji: 2, listening: 1, reading: 1, writing: 1, speaking: 1, grammar: 1, culture: 1 },
+  pace: "normal",
+};
+
+async function loadPlan() {
+  try {
+    const raw = await sGet(PLAN_KEY);
+    if (!raw) return { ...PLAN_DEFAULT };
+    const p = JSON.parse(raw);
+    return {
+      ...PLAN_DEFAULT, ...p,
+      vision: { ...PLAN_DEFAULT.vision, ...(p.vision || {}) },
+      priorities: { ...PLAN_DEFAULT.priorities, ...(p.priorities || {}) },
+      goals: Array.isArray(p.goals) ? p.goals : [],
+    };
+  } catch (e) { return { ...PLAN_DEFAULT }; }
+}
+/* The plan is edited on its own tab but consumed on the Study tab, so changes have to
+   reach a component that is not mounted alongside the editor. */
+const _planWatchers = new Set();
+function subscribePlan(fn) { _planWatchers.add(fn); return () => _planWatchers.delete(fn); }
+function savePlan(plan) {
+  sSet(PLAN_KEY, JSON.stringify(plan));
+  for (const fn of _planWatchers) { try { fn(plan); } catch (e) {} }
+}
+
+function paceMinutes(pace) {
+  const row = PACES.find(([k]) => k === pace);
+  return row ? row[2] : 10;
+}
+
+/* Priorities become deck weights, so a stated priority actually changes the session.
+   Deliberately gentle: a priority nudges the ordering, it does not override how badly
+   something has decayed. Saying listening matters should not mean forgetting kanji. */
+function deckWeight(plan, deck) {
+  const area = areaForDeck(deck);
+  const p = (plan && plan.priorities && plan.priorities[area]) || 1;
+  return (p - 1) * 0.6;                       // 1 → 0, 2 → 0.6, 3 → 1.2
+}
+
+/* What actually got practised, per area, over the last N days. Read from the day log
+   rather than from intentions. */
+function coverageFrom(days, span = 14) {
+  const out = {};
+  for (const [k] of AREAS) out[k] = 0;
+  if (!days) return out;
+  const cut = Date.now() - span * 86400000;
+  for (const key of Object.keys(days)) {
+    if (new Date(key + "T12:00:00").getTime() < cut) continue;
+    const by = days[key] && days[key].by;
+    if (!by) continue;
+    for (const area of Object.keys(by)) if (area in out) out[area] += by[area];
+  }
+  return out;
+}
+
+/* ── kanji ordering, shared by the Kanji tab and Smart Review ──
+   Both need the same answer to "which characters am I working on?", and two copies of
+   that rule would drift the moment either changed — the Kanji page would show one
+   frontier while Smart Review introduced from another. One function, both callers.
+
+   The order is the learner's own vocabulary first: a character that appears in words you
+   have actually studied outranks one that is merely frequent in newspapers. */
+function kanjiOrdered(list, deckMap) {
+  if (!deckMap || !deckMap.size) return list || [];
+  const rank = (k, i) => {
+    const d = deckMap.get(k.c);
+    if (!d) return 2000000 + i;
+    return (d.studied ? 0 : 1000000) + i - Math.min(d.n, 40) * 40;
+  };
+  return (list || []).map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k);
+}
+
+/* The unlocked set grows only as characters go solid, so the frontier cannot run away
+   from you. Smart Review introduces from exactly this set, which is why a character met
+   there shows up on the Kanji page as met — they are the same list and the same store. */
+function kanjiUnlocked(all, stats) {
+  const mastered = (all || []).filter((k) => (((stats || {})[k.c] || {}).level || 0) >= 4).length;
+  const frontier = Math.min((all || []).length, KANJI_BATCH * (Math.floor(mastered / KANJI_BATCH) + 2));
+  return (all || []).slice(0, frontier);
+}
+
 /* ── the other decks, as cards ──
    Kana, kanji and the 10k list already carry the same stat record as the vocabulary deck
    and are already scheduled by the same model, but each one only ever appeared on its own
@@ -2413,7 +2736,7 @@ function foreignCard(src, raw) {
    its own copy of the record, so this reads, updates and writes that key rather than
    touching the vocabulary deck. Same stat shape, same memory model, same everything —
    only the key differs. */
-async function recordForeign(card, ok, ms) {
+async function recordForeign(card, ok, ms, area) {
   const key = foreignKey(card.src);
   try {
     const raw = await sGet(key);
@@ -2439,38 +2762,27 @@ async function recordForeign(card, ok, ms) {
       };
       await sSet(key, JSON.stringify(store));
     }
-    logDay({ ok, ms: ms || 0, deck: card.src });
+    logDay({ ok, ms: ms || 0, deck: card.src, area });
   } catch (e) { /* a lost result is better than a broken session */ }
 }
 
 /* Load every other deck's items and stats, ready to hand to the session builder. */
-async function loadForeignDecks() {
+async function loadForeignDecks(cards) {
   const out = [];
-  try {
-    const raw = await sGet(KANA_KEY);
-    const stats = raw ? JSON.parse(raw) : {};
-    const items = [];
-    for (const [, , rows] of KANA_GROUPS) {
-      for (const row of rows) {
-        for (const [h, k, r] of row) {
-          // Only characters already drilled. Smart Review's job here is catching the ひ
-          // you have not seen since June, not teaching the syllabary from scratch — that
-          // is the Kana tab's job, and letting 200 unseen characters in as "new" would
-          // bury the vocabulary this course is actually examined on.
-          if ((stats["h-" + h] || {}).seen > 0) items.push(foreignCard("kana", { id: "h-" + h, ch: h, r }));
-          if ((stats["k-" + h] || {}).seen > 0) items.push(foreignCard("kana", { id: "k-" + h, ch: k, r }));
-        }
-      }
-    }
-    out.push({ deck: "kana", items, stats: remapStats(stats, "kana") });
-  } catch (e) {}
+  /* Kana is deliberately NOT pooled. Hiragana and katakana are memorised, so drilling a
+     character in Smart Review spends a slot that a word or a kanji needed. The Kana tab
+     is still there for when a chart needs refreshing; it just does not dilute the one
+     button that is supposed to be the highest-value thing to press. */
   try {
     const [d, raw] = await Promise.all([loadKanji(), sGet(KANJI_KEY)]);
     const stats = raw ? JSON.parse(raw) : {};
-    // Only kanji already met. Smart Review is not where new jouyou characters get
-    // introduced — the Kanji tab unlocks those in batches, deliberately.
-    const items = ((d && d.kanji) || []).filter((k) => (stats[k.c] || {}).seen > 0)
-      .map((k) => foreignCard("kanji", k));
+    /* The SAME unlocked set the Kanji tab works from, in the same order — including
+       characters not yet met, so Smart Review can introduce them too. Because both read
+       and write jpn101:kanji keyed by the bare character, a kanji first met here shows up
+       on the Kanji page as met, counts toward its mastered total, and moves its frontier.
+       The two tabs are one progress record seen from two places. */
+    const all = kanjiOrdered((d && d.kanji) || [], deckKanjiIndex(cards || []));
+    const items = kanjiUnlocked(all, stats).map((k, i) => ({ ...foreignCard("kanji", k), order: i }));
     out.push({ deck: "kanji", items, stats: remapStats(stats, "kanji") });
   } catch (e) {}
   try {
@@ -6362,16 +6674,7 @@ function Kanji({ cards }) {
     (c) => statsRef.current[c] || { seen: 0, correct: 0, level: 0, streak: 0 }, []);
   const deckMap = useMemo(() => deckKanjiIndex(cards), [cards]);
 
-  const all = useMemo(() => {
-    const list = data ? data.kanji : [];
-    if (!deckMap.size) return list;
-    const rank = (k, i) => {
-      const d = deckMap.get(k.c);
-      if (!d) return 2000000 + i;
-      return (d.studied ? 0 : 1000000) + i - Math.min(d.n, 40) * 40;
-    };
-    return list.map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k);
-  }, [data, deckMap]);
+  const all = useMemo(() => kanjiOrdered(data ? data.kanji : [], deckMap), [data, deckMap]);
 
   /* Everything is already persisted per character in jpn101:kanji — seen, correct, level,
      think time and the full FSRS memory state — and that key syncs to the cloud with the
@@ -6401,10 +6704,7 @@ function Kanji({ cards }) {
 
   const mastered = useMemo(() => all.filter((k) => ((stats[k.c] || {}).level || 0) >= 4).length, [all, stats]);
   const started = useMemo(() => all.filter((k) => ((stats[k.c] || {}).seen || 0) > 0).length, [all, stats]);
-  const unlocked = useMemo(() => {
-    const frontier = Math.min(all.length, KANJI_BATCH * (Math.floor(mastered / KANJI_BATCH) + 2));
-    return all.slice(0, frontier);
-  }, [all, mastered]);
+  const unlocked = useMemo(() => kanjiUnlocked(all, stats), [all, stats]);
 
   /* Speak the character. A kanji alone has no single pronunciation, so this says a word
      from the deck that contains it when there is one — 学生 rather than a bare reading. */
@@ -7642,8 +7942,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcchip{background:rgba(140,170,255,.2);color:#d3e0ff;}
 .tc-listenchip{background:rgba(255,200,120,.2);color:#ffe2b8;}
 .tc-learnnote{margin:6px 0 0;font-size:13px;color:rgba(255,255,255,.6);text-align:center;}
+.tc-mcprompt{display:flex;flex-direction:column;align-items:center;gap:3px;margin-bottom:10px;}
+.tc-mcfurigana{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
+  font-size:19px;letter-spacing:.06em;color:rgba(255,255,255,.66);}
 .tc-mcterm{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
-  font-size:46px;line-height:1.15;font-weight:600;text-align:center;color:#fff;margin-bottom:6px;}
+  font-size:44px;line-height:1.15;font-weight:600;text-align:center;color:#fff;}
 .tc-listenprompt{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:6px;}
 .tc-listenprompt .tc-speakbtn{font-size:34px;padding:16px 20px;}
 .tc-listenreveal{margin-top:10px;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;font-size:22px;color:rgba(255,255,255,.8);}
@@ -7657,6 +7960,59 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcopt.is-answer{background:rgba(90,220,150,.2);border-color:rgba(90,220,150,.65);color:#d6ffe9;opacity:1;}
 .tc-mcopt.is-wrongpick{background:rgba(255,110,90,.18);border-color:rgba(255,110,90,.6);color:#ffd5cf;opacity:1;}
 .tc-mchint{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.45);}
+/* ── study plan ── */
+.tc-plan{display:flex;flex-direction:column;gap:26px;padding-bottom:40px;}
+.tc-plansec{display:flex;flex-direction:column;gap:11px;background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.09);border-radius:18px;padding:20px 20px 22px;}
+.tc-planh{margin:0;font-size:19px;font-weight:650;color:#fff;display:flex;align-items:baseline;gap:9px;}
+.tc-planh-sub{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut-2);font-weight:400;}
+.tc-planhint{margin:0;font-size:13.5px;line-height:1.6;color:var(--mut-2);max-width:62ch;}
+.tc-planfield{display:flex;flex-direction:column;gap:5px;}
+.tc-planfield span{font-size:13px;color:rgba(255,255,255,.75);}
+.tc-planfield textarea{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:14.5px;line-height:1.5;
+  background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.14);border-radius:11px;padding:10px 12px;color:#fff;}
+.tc-planfield textarea:focus{outline:2px solid rgba(124,92,255,.6);outline-offset:1px;}
+.tc-goals{display:flex;flex-direction:column;gap:8px;}
+.tc-goal{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.1);
+  border-radius:11px;padding:9px 11px;}
+.tc-goal.is-done .tc-goaltext{text-decoration:line-through;color:var(--mut-2);}
+.tc-goalcheck{flex:none;width:22px;height:22px;border-radius:6px;border:1.5px solid rgba(255,255,255,.3);
+  background:rgba(255,255,255,.06);color:#8ef0bd;font-size:13px;cursor:pointer;}
+.tc-goal.is-done .tc-goalcheck{background:rgba(90,220,150,.22);border-color:rgba(90,220,150,.6);}
+.tc-goaltext{flex:1;font-size:14.5px;color:#fff;line-height:1.4;}
+.tc-goalarea,.tc-goaldrop{flex:none;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+  color:#fff;border-radius:8px;font:inherit;font-size:12px;padding:5px 7px;cursor:pointer;}
+.tc-goaldrop{width:26px;font-size:15px;line-height:1;color:var(--mut-2);}
+.tc-goaladd{display:flex;gap:8px;}
+.tc-goaladd input{flex:1;min-width:0;font:inherit;font-size:14px;background:rgba(0,0,0,.22);
+  border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:9px 11px;color:#fff;}
+.tc-prios{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:9px;}
+.tc-prio{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:rgba(0,0,0,.18);border-radius:10px;padding:8px 10px;}
+.tc-prioname{font-size:14px;color:#fff;}
+.tc-priobtns{display:flex;gap:4px;}
+.tc-priobtn{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);
+  color:var(--mut-2);border-radius:7px;font:inherit;font-size:11.5px;padding:4px 9px;cursor:pointer;}
+.tc-priobtn.is-on{background:rgba(124,92,255,.3);border-color:rgba(124,92,255,.65);color:#fff;}
+.tc-paces{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;}
+.tc-pace{display:flex;flex-direction:column;gap:4px;text-align:left;cursor:pointer;
+  background:rgba(0,0,0,.2);border:1.5px solid rgba(255,255,255,.12);border-radius:13px;padding:13px 14px;color:#fff;font:inherit;}
+.tc-pace.is-on{border-color:rgba(124,92,255,.7);background:rgba(124,92,255,.16);}
+.tc-pacelabel{font-size:15.5px;font-weight:650;}
+.tc-pacemins{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;color:var(--shu-soft);}
+.tc-pacenote{font-size:12.5px;line-height:1.45;color:var(--mut-2);}
+.tc-cover{display:flex;flex-direction:column;gap:7px;}
+.tc-coverrow{display:grid;grid-template-columns:130px 1fr 38px;align-items:center;gap:10px;}
+.tc-covername{font-size:13.5px;color:rgba(255,255,255,.85);}
+.tc-coverbar{height:9px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden;}
+.tc-coverfill{height:100%;background:linear-gradient(90deg,rgba(124,92,255,.85),rgba(180,150,255,.85));border-radius:99px;min-width:2px;}
+.tc-coverfill.is-gap{background:rgba(255,110,90,.6);}
+.tc-covernum{font-family:var(--mono);font-size:12px;color:var(--mut-2);text-align:right;}
+.tc-covergap{margin:12px 0 0;font-size:13.5px;line-height:1.6;color:#ffd0c8;background:rgba(255,110,90,.12);
+  border-radius:10px;padding:10px 13px;}
+.tc-planlist{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:13.5px;line-height:1.6;color:var(--mut-2);}
+.tc-planlist b{color:#fff;font-weight:600;}
+@media(max-width:560px){.tc-coverrow{grid-template-columns:110px 1fr 32px;}}
 .tc-setupline{font-size:14px;color:var(--mut-2);line-height:1.6;margin:0 0 22px;max-width:48ch;}
 .tc-rpill{appearance:none;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.05);
   color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;
