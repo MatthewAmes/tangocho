@@ -128,6 +128,9 @@ t("the requested minutes actually change the session length", () => {
   const deep = budgetFor(src, { minutes: 20 });
   gt(normal, short, "ten minutes should beat five");
   gt(deep, normal, "twenty minutes should beat ten");
+  // And the default has to be a sitting the learner will actually finish.
+  eq(normal, 20, "the normal pace should be about twenty items");
+  lte(short, 10, "a five-minute session should be genuinely short");
 });
 t("session size stays within its clamps however extreme the pace", () => {
   const crawl = [deck("v", 99, () => studied("x", 10, 5, { ms: 60000 * 5 }))];

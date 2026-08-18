@@ -43,8 +43,12 @@ export const DEFAULTS = {
   typeAtStability: 14,  // produce-and-spell only once a word is genuinely solid
   listenAtStability: 5, // audio recall a little earlier — it is easier than producing
   minItems: 8,
-  maxItems: 60,
-  itemsPerMinute: 4,    // the ceiling tracks the time budget instead of being a fixed cap
+  maxItems: 40,
+  /* Two items a minute, which lands the normal pace on ~20. The first cut used four and
+     produced a forty-item session for a ten-minute request — technically within budget at
+     the measured answer speed, and far too long to actually sit through. Sessions you
+     finish beat sessions that are theoretically optimal. */
+  itemsPerMinute: 2,
   stepGaps: [3, 8],     // a new item comes back after ~3 cards, then ~8 more
   fallbackMs: 4200,     // assumed per-item cost before there's latency history
 };
