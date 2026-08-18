@@ -1649,16 +1649,33 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      the new words stapled to the very end of the session with exactly one showing each.
      A card record IS a stat record here (seen/correct/fsrs/last/ms/msN all live on it),
      so the deck can be handed over as both items and stats without any translation. */
+  /* The other decks load once and join the pool. Until they arrive the session is simply
+     vocabulary-only, which is also the correct behaviour on a machine that has never
+     opened the Kana or Kanji tabs. */
+  const [foreign, setForeign] = useState([]);
+  useEffect(() => { loadForeignDecks().then(setForeign).catch(() => {}); }, []);
+
   const smartPicks = useMemo(() => {
     const items = cards.map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
-    const source = [{ deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])) }];
+    const source = [
+      { deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])) },
+      ...foreign,
+    ];
     return buildSession(source, { now: Date.now(), isLeech });
-  }, [cards]);
+  }, [cards, foreign]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
   const smartPool = useMemo(() => smartPicks.map((p) => p.item), [smartPicks]);
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
+  /* Cards whose repeats are deliberate. A correct answer normally drops a card's later
+     copies from the queue — that rule exists for the miss-requeue, and it would silently
+     delete every learning step the moment you got the first showing right, which is
+     exactly when the steps matter most. */
+  const stepIds = useMemo(
+    () => new Set(smartPicks.filter((p) => p.step > 0).map((p) => p.item.id)),
+    [smartPicks],
+  );
   const leeches = useMemo(() => cards.filter(isLeech), [cards]);
 
   const dueCount = useMemo(() => {
@@ -1801,11 +1818,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
       setFlash(Date.now());
     } else if (!got) setCombo(0);
-    onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined);
+    // Kana, kanji and 10k cards belong to their own decks and go home to their own keys.
+    if (c.src) recordForeign(c, got, thinkRef.current || 0);
+    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined);
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       setPassed((prev) => { const n = new Set(prev); n.add(c.id); return n; });
-      setQueue((prev) => prev.filter((x, idx) => idx <= pos || x.id !== c.id)); // drop later duplicates
+      // Planned learning steps survive; only miss-requeue duplicates are dropped.
+      if (!stepIds.has(c.id)) setQueue((prev) => prev.filter((x, idx) => idx <= pos || x.id !== c.id));
     } else {
       setStruggled((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       const m = (missRef.current[c.id] || 0) + 1;
@@ -2188,6 +2208,120 @@ function prodDue(c, now) {
   if (!recallUnlocked(c)) return false;
   if (!c.rfsrs || !(c.rfsrs.S > 0)) return true;
   return (c.rfsrs.due || 0) <= now;
+}
+
+/* ── the other decks, as cards ──
+   Kana, kanji and the 10k list already carry the same stat record as the vocabulary deck
+   and are already scheduled by the same model, but each one only ever appeared on its own
+   tab. Something learned in June was invisible to the one button that actually gets
+   pressed. These adapters put them in the same session.
+
+   Only recognition is borrowed. The bespoke exercises on each tab — stroke order, the
+   kanji matching grid, the conjugation drill — stay where they are, because they are the
+   whole point of those tabs. What Smart Review adds is the thing none of them can do:
+   noticing that a kana you have not seen since June has quietly faded. */
+const DECK_SRC = ["kana", "kanji", "freq"];
+
+function foreignKey(src) {
+  return src === "kana" ? KANA_KEY : src === "kanji" ? KANJI_KEY : "jpn101:freq";
+}
+
+/* Each deck keys its stats differently — kana by "h-あ", kanji by the bare character, the
+   10k list by card id. The card id carries the source so a result can find its way home. */
+function foreignCard(src, raw) {
+  if (src === "kana") {
+    return { id: "kana:" + raw.id, src, srcId: raw.id, term: raw.ch, reading: raw.r,
+             romaji: raw.r, meaning: raw.r, kind: "kana", emoji: "🔤" };
+  }
+  if (src === "kanji") {
+    const on = (raw.on || []).slice(0, 2).join("・");
+    const kun = (raw.kun || []).slice(0, 2).join("・");
+    return { id: "kanji:" + raw.c, src, srcId: raw.c, term: raw.c,
+             reading: [on, kun].filter(Boolean).join(" / "), romaji: "",
+             meaning: (raw.m || []).slice(0, 3).join(", "), kind: "kanji", emoji: raw.e || "🈷️" };
+  }
+  return { ...raw, id: "freq:" + raw.id, src, srcId: raw.id };
+}
+
+/* Write a result back to the deck it came from. Each deck owns its own storage key and
+   its own copy of the record, so this reads, updates and writes that key rather than
+   touching the vocabulary deck. Same stat shape, same memory model, same everything —
+   only the key differs. */
+async function recordForeign(card, ok, ms) {
+  const key = foreignKey(card.src);
+  try {
+    const raw = await sGet(key);
+    const store = raw ? JSON.parse(raw) : (card.src === "freq" ? [] : {});
+    const now = Date.now();
+    if (card.src === "freq") {
+      const next = (Array.isArray(store) ? store : []).map((x) => (x.id !== card.srcId ? x : {
+        ...x, last: now, fsrs: statReview(x, ok, ms, now),
+        seen: (x.seen || 0) + 1, correct: (x.correct || 0) + (ok ? 1 : 0),
+        streak: ok ? (x.streak || 0) + 1 : 0,
+        level: ok ? Math.min(5, (x.level || 0) + 1) : Math.max(0, (x.level || 0) - 2),
+        ms: (x.ms || 0) + (ms || 0), msN: (x.msN || 0) + (ms ? 1 : 0),
+      }));
+      await sSet(key, JSON.stringify(next));
+    } else {
+      const st = store[card.srcId] || { seen: 0, correct: 0, level: 0, streak: 0 };
+      store[card.srcId] = {
+        ...st, last: now, fsrs: statReview(st, ok, ms, now),
+        seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
+        streak: ok ? (st.streak || 0) + 1 : 0,
+        level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
+        ms: (st.ms || 0) + (ms || 0), msN: (st.msN || 0) + (ms ? 1 : 0),
+      };
+      await sSet(key, JSON.stringify(store));
+    }
+    logDay({ ok, ms: ms || 0, deck: card.src });
+  } catch (e) { /* a lost result is better than a broken session */ }
+}
+
+/* Load every other deck's items and stats, ready to hand to the session builder. */
+async function loadForeignDecks() {
+  const out = [];
+  try {
+    const raw = await sGet(KANA_KEY);
+    const stats = raw ? JSON.parse(raw) : {};
+    const items = [];
+    for (const [, , rows] of KANA_GROUPS) {
+      for (const row of rows) {
+        for (const [h, k, r] of row) {
+          // Only characters already drilled. Smart Review's job here is catching the ひ
+          // you have not seen since June, not teaching the syllabary from scratch — that
+          // is the Kana tab's job, and letting 200 unseen characters in as "new" would
+          // bury the vocabulary this course is actually examined on.
+          if ((stats["h-" + h] || {}).seen > 0) items.push(foreignCard("kana", { id: "h-" + h, ch: h, r }));
+          if ((stats["k-" + h] || {}).seen > 0) items.push(foreignCard("kana", { id: "k-" + h, ch: k, r }));
+        }
+      }
+    }
+    out.push({ deck: "kana", items, stats: remapStats(stats, "kana") });
+  } catch (e) {}
+  try {
+    const [d, raw] = await Promise.all([loadKanji(), sGet(KANJI_KEY)]);
+    const stats = raw ? JSON.parse(raw) : {};
+    // Only kanji already met. Smart Review is not where new jouyou characters get
+    // introduced — the Kanji tab unlocks those in batches, deliberately.
+    const items = ((d && d.kanji) || []).filter((k) => (stats[k.c] || {}).seen > 0)
+      .map((k) => foreignCard("kanji", k));
+    out.push({ deck: "kanji", items, stats: remapStats(stats, "kanji") });
+  } catch (e) {}
+  try {
+    const raw = await sGet("jpn101:freq");
+    const deck = raw ? JSON.parse(raw) : [];
+    const started = (Array.isArray(deck) ? deck : []).filter((x) => (x.seen || 0) > 0);
+    const items = started.map((x) => foreignCard("freq", x));
+    out.push({ deck: "freq", items, stats: Object.fromEntries(items.map((i) => [i.id, i])) });
+  } catch (e) {}
+  return out.filter((s) => s.items.length);
+}
+
+/* The builder looks stats up by the card id it is given, which is prefixed. */
+function remapStats(stats, src) {
+  const out = {};
+  for (const k of Object.keys(stats || {})) out[src + ":" + k] = stats[k];
+  return out;
 }
 
 /** Probability you'd recall this card right now — used for the UI, not the schedule. */
