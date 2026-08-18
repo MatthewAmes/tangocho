@@ -360,6 +360,23 @@ t("a healthy deck does not take slots from a critically decayed one", () => {
   lte(dates, 1, "a healthy deck should barely feature");
 });
 
+t("a deck with nothing studied yet still produces a real session", () => {
+  // Found by running the app, not by the tests: on a deck where everything is new there
+  // are no reviews to space repeats against, so every repeat was skipped, and the new
+  // share reserved most of the session for reviews that did not exist. An 840-word deck
+  // produced a three-card session.
+  const src = [{ deck: "vocab", items: Array.from({ length: 840 }, (_, i) => ({ id: "n" + i, order: i })), stats: {} }];
+  const picks = buildSession(src, { now: NOW });
+  const d = describe(picks);
+  gt(d.unique, 3, "should introduce a proper batch, not a token few");
+  gt(picks.length, d.unique, "and every one of them must repeat");
+  for (const id of new Set(picks.map((p) => p.item.id))) {
+    const at = picks.map((p, i) => (p.item.id === id ? i : -1)).filter((i) => i >= 0);
+    gt(at.length, 1, `${id} should repeat`);
+    for (let i = 1; i < at.length; i++) gt(at[i] - at[i - 1], 1, `${id} repeats adjacent at ${at}`);
+  }
+});
+
 t("the mix holds when the minor stream is larger than the major one", () => {
   // Caught up on vocabulary, badly behind on kanji: the old fixed-gap splice degenerated
   // into appending one solid block of kanji.

@@ -9,6 +9,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
+import { buildSession, describe as describeSession } from "./tools/session.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
   acceptedReadings, COUNTERS, DAY_READING, MONTH_READING, MONTH_KANJI, HOUR_READING,
@@ -1643,39 +1644,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      earns slots: the more overdue cards there are, the fewer new words share the session.
      Leeches are excluded here entirely and get their own mode; drilling a word sitting at
      0% after eight tries inside a normal session just taxes the whole session. */
-  const smartPool = useMemo(() => {
-    const now = Date.now();
-    const SESSION = 16;
-    const studied = cards.filter((c) => (c.seen || 0) > 0 && !isLeech(c));
-    const due = studied.filter((c) => dueness(c, now) >= 1)
-      .sort((a, b) => dueness(b, now) - dueness(a, now));          // most overdue first
-    const rest = studied.filter((c) => dueness(c, now) < 1)
-      .map((c) => ({ c, s: needScore(c, now) })).sort((a, b) => b.s - a.s).map((x) => x.c);
-    const fresh = cards.filter((c) => !((c.seen || 0) > 0))
-      .sort((a, b) => (a.lesson || 0) - (b.lesson || 0));           // earliest untouched lessons first
-
-    const newSlots = Math.min(fresh.length, due.length >= 40 ? 3 : due.length >= 15 ? 5 : 8);
-    // Cards owed a backwards retrieval get their own reserved slots, drawn from the whole
-    // deck rather than from the recognition-due list they will never appear in.
-    const prod = cards.filter((c) => prodDue(c, now)).sort((a, b) => (a.rfsrs?.due || 0) - (b.rfsrs?.due || 0));
-    const prodSlots = Math.min(prod.length, 4);
-    const reviewSlots = SESSION - newSlots - prodSlots;
-    const review = [...due, ...rest].slice(0, Math.max(0, reviewSlots));
-    const chosenProd = prod.slice(0, prodSlots).filter((c) => !review.includes(c));
-
-    /* Spread the production cards through the session instead of appending them as a
-       block. A run of four backwards cards in a row lets you settle into "this is the
-       reverse bit" — and predictability is exactly what interleaving is meant to remove.
-       Mixed in, you cannot tell which direction is coming, so each card requires deciding
-       what kind of retrieval this is before doing it. That extra step is the point. */
-    const body = [...review];
-    const gap = chosenProd.length ? Math.max(1, Math.floor(body.length / (chosenProd.length + 1))) : 0;
-    chosenProd.forEach((c, i) => {
-      const at = Math.min(body.length, gap * (i + 1) + i);
-      body.splice(at, 0, c);
-    });
-    return [...body, ...fresh.slice(0, newSlots)];
+  /* Session selection now comes from tools/session.mjs, which is pure and separately
+     tested — the old inline version could only be checked by playing the app, and it had
+     the new words stapled to the very end of the session with exactly one showing each.
+     A card record IS a stat record here (seen/correct/fsrs/last/ms/msN all live on it),
+     so the deck can be handed over as both items and stats without any translation. */
+  const smartPicks = useMemo(() => {
+    const items = cards.map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
+    const source = [{ deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])) }];
+    return buildSession(source, { now: Date.now(), isLeech });
   }, [cards]);
+
+  /* The queue still wants plain cards. Learning-step repeats are the same card appearing
+     again later in the session, which is exactly what they should be. */
+  const smartPool = useMemo(() => smartPicks.map((p) => p.item), [smartPicks]);
+  const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
   const leeches = useMemo(() => cards.filter(isLeech), [cards]);
 
   const dueCount = useMemo(() => {
@@ -1900,7 +1883,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         </div>
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
-            🧠 Smart Review · {smartPool.length} cards{dueCount > 0 ? ` · ${dueCount} due` : ""}
+            {/* Say what is actually in the session. "16 cards" was true and told you
+                nothing; "3 new · 2 fading" is the reason to press the button. */}
+            🧠 Smart Review · {smartPool.length} cards{smartInfo.fresh > 0 ? ` · ${smartInfo.fresh} new` : ""}{smartInfo.stale > 0 ? ` · ${smartInfo.stale} fading` : ""}
           </button>
         )}
         {/* Stuck words get their own session instead of being sprinkled through every
