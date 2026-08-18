@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
-import { buildSession, describe as describeSession } from "./tools/session.mjs";
+import { buildSession, withFormats, describe as describeSession } from "./tools/session.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
   acceptedReadings, COUNTERS, DAY_READING, MONTH_READING, MONTH_KANJI, HOUR_READING,
@@ -1668,7 +1668,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
-  const smartPool = useMemo(() => smartPicks.map((p) => p.item), [smartPicks]);
+  /* Each queue entry carries the exercise it should be asked as. Repeats of the same item
+     are separate objects with different formats, which is the point — three showings of
+     one card teaches the card, three different questions teach the word. */
+  const smartPool = useMemo(() => withFormats(
+    smartPicks.map((p) => ({
+      ...p,
+      canType: p.deck === "vocab" && !!p.item.reading,
+      canListen: !!(p.item.reading || p.item.term),
+    })),
+  ).map((p) => ({ ...p.item, _fmt: p.format, _step: p.step })), [smartPicks]);
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
   /* Cards whose repeats are deliberate. A correct answer normally drops a card's later
      copies from the queue — that rule exists for the miss-requeue, and it would silently
@@ -1796,8 +1805,42 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   }, [cards, coverage]);
 
   const card = queue[pos];
-  const isProd = !!(card && prodSet.has(card.id));
+  /* The scheduler picks the exercise; prodSet is the older mechanism and still stands in
+     when a card arrived from somewhere other than Smart Review (a section drill, Trouble
+     words) and so carries no format of its own. */
+  const fmt = card ? (card._fmt || (prodSet.has(card.id) ? "type" : "recall")) : "recall";
+  const isProd = fmt === "type";
   const done = running && pos >= queue.length;
+
+  /* Multiple choice needs wrong answers that are actually tempting. Same kind and similar
+     length beats random: picking "Tuesday" out of {Tuesday, to swim, expensive, library}
+     tests nothing, because three options are obviously not days. */
+  const choices = useMemo(() => {
+    if (!card || (fmt !== "mc" && fmt !== "listen")) return [];
+    const pool = cards.filter((c) => c.id !== card.id && c.meaning);
+    const near = pool.filter((c) => c.kind === card.kind);
+    const bag = (near.length >= 12 ? near : pool);
+    const seed = String(card.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0) + (card._step || 0);
+    const picked = [];
+    const used = new Set();
+    for (let i = 0; i < bag.length && picked.length < 3; i++) {
+      const c = bag[(seed * 7 + i * 13) % bag.length];
+      if (!c || used.has(c.id) || c.meaning === card.meaning) continue;
+      used.add(c.id); picked.push(c);
+    }
+    const all = [...picked, card];
+    // Deterministic shuffle: the answer must not always land in the same slot.
+    return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
+  }, [card, fmt, cards]);
+
+  const answerChoice = useCallback((choice) => {
+    if (verdict) return;
+    const c = queue[pos];
+    if (!c) return;
+    const ok = choice.id === c.id;
+    setVerdict({ ok, mc: true, chose: choice.meaning, want: c.meaning });
+    setFlipped(true);
+  }, [queue, pos, verdict]);
 
   useEffect(() => {                                   // auto-debrief when a session ends with misses
     if (!running || queue.length === 0 || pos < queue.length || debrief !== null) return;
@@ -2066,6 +2109,62 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         </button>
       </div>
 
+      {/* ── first contact ──
+          A word you have never met cannot be retrieved, and asking anyway just teaches it
+          as a failure. The introduction shows everything at once — character, reading,
+          meaning, picture, sound — and the testing starts on its next appearance, a few
+          cards later, while it is still warm. */}
+      {fmt === "learn" && (
+        <div className="tc-learn">
+          <span className="tc-kindchip tc-learnchip">new word</span>
+          {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
+          <div className="tc-term">{card.term}</div>
+          <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
+          <div className="tc-romaji">{card.romaji}</div>
+          <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
+          <p className="tc-learnnote">Look it over — you'll be asked in a moment.</p>
+        </div>
+      )}
+
+      {/* ── multiple choice / listening ──
+          The first real retrieval, and the only format that works before free recall does.
+          Listening hides the writing entirely: a word you only ever meet on a card is a
+          word you will not catch in speech. */}
+      {(fmt === "mc" || fmt === "listen") && (
+        <div className="tc-mcwrap">
+          <span className={"tc-kindchip " + (fmt === "listen" ? "tc-listenchip" : "tc-mcchip")}>
+            {fmt === "listen" ? "listen" : "which one?"}
+          </span>
+          {fmt === "listen" ? (
+            <div className="tc-listenprompt">
+              <SpeakBtn text={card.reading || card.term} />
+              <p className="tc-learnnote">Tap to hear it again</p>
+            </div>
+          ) : (
+            <div className="tc-mcterm">{card.term}</div>
+          )}
+          <div className="tc-mcopts">
+            {choices.map((c) => {
+              const chosen = verdict && verdict.chose === c.meaning;
+              const isAnswer = c.id === card.id;
+              const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
+              return (
+                <button key={c.id} type="button" className={"tc-mcopt" + cls}
+                        disabled={!!verdict} onClick={() => answerChoice(c)}>
+                  {c.meaning}
+                </button>
+              );
+            })}
+          </div>
+          {verdict && fmt === "listen" && (
+            <div className="tc-listenreveal">
+              {card.term} · {card.reading}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(fmt === "recall" || fmt === "type") && (
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
            role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
         <div className="tc-card-inner">
@@ -2138,19 +2237,34 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               </div>
             )}
             {!isLeech(card) && card.mn ? <p className="tc-mnshow">🔗 {card.mn}</p> : null}
-            {hook && hook.term === card.term ? (
+            {/* The AI hook button used to sit on every card and went unused for months,
+                while adding a row of clutter to the one screen that should be quiet. It
+                still exists for stuck words, where a keyword mnemonic genuinely is the
+                technique that shifts them — but it is not on the face of every review. */}
+            {isLeech(card) && (hook && hook.term === card.term ? (
               <p className="tc-hooktext" onClick={(e) => e.stopPropagation()}>
                 {hook.busy ? "✨ thinking…" : hook.err ? "Couldn't reach the AI — try again later." : "✨ " + hook.text}
               </p>
             ) : (
               <button className="tc-hookbtn" onClick={(e) => { e.stopPropagation(); getHook(card); }}>✨ hook</button>
-            )}
+            ))}
           </div>
         </div>
       </div>
+      )}
 
       <div className="tc-grade">
-        {!flipped ? (
+        {fmt === "learn" ? (
+          <button type="button" className="tc-btn tc-btn-wide tc-btn-got"
+                  onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it — next →</button>
+        ) : verdict && (fmt === "mc" || fmt === "listen") ? (
+          <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
+                  onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
+            {verdict.ok ? "Next →" : "Noted — next →"}
+          </button>
+        ) : (fmt === "mc" || fmt === "listen") ? (
+          <p className="tc-mchint">{fmt === "listen" ? "What did you hear?" : "Pick the meaning"}</p>
+        ) : !flipped ? (
           <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); flip(); }}>Reveal answer</button>
         ) : verdict ? (
           /* The typed answer already settled this one. Offering "Got it" here would just
@@ -7478,15 +7592,24 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 /* card flip */
 .tc-card{perspective:1400px;cursor:pointer;margin-bottom:18px;}
-.tc-card-inner{position:relative;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.4,0,.2,1);min-height:300px;}
+.tc-card-inner{position:relative;transform-style:preserve-3d;transition:transform .5s cubic-bezier(.4,0,.2,1);min-height:340px;}
 .tc-card.is-flipped .tc-card-inner{transform:rotateY(180deg);}
 .tc-face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
   background:radial-gradient(130% 120% at 30% -12%, rgba(124,92,255,.22) 0%, rgba(64,84,168,.12) 45%, rgba(255,255,255,.05) 80%);
   backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
   color:#fff;border-radius:26px;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
-  padding:34px 28px;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  padding:34px 28px;box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;
   box-shadow:0 24px 54px -22px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14);}
+/* Centred with auto margins rather than justify-content. A centred flex column whose
+   content is taller than the box overflows at BOTH ends, and the top half escapes above
+   the card entirely — which is what put a giant emoji outside the card on long backs.
+   Auto margins collapse to zero when there is no room, so tall content pins to the top
+   and scrolls instead of spilling. */
+.tc-face > *:first-child{margin-top:auto;}
+.tc-face > *:last-child{margin-bottom:auto;}
+.tc-face > .tc-kindchip:first-child{margin-top:0;}
+.tc-face > .tc-kindchip + *{margin-top:auto;}
 .tc-back{transform:rotateY(180deg);}
 .tc-kindchip{position:absolute;top:16px;right:18px;font-family:"Yu Gothic","Noto Sans JP",sans-serif;
   font-size:11.5px;color:rgba(255,255,255,.7);letter-spacing:.1em;border:0;
@@ -7504,7 +7627,36 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-meaning-lg{font-size:26px;font-weight:600;}
 .tc-reading-front{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:24px;color:rgba(255,255,255,.72);font-weight:500;}
-.tc-emoji{font-size:88px;line-height:1;margin-bottom:4px;}
+.tc-emoji{font-size:64px;line-height:1;margin-bottom:4px;}
+.tc-emoji-lg{font-size:80px;}
+/* ── the non-flashcard exercises ──
+   These are plain blocks rather than 3D faces: there is nothing to flip, and giving them
+   the card's absolute-positioned faces is what would reintroduce the overflow problem. */
+.tc-learn,.tc-mcwrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;
+  background:radial-gradient(130% 120% at 30% -12%, rgba(124,92,255,.22) 0%, rgba(64,84,168,.12) 45%, rgba(255,255,255,.05) 80%);
+  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
+  border-radius:26px;padding:34px 28px 30px;margin-bottom:18px;min-height:340px;box-sizing:border-box;
+  justify-content:center;color:#fff;
+  box-shadow:0 24px 54px -22px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14);}
+.tc-learnchip{background:rgba(120,220,170,.2);color:#c8f5df;}
+.tc-mcchip{background:rgba(140,170,255,.2);color:#d3e0ff;}
+.tc-listenchip{background:rgba(255,200,120,.2);color:#ffe2b8;}
+.tc-learnnote{margin:6px 0 0;font-size:13px;color:rgba(255,255,255,.6);text-align:center;}
+.tc-mcterm{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
+  font-size:46px;line-height:1.15;font-weight:600;text-align:center;color:#fff;margin-bottom:6px;}
+.tc-listenprompt{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:6px;}
+.tc-listenprompt .tc-speakbtn{font-size:34px;padding:16px 20px;}
+.tc-listenreveal{margin-top:10px;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;font-size:22px;color:rgba(255,255,255,.8);}
+.tc-mcopts{display:flex;flex-direction:column;gap:9px;width:min(100%,380px);}
+.tc-mcopt{appearance:none;text-align:left;font:inherit;font-size:15.5px;line-height:1.4;color:#fff;
+  background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.16);border-radius:13px;
+  padding:12px 15px;cursor:pointer;transition:background .12s,border-color .12s;}
+.tc-mcopt:hover:not(:disabled){background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.3);}
+.tc-mcopt:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
+.tc-mcopt:disabled{cursor:default;opacity:.55;}
+.tc-mcopt.is-answer{background:rgba(90,220,150,.2);border-color:rgba(90,220,150,.65);color:#d6ffe9;opacity:1;}
+.tc-mcopt.is-wrongpick{background:rgba(255,110,90,.18);border-color:rgba(255,110,90,.6);color:#ffd5cf;opacity:1;}
+.tc-mchint{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.45);}
 .tc-setupline{font-size:14px;color:var(--mut-2);line-height:1.6;margin:0 0 22px;max-width:48ch;}
 .tc-rpill{appearance:none;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.05);
   color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;

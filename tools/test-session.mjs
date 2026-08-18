@@ -5,7 +5,7 @@
 //   node tools/test-session.mjs
 import {
   DEFAULTS, need, daysSince, isStale, pacePerItem, budgetFor,
-  candidates, buildSession, describe,
+  candidates, buildSession, describe, formatFor, withFormats, FORMATS,
 } from "./session.mjs";
 
 let fail = 0, run = 0;
@@ -357,7 +357,12 @@ t("a healthy deck does not take slots from a critically decayed one", () => {
   const dates = picks.filter((p) => p.deck === "dates").length;
   const kanji = picks.filter((p) => p.deck === "kanji").length;
   gt(kanji, dates, "the urgent deck must beat the healthy one");
-  lte(dates, 1, "a healthy deck should barely feature");
+  /* Not "barely features" any more, and the change is deliberate. Well-retained items are
+     the only ones that can carry production, spelling and listening, so a few slots are
+     reserved for them — otherwise every session is recognition-only. The urgent deck must
+     still clearly dominate, which is what the ratio below pins down. */
+  gt(kanji, dates * 2, "the urgent deck should still dominate by a wide margin");
+  lte(dates, Math.ceil(picks.length * 0.2), "variety must stay a minority of the session");
 });
 
 t("a deck with nothing studied yet still produces a real session", () => {
@@ -387,6 +392,104 @@ t("the mix holds when the minor stream is larger than the major one", () => {
   const picks = buildSession(src, { now: NOW, size: 16 });
   const at = picks.map((p, i) => (p.deck === "vocab" ? i : -1)).filter((i) => i >= 0);
   if (at.length === 2) gt(at[1] - at[0], 2, `vocab should be spread, got ${at}`);
+});
+
+console.log("\n=== exercise formats ===");
+const pick = (st, extra = {}) => ({ deck: "vocab", item: { id: "x" }, st, fresh: !st, step: 0, ...extra });
+
+t("a brand-new item is shown before it is tested", () => {
+  eq(formatFor(pick(null)), "learn");
+});
+t("a new item is then tested two different ways in the same session", () => {
+  const a = formatFor(pick(null, { step: 1 })), b = formatFor(pick(null, { step: 2 }));
+  ok(a !== "learn" && b !== "learn", "steps must test, not re-show");
+  ok(a !== b, `steps should differ, got ${a} and ${b}`);
+});
+t("a struggling word gets an easier question, not a harder one", () => {
+  const weak = { seen: 12, correct: 4, fsrs: { S: 1, D: 8, last: NOW } };
+  ok(["mc", "recall"].includes(formatFor(pick(weak))), "expected recognition, not production");
+  ok(formatFor(pick(weak, { canType: true })) !== "type", "must not demand production of a word being missed");
+});
+t("a solid word is asked for production and spelling", () => {
+  const solid = { seen: 20, correct: 19, fsrs: { S: 60, D: 3, last: NOW } };
+  eq(formatFor(pick(solid, { canType: true })), "type");
+});
+t("production is not demanded of a word that cannot be typed", () => {
+  const solid = { seen: 20, correct: 19, fsrs: { S: 60, D: 3, last: NOW } };
+  ok(formatFor(pick(solid, { canType: false })) !== "type");
+});
+t("repeats of the same item change format between showings", () => {
+  const mid = { seen: 10, correct: 9, fsrs: { S: 8, D: 4, last: NOW } };
+  const a = formatFor(pick(mid, { step: 0, canListen: true }));
+  const b = formatFor(pick(mid, { step: 1, canListen: true }));
+  ok(a !== b, `format should alternate, got ${a} twice`);
+});
+t("every format produced is one the app knows how to render", () => {
+  const states = [null, { seen: 1, correct: 1, fsrs: { S: 0.5, D: 7, last: NOW } },
+    { seen: 12, correct: 4, fsrs: { S: 1, D: 8, last: NOW } },
+    { seen: 20, correct: 19, fsrs: { S: 8, D: 4, last: NOW } },
+    { seen: 30, correct: 29, fsrs: { S: 90, D: 2, last: NOW } }];
+  for (const st of states) {
+    for (const step of [0, 1, 2]) {
+      for (const canType of [true, false]) {
+        for (const canListen of [true, false]) {
+          const f = formatFor(pick(st, { step, canType, canListen }));
+          ok(FORMATS.includes(f), `unknown format ${f}`);
+        }
+      }
+    }
+  }
+});
+t("withFormats tags every pick in a real session", () => {
+  const picks = withFormats(buildSession(multi(), { now: NOW, size: 20 }));
+  ok(picks.length > 0);
+  for (const p of picks) ok(FORMATS.includes(p.format), `bad format ${p.format}`);
+});
+t("a session reserves room for words strong enough to carry harder formats", () => {
+  /* The bug this locks down was invisible in the unit tests and obvious in the app: need
+     ordering picks the most decayed items, decayed items can only fairly be asked as
+     recognition, so every single card in a 28-card session came out as multiple choice.
+     Variety has to be reserved, not hoped for. */
+  const DAYm = 86400000;
+  const mk = (S, ago) => ({
+    seen: 10, correct: 10, level: 4, streak: 3, last: NOW - ago * DAYm,
+    fsrs: { S, D: 4, last: NOW - ago * DAYm }, ms: 40000, msN: 10,
+  });
+  const src = [{
+    deck: "vocab",
+    items: [
+      ...Array.from({ length: 60 }, (_, i) => ({ id: "weak" + i, order: i })),
+      ...Array.from({ length: 30 }, (_, i) => ({ id: "strong" + i, order: 500 + i })),
+    ],
+    stats: {
+      ...Object.fromEntries(Array.from({ length: 60 }, (_, i) => ["weak" + i, mk(0.4, 30)])),
+      ...Object.fromEntries(Array.from({ length: 30 }, (_, i) => ["strong" + i, mk(60, 3)])),
+    },
+  }];
+  const picks = withFormats(buildSession(src, { now: NOW, size: 24 })
+    .map((p) => ({ ...p, canType: true, canListen: true })));
+  const strong = picks.filter((p) => String(p.item.id).startsWith("strong"));
+  gt(strong.length, 0, "strong words must get slots even though they are not the neediest");
+  const kinds = new Set(picks.map((p) => p.format));
+  ok(kinds.has("type") || kinds.has("listen"), `expected a production or listening format, got: ${[...kinds].join(", ")}`);
+});
+
+t("a real session uses more than one kind of exercise", () => {
+  // The whole complaint this answers: a session that is 28 flip cards is one exercise
+  // repeated, however well chosen the cards are.
+  const src = [{
+    deck: "vocab",
+    items: Array.from({ length: 60 }, (_, i) => ({ id: "v" + i, order: i })),
+    stats: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [
+      "v" + i,
+      { seen: 10 + i, correct: 9 + i, level: 4, streak: 3, last: NOW - (i + 1) * DAY,
+        fsrs: { S: 1 + i * 3, D: 4, last: NOW - (i + 1) * DAY }, ms: 40000, msN: 10 },
+    ])),
+  }];
+  const picks = withFormats(buildSession(src, { now: NOW, size: 24 }), {})
+    .map((p) => ({ ...p, format: formatFor({ ...p, canType: true, canListen: true }) }));
+  const kinds = new Set(picks.map((p) => p.format));
+  gt(kinds.size, 2, `expected an assorted session, got only: ${[...kinds].join(", ")}`);
 });
 
 console.log("\n=== describe ===");
