@@ -1524,7 +1524,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["oral", "Oral"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
+            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -1543,6 +1543,9 @@ export default function JpnFlashcards() {
         ) : tab === "input" ? (
           <Input cards={cards} />
         ) : tab === "oral" ? (
+          /* Oral keeps its render branch and its components, same as Write. The chip is
+             gone for now, not the feature — the mock final and Culture Talk rehearsals are
+             the only speaking practice here, and the exam they were built for comes back. */
           <OralHome />
         ) : tab === "kanji" ? (
           <Kanji cards={cards} />

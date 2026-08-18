@@ -8,12 +8,17 @@
     "dev": "node tools/build.mjs && esbuild --servedir=cf/public --serve=3123",
     "build": "node tools/build.mjs",
     "deploy": "node tools/build.mjs && cd cf && wrangler deploy",
-    "test": "node tools/test-fsrs.mjs && node tools/test-input-engine.mjs && node tools/test-counters.mjs && node tools/test-romaji.mjs",
+    "test": "node tools/test-fsrs.mjs && node tools/test-session.mjs && node tools/test-input-engine.mjs && node tools/test-counters.mjs && node tools/test-romaji.mjs",
     "login": "wrangler login",
     "postinstall": "npm --prefix tools install --silent"
   },
   "devDependencies": {
     "esbuild": "0.25.12",
     "wrangler": "4.124.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260815.1": true
   }
 }
