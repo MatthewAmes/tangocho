@@ -1,0 +1,18 @@
+{
+  "name": "tangocho",
+  "version": "1.0.0",
+  "private": true,
+  "description": "単語帳 — JPN 101 study app. Single-file React bundled by esbuild, served by a Cloudflare Worker.",
+  "type": "module",
+  "scripts": {
+    "dev": "node tools/build.mjs && esbuild --servedir=cf/public --serve=3123",
+    "build": "node tools/build.mjs",
+    "deploy": "node tools/build.mjs && cd cf && wrangler deploy",
+    "test": "node tools/test-fsrs.mjs && node tools/test-input-engine.mjs && node tools/test-counters.mjs && node tools/test-romaji.mjs",
+    "login": "wrangler login"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "wrangler": "4.124.0"
+  }
+}
