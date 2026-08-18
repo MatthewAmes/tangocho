@@ -18,7 +18,20 @@ both sides read.
   touched 2026-08-04 and is 16 commits behind). Do not assume `main` is current.
 - **Pull before starting work. Push when finishing.** The most likely way to lose an
   afternoon here is building on a stale checkout, not a subtle bug.
-- Don't work on both machines at once.
+- Don't work on two machines at once.
+
+### This is automated now
+
+`.claude/settings.json` (committed, so every machine gets it) wires two hooks:
+
+- **SessionStart** runs `tools/hooks/session-start.sh`: fetches, and fast-forwards if the
+  branch is simply behind. It reports what it pulled as context. It deliberately refuses to
+  pull when the tree is dirty or the branch has genuinely diverged — a fast-forward is
+  always safe, anything else is a real decision and says so instead.
+- **Stop** runs `tools/hooks/session-stop.sh`: warns when the turn ends with uncommitted or
+  unpushed work. Silent otherwise.
+
+So the pull is not something to remember. The push still is — do it at the end of a change.
 
 ## Build
 

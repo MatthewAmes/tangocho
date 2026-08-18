@@ -1,4 +1,10 @@
-.claude/
+# Claude Code. Most of this directory is per-machine (conversations, caches, personal
+# permission grants) and must not be shared — but the hooks and the preview-server config
+# are project setup that every machine needs, and .claude/ being blanket-ignored is why the
+# preview config had to be re-fixed by hand on a second machine.
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
 files.zip
 node_modules/
 cf/public/

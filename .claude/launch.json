@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tangocho",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["esbuild", "--servedir=cf/public", "--serve=3123"],
+      "port": 3123
+    }
+  ]
+}
