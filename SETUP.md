@@ -73,3 +73,5 @@ it. If you ever need it, copy it across by hand; do not commit it.
 
 Git will say so on `git pull`. Do not force-push or reset — tell Claude Code and it will
 merge them. Both sides of the work still exist at that point; forcing is what loses one.
+
+<!-- multi-machine hook test 4a12f42 -->
