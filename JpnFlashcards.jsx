@@ -8,13 +8,14 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 
 import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
-import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
+import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor, AGAIN, HARD, GOOD, EASY } from "./tools/fsrs.mjs";
 import { buildSession, withFormats, describe as describeSession } from "./tools/session.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
-  pushRecent,
+  pushRecent, confusionFrom, latencyNorms, latencyVerdict,
+  posterior, stateOf, STATE, STATE_LABEL, abilityFrom,
 } from "./tools/learner.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
@@ -2313,7 +2314,8 @@ export default function JpnFlashcards() {
            level still drive the existing UI, and keeping them means nothing already
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
-        const grade = gradeFromLatency(got, t);
+        const grade = gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
+          dir === "prod" ? "type" : "recall", latencyNormsRef.current);
         /* Recognition and production are tracked separately. Being able to read 火曜日 says
            very little about being able to produce it from "Tuesday", so one shared
            stability would over-schedule one direction and under-schedule the other. */
@@ -2503,6 +2505,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      a language model writing sentences on demand is not. Coverage is whatever the scripts
      happen to contain, and a word they never use simply gets no context exercise. */
   const clozeIndex = useMemo(() => buildClozeIndex(SCRIPT_SEED, cards), [cards]);
+  /* The evidence log, read here for the two things it now feeds back into the session:
+     which words this learner confuses, and how fast they normally answer each KIND of
+     question. Both are learner-specific and neither can be guessed. */
+  const [evidence, setEvidence] = useState([]);
+  useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
+  const confusion = useMemo(() => confusionFrom(evidence), [evidence]);
+  const norms = useMemo(() => latencyNorms(evidence), [evidence]);
   const [foreign, setForeign] = useState([]);
   useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length]);
 
@@ -2717,6 +2726,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const choices = useMemo(() => {
     if (!card || (fmt !== "mc" && fmt !== "listen")) return [];
     const pool = cards.filter((c) => c.id !== card.id && c.meaning);
+    /* Distractors this learner has ACTUALLY mixed up with this word come first. A good
+       distractor is plausible to this person and wrong in this context; "same length" is
+       only a stand-in for that, used when there is no confusion history yet. */
+    const known = (confusion.get(card.id) || [])
+      .map((id) => pool.find((c) => c.id === id)).filter(Boolean);
     const near = pool.filter((c) => c.kind === card.kind);
     const bag = (near.length >= 12 ? near : pool);
     const seed = String(card.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0) + (card._step || 0);
@@ -2727,17 +2741,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       if (!c || used.has(c.id) || c.meaning === card.meaning) continue;
       used.add(c.id); picked.push(c);
     }
-    const all = [...picked, card];
+    const all = [...known.slice(0, 2), ...picked, card].slice(0, 4);
+    if (!all.includes(card)) all[all.length - 1] = card;
     // Deterministic shuffle: the answer must not always land in the same slot.
     return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
-  }, [card, fmt, cards]);
+  }, [card, fmt, cards, confusion]);
 
   const answerChoice = useCallback((choice) => {
     if (verdict) return;
     const c = queue[pos];
     if (!c) return;
     const ok = choice.id === c.id;
-    setVerdict({ ok, mc: true, chose: choice.meaning, want: c.meaning });
+    setVerdict({ ok, mc: true, chose: choice.meaning, chosenId: choice.id, want: c.meaning });
     setFlipped(true);
   }, [queue, pos, verdict]);
 
@@ -2787,6 +2802,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           expected: c.reading || c.term,
           got: verdict && verdict.got ? verdict.got : "",
         }),
+        // The specific wrong word picked — the raw material for learner-aware distractors.
+        confused: !got && verdict && verdict.chosenId ? verdict.chosenId : null,
         predicted: recallChance(c, Date.now()),
       });
       logEvidence(rec);
@@ -3452,16 +3469,26 @@ function Plan() {
         </p>
         <div className="tc-cover">
           {SKILLS.map((k) => {
-            const row = profile[k] || { n: 0, rate: null, confidence: CONFIDENCE.NONE };
-            const pct = row.rate == null ? null : Math.round(row.rate * 100);
+            const row = profile[k] || { n: 0, ok: 0 };
+            /* A Beta posterior rather than a bare rate, so "72% from four answers" and
+               "72% from ninety" stop looking like the same claim. The pale band shows how
+               much the estimate should be trusted, and an ability nobody has measured reads
+               as "not measured yet" rather than as a low score. */
+            const post = posterior(row.ok || 0, (row.n || 0) - (row.ok || 0));
+            const st = stateOf(post);
+            const pct = Math.round(post.mean * 100);
+            const lo = Math.round(post.lo * 100), hi = Math.round(post.hi * 100);
+            const tip = row.n ? row.ok + "/" + row.n + " — likely between " + lo + "% and " + hi + "%" : "no answers yet";
             return (
               <div key={k} className="tc-coverrow">
                 <span className="tc-covername">{SKILL_LABEL[k]}</span>
-                <div className="tc-coverbar">
-                  <div className={"tc-coverfill" + (pct != null && pct < 60 ? " is-gap" : "")}
-                    style={{ width: (pct == null ? 0 : pct) + "%" }} />
+                <div className="tc-coverbar" title={tip}>
+                  <div className="tc-coverband" style={{ left: lo + "%", width: Math.max(2, hi - lo) + "%" }} />
+                  {st !== STATE.UNKNOWN && (
+                    <div className={"tc-coverfill" + (st === STATE.WEAK ? " is-gap" : "")} style={{ width: pct + "%" }} />
+                  )}
                 </div>
-                <span className="tc-covernum">{pct == null ? "—" : pct + "%"}</span>
+                <span className="tc-covernum">{st === STATE.UNKNOWN ? "—" : pct + "%"}</span>
               </div>
             );
           })}
@@ -3474,7 +3501,10 @@ function Plan() {
               : "No clear weak spot yet — the abilities measured so far are close together."}
         </p>
         <p className="tc-planhint">
-          {SKILLS.map((k) => `${SKILL_LABEL[k]}: ${(profile[k] || {}).confidence || CONFIDENCE.NONE}`).join(" · ")}
+          {SKILLS.map((k) => {
+            const row = profile[k] || { n: 0, ok: 0 };
+            return SKILL_LABEL[k] + ": " + STATE_LABEL[stateOf(posterior(row.ok || 0, (row.n || 0) - (row.ok || 0)))];
+          }).join(" · ")}
         </p>
       </section>
 
@@ -3638,12 +3668,20 @@ function prodDue(c, now) {
 const EVIDENCE_KEY = "jpn101:evidence";
 const EVIDENCE_CAP = 4000;
 
+/* The current latency norms, kept at module level because the card writer lives outside
+   the component that reads the evidence log. Recomputed whenever the log changes; an
+   empty object simply means "no norm yet", and the grader falls back. */
+const latencyNormsRef = { current: {} };
+function refreshLatencyNorms(list) {
+  try { latencyNormsRef.current = latencyNorms(list || []); } catch (e) { latencyNormsRef.current = {}; }
+}
 let _evidence = null;
 async function loadEvidence() {
   if (_evidence) return _evidence;
   try { const r = await sGet(EVIDENCE_KEY); _evidence = r ? JSON.parse(r) : []; }
   catch (e) { _evidence = []; }
   if (!Array.isArray(_evidence)) _evidence = [];
+  refreshLatencyNorms(_evidence);
   return _evidence;
 }
 const _evidenceWatchers = new Set();
@@ -3654,9 +3692,26 @@ async function logEvidence(rec) {
   list.push(rec);
   if (list.length > EVIDENCE_CAP) list.splice(0, list.length - EVIDENCE_CAP);
   sSet(EVIDENCE_KEY, JSON.stringify(list));
+  refreshLatencyNorms(list);
   for (const fn of _evidenceWatchers) { try { fn(list.slice()); } catch (e) {} }
 }
 
+/* ── grading against this learner, not against a constant ──
+   gradeFromLatency() uses three universal thresholds: under 3s is Easy, over 6s is Hard.
+   Those cannot mean the same thing for picking one of four options and for typing out
+   かようび — the second is slower for everyone, so a fixed cutoff quietly marks every
+   typed answer as difficult and drags its schedule in.
+
+   Once there are enough correct answers of a given skill+format to form a norm, the
+   grade comes from where this answer sits in THIS learner's own distribution for THAT
+   kind of question. Below that, the old thresholds still apply — a norm built from three
+   samples would be worse than the constant it replaced. */
+function gradeAgainstNorm(ok, ms, skill, format, norms) {
+  if (!ok) return AGAIN;
+  const verdict = latencyVerdict(ms, skill, format, norms);
+  if (!verdict) return gradeFromLatency(ok, ms);      // no norm yet: fall back
+  return verdict === "fast" ? EASY : verdict === "slow" ? HARD : GOOD;
+}
 /* ── outcome feedback ──
    The last review's sharpest point: failure classification existed and changed nothing.
    These write the two signals the next intervention actually reads — a rolling recent
@@ -9228,6 +9283,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-cover{display:flex;flex-direction:column;gap:7px;}
 .tc-coverrow{display:grid;grid-template-columns:130px 1fr 38px;align-items:center;gap:10px;}
 .tc-covername{font-size:13.5px;color:rgba(255,255,255,.85);}
+.tc-coverbar{position:relative;}
+/* The credible interval, drawn behind the estimate. A wide band is the honest way to say
+   "we do not know yet" — far better than a number that looks equally confident at four
+   observations and at ninety. */
+.tc-coverband{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.13);border-radius:99px;}
+.tc-coverfill{position:relative;}
 .tc-coverbar{height:9px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden;}
 .tc-coverfill{height:100%;background:linear-gradient(90deg,rgba(124,92,255,.85),rgba(180,150,255,.85));border-radius:99px;min-width:2px;}
 .tc-coverfill.is-gap{background:rgba(255,110,90,.6);}

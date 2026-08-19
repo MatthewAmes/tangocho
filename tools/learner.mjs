@@ -123,7 +123,7 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, at }) {
+export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, at, confused }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
@@ -134,6 +134,9 @@ export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, pr
     // What the model expected. Kept so calibration can later be measured rather than
     // assumed — "predicted 80%, actually 52%" is the only way to learn the model is wrong.
     predicted: typeof predicted === "number" ? Math.round(predicted * 100) / 100 : null,
+    // Which wrong option was picked, when there was one. This is the raw material for
+    // learner-specific distractors: what THIS person mixes up beats "same length".
+    confused: !ok && confused ? confused : null,
     at: at || Date.now(),
   };
 }
@@ -313,7 +316,8 @@ export function predictSuccess(skill, cue) {
    not the thing being chosen. */
 export const TARGET_SUCCESS = 0.72;
 /* Where an ability with no evidence sits when choosing what to work on. */
-export const UNTRIED_SCORE = 0.45;
+/* How much an unmeasured ability is worth sampling, relative to a known-weak one. */
+export const CURIOSITY = 0.35;
 
 function formatFromSkillCue(skill, cue) {
   if (cue === CUE.SHOWN) return "learn";
@@ -348,7 +352,7 @@ export function skillAfterFailure(failure, fallback) {
 }
 
 export function chooseIntervention(pick, opts = {}) {
-  const o = { target: TARGET_SUCCESS, ...opts };
+  const o = { target: TARGET_SUCCESS, curiosity: CURIOSITY, ...opts };
   const caps = (pick && pick.caps) || {};
   const states = {
     recognition: pick.recognition || {},
@@ -380,28 +384,28 @@ export function chooseIntervention(pick, opts = {}) {
 
   /* Target the WEAKEST unlocked ability — the whole point of modelling them separately.
      An untried ability counts as weak: it is the one with no evidence at all. */
-  /* Preference order breaks ties. When two abilities are equally strong the one that is
-     harder and less practised should win — producing a word beats recognising it, and
-     recognition is the fallback rather than the default. */
+  /* Which ability is worth the next fifteen seconds. Ranked by practice value — room to
+     improve, plus how little is actually known — rather than by raw weakness, so an
+     unmeasured ability earns attention through its uncertainty instead of masquerading as
+     a failing one. Weakness is an input, not the objective.
+
+     Ties break toward the harder, less-practised direction: producing a word beats
+     recognising it, and recognition is the fallback rather than the default. */
   const ORDER = ["production", "context", "listening", "recognition"];
   const ranked = ORDER.filter((s) => unlocked.includes(s));
   let skill = ranked[0] || unlocked[0];
-  let worst = 2;
+  let best = -1;
   for (const s of ranked) {
-    const st = states[s] || {};
-    /* An untried ability ranks BELOW average but not automatically last. Scoring it worst
-       meant any dimension the app does not yet populate — listening, context — won every
-       session forever and starved an ability that is genuinely failing at 20%. Unmeasured
-       is a reason to sample, not a reason to monopolise. */
-    const score = !st.tried ? UNTRIED_SCORE : (recentAcc(st.recent, 5)?.rate ?? st.acc ?? 0.5);
-    if (score < worst) { worst = score; skill = s; }
+    const v = practiceValue(abilityFrom(states[s] || {}), { curiosity: o.curiosity });
+    if (v > best) { best = v; skill = s; }
   }
 
-  // A recent failure redirects to the ability that actually broke, when it is available.
-  if (pick.lastFailure) {
-    const want = skillAfterFailure(pick.lastFailure, skill);
-    if (unlocked.includes(want)) skill = want;
-  }
+  /* A failure names a specific next step, not just "make it easier". A blank means nothing
+     was retrieved and needs a real step back; a reading fumble means the word WAS retrieved
+     and only the form slipped, which deserves the form drilled with support rather than a
+     return to multiple choice. */
+  const plan = planAfterFailure(pick.lastFailure);
+  if (plan && unlocked.includes(plan.skill)) skill = plan.skill;
 
   /* Pick the HARDEST cue this ability can still succeed at. Effortful and successful is
      the target; effortful and failing teaches nothing, and easy teaches nothing either. */
@@ -417,8 +421,10 @@ export function chooseIntervention(pick, opts = {}) {
     if (predictSuccess(states[skill], c) >= o.target) cue = c; else break;
   }
   if (skill === "context") cue = CUE.CONTEXT;
-  // A miss last time hands support back regardless of what the model predicts.
-  if (pick.lastFailure && cue > CUE.CHOOSE) cue -= 1;
+  /* The plan's cue wins when it asks for more support than the model would have chosen.
+     It never makes the next attempt harder — a miss is not a reason to raise the demand. */
+  if (plan && plan.skill === skill) cue = Math.min(cue, plan.cue);
+  else if (pick.lastFailure && cue > CUE.CHOOSE) cue -= 1;
 
   return {
     skill,
@@ -427,4 +433,164 @@ export function chooseIntervention(pick, opts = {}) {
     format: formatFromSkillCue(skill, cue),
     expected: predictSuccess(states[skill], cue),
   };
+}
+
+/* ── uncertainty-aware ability estimates ──
+   The previous model reported a bare rate and gated any claim behind invented constants:
+   eight observations, a twelve-point spread. Those numbers were not derived from anything,
+   and they conflated two different situations — an ability that is genuinely weak, and one
+   nobody has measured.
+
+   A Beta posterior over the success rate handles both properly. Successes and failures
+   update a distribution rather than a point, so "72% from 4 answers" and "72% from 90
+   answers" stop looking identical, and "unknown" appears naturally as a wide interval
+   rather than as a fake low score.
+
+   The prior is Beta(2,2) — weakly optimistic, centred on 50%, worth about four observations.
+   Strong enough to stop a single lucky answer reading as mastery, weak enough to get out of
+   the way once real evidence arrives. */
+export const PRIOR_A = 2, PRIOR_B = 2;
+
+export function posterior(successes, failures, prior = {}) {
+  const a = (prior.a ?? PRIOR_A) + Math.max(0, successes || 0);
+  const b = (prior.b ?? PRIOR_B) + Math.max(0, failures || 0);
+  const n = a + b;
+  const mean = a / n;
+  // Normal approximation to the Beta. At these sample sizes it is close enough, and the
+  // point is the WIDTH — how much the estimate should be trusted — not a exact quantile.
+  const sd = Math.sqrt((a * b) / (n * n * (n + 1)));
+  const lo = Math.max(0, mean - 1.96 * sd);
+  const hi = Math.min(1, mean + 1.96 * sd);
+  return { mean, sd, lo, hi, width: hi - lo, observations: (successes || 0) + (failures || 0) };
+}
+
+/* ── unknown is not weak ──
+   Five states, and the first is about EVIDENCE rather than ability. An ability nobody has
+   tested is not failing; it is unmeasured, and the correct response is to go and measure
+   it, not to declare a crisis. */
+export const STATE = {
+  UNKNOWN: "unknown",       // too little evidence to say anything
+  EMERGING: "emerging",     // some evidence, still wide
+  WEAK: "weak",
+  STABLE: "stable",
+  STRONG: "strong",
+};
+
+export const STATE_LABEL = {
+  unknown: "not measured yet",
+  emerging: "still learning",
+  weak: "needs work",
+  stable: "holding",
+  strong: "solid",
+};
+
+export function stateOf(post, opts = {}) {
+  const wideEnoughToDoubt = opts.wide ?? 0.35;
+  if (!post || post.observations < 3 || post.width > 0.45) return STATE.UNKNOWN;
+  if (post.width > wideEnoughToDoubt) return STATE.EMERGING;
+  if (post.mean < 0.60) return STATE.WEAK;
+  if (post.mean < 0.85) return STATE.STABLE;
+  return STATE.STRONG;
+}
+
+/* What is worth practising. Weakness is ONE input, not the objective — a point the review
+   was right to make. Two things make an ability worth spending a slot on:
+
+     how much room there is to improve        (1 - mean)
+     how little we actually know              (width)
+
+   An unmeasured ability therefore earns attention through its uncertainty rather than by
+   masquerading as a failing one, and a genuinely failing ability still outranks it because
+   the improvement term is larger. This is a stand-in for expected learning gain, not the
+   real thing — the real thing needs outcome data that does not exist yet. */
+export function practiceValue(post, opts = {}) {
+  const curiosity = opts.curiosity ?? CURIOSITY;
+  if (!post) return 0.5;
+  return (1 - post.mean) + curiosity * post.width;
+}
+
+/* Build a posterior for one ability from a stat record, preferring recent evidence.
+   Recent results are counted twice: the question is whether you can do it NOW. */
+export function abilityFrom(skill) {
+  const s = skill || {};
+  const seen = s.seen || 0;
+  const ok = Math.round((s.acc ?? 0) * seen);
+  const rec = recentAcc(s.recent, 10);
+  let succ = ok, fail = Math.max(0, seen - ok);
+  if (rec) {
+    const rOk = Math.round(rec.rate * rec.n);
+    succ += rOk;
+    fail += rec.n - rOk;
+  }
+  const post = posterior(succ, fail);
+  return { ...post, state: stateOf(post), tried: seen > 0 };
+}
+
+/* ── failure leads somewhere specific ──
+   "Any miss hands back a level of support" was a real improvement and is still too coarse.
+   What broke determines what should happen next, and the cue adjustment differs by kind:
+   a blank means nothing was retrieved at all and needs a large step back, while a reading
+   fumble means the word WAS retrieved and only the form slipped — that deserves the form
+   drilled with support, not a return to multiple choice. */
+export const FAILURE_PLAN = {
+  meaning:     { skill: "recognition", cue: CUE.CHOOSE,  note: "back to picking it out" },
+  blank:       { skill: "recognition", cue: CUE.CHOOSE,  note: "nothing came — start again from the meaning" },
+  reading:     { skill: "production",  cue: CUE.STRONG,  note: "the word was there, the reading slipped" },
+  production:  { skill: "production",  cue: CUE.STRONG,  note: "produce it with a hint first" },
+  orthography: { skill: "production",  cue: CUE.PARTIAL, note: "the form needs work" },
+  listening:   { skill: "listening",   cue: CUE.CHOOSE,  note: "hear it again with options" },
+  context:     { skill: "production",  cue: CUE.FREE,    note: "secure the word before using it" },
+};
+
+export function planAfterFailure(failure) {
+  return FAILURE_PLAN[failure] || null;
+}
+
+/* ── latency, relative to this learner and this kind of exercise ──
+   Three universal thresholds cannot mean the same thing for picking one of four options and
+   for typing out かようび. What matters is whether an answer was slow FOR THIS PERSON on
+   THIS kind of question, so the norm is built per skill+format from their own history. */
+export function latencyNorms(evidence = [], opts = {}) {
+  const min = opts.minSamples || 8;
+  const buckets = {};
+  for (const e of evidence) {
+    if (!e || !e.ok || !(e.ms > 0)) continue;          // correct answers only: a wrong answer's timing says little
+    const k = (e.skill || "?") + "|" + (e.format || "?");
+    (buckets[k] || (buckets[k] = [])).push(e.ms);
+  }
+  const out = {};
+  for (const k of Object.keys(buckets)) {
+    const xs = buckets[k].slice().sort((a, b) => a - b);
+    if (xs.length < min) continue;                     // too few to be a norm
+    const q = (p) => xs[Math.min(xs.length - 1, Math.floor(p * xs.length))];
+    out[k] = { n: xs.length, median: q(0.5), fast: q(0.25), slow: q(0.75) };
+  }
+  return out;
+}
+
+export function latencyVerdict(ms, skill, format, norms) {
+  const n = norms && norms[(skill || "?") + "|" + (format || "?")];
+  if (!n || !(ms > 0)) return null;                    // no norm yet: say nothing
+  if (ms <= n.fast) return "fast";
+  if (ms >= n.slow) return "slow";
+  return "normal";
+}
+
+/* ── confusion ──
+   Which words this learner actually mixes up, learned from the wrong options they pick.
+   Far better distractors than "same length": a distractor should be plausible TO THIS
+   LEARNER and wrong in this context. */
+export function confusionFrom(evidence = []) {
+  const map = new Map();
+  for (const e of evidence) {
+    if (!e || e.ok || !e.confused) continue;
+    if (!map.has(e.id)) map.set(e.id, new Map());
+    const inner = map.get(e.id);
+    inner.set(e.confused, (inner.get(e.confused) || 0) + 1);
+  }
+  const out = new Map();
+  for (const [id, inner] of map) {
+    out.set(id, [...inner.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k));
+  }
+  return out;
 }

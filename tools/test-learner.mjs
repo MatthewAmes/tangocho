@@ -8,6 +8,8 @@ import {
   classifyFailure, editDistance, makeEvidence, profileFrom, confidenceFor,
   CONFIDENCE, biggestGap, explainPick, summarise,
   DIRECTIONS, pushRecent, recentAcc, predictSuccess, chooseIntervention, skillAfterFailure,
+  posterior, stateOf, STATE, practiceValue, abilityFrom, planAfterFailure,
+  latencyNorms, latencyVerdict, confusionFrom,
 } from "./learner.mjs";
 
 let fail = 0, run = 0;
@@ -16,6 +18,7 @@ const eq = (a, b, m) => { if (a !== b) throw new Error(`${m || ""} expected ${b}
 const gt = (a, b, m) => { if (!(a > b)) throw new Error(`${m || ""} expected ${a} > ${b}`); };
 const lt = (a, b, m) => { if (!(a < b)) throw new Error(`${m || ""} expected ${a} < ${b}`); };
 const ok = (v, m) => { if (!v) throw new Error(m || "expected truthy"); };
+const lte = (a, b, m) => { if (!(a <= b)) throw new Error(`${m || ""} expected ${a} <= ${b}`); };
 
 console.log("=== which skill an exercise measures ===");
 t("each format maps to the ability it actually tests", () => {
@@ -305,6 +308,100 @@ t("a miss hands support back", () => {
   const clean = chooseIntervention(base);
   const missed = chooseIntervention({ ...base, lastFailure: "production" });
   lt(missed.cue, clean.cue, "after a miss the next attempt must demand less");
+});
+
+console.log("\n=== uncertainty-aware estimates (P1) ===");
+t("the same rate from more evidence is a narrower estimate", () => {
+  /* This is what the invented "8 observations" constant was standing in for. 72% from four
+     answers and 72% from ninety are not the same claim, and a bare rate cannot say so. */
+  const thin = posterior(3, 1);
+  const thick = posterior(72, 28);
+  gt(thin.width, thick.width, "less evidence must mean a wider estimate");
+});
+t("no evidence at all is maximally uncertain, not zero", () => {
+  const none = posterior(0, 0);
+  eq(none.observations, 0);
+  eq(Math.round(none.mean * 100), 50, "the prior is centred, not pessimistic");
+  gt(none.width, 0.4);
+});
+t("unknown is a separate state from weak", () => {
+  // The distinction the review called foundational: nobody has measured this, versus
+  // this has been measured and is failing.
+  eq(stateOf(posterior(0, 0)), STATE.UNKNOWN);
+  eq(stateOf(posterior(1, 1)), STATE.UNKNOWN, "two answers is not a measurement");
+  eq(stateOf(posterior(4, 26)), STATE.WEAK, "measured and failing");
+  eq(stateOf(posterior(26, 4)), STATE.STABLE);
+  eq(stateOf(posterior(60, 2)), STATE.STRONG);
+});
+t("a failing ability is worth more practice than an unmeasured one", () => {
+  const failing = practiceValue(posterior(4, 26));
+  const unknown = practiceValue(posterior(0, 0));
+  gt(failing, unknown, "weakness should outrank curiosity");
+});
+t("an unmeasured ability is still worth more than a solid one", () => {
+  const unknown = practiceValue(posterior(0, 0));
+  const solid = practiceValue(posterior(60, 2));
+  gt(unknown, solid, "unmeasured deserves a sample; solid does not need one");
+});
+t("recent results carry extra weight in the ability estimate", () => {
+  const collapsing = abilityFrom({ seen: 20, acc: 0.9, recent: "0000000000" });
+  const holding = abilityFrom({ seen: 20, acc: 0.9, recent: "1111111111" });
+  gt(holding.mean, collapsing.mean, "a recent collapse must move the estimate");
+});
+
+console.log("\n=== failure leads somewhere specific ===");
+t("each failure names its own next step, not just 'easier'", () => {
+  eq(planAfterFailure("reading").skill, "production", "the word was there; drill the form");
+  eq(planAfterFailure("blank").skill, "recognition", "nothing came back; start from meaning");
+  eq(planAfterFailure("listening").skill, "listening");
+  eq(planAfterFailure("context").skill, "production", "secure the word before using it");
+  eq(planAfterFailure(null), null);
+});
+t("a plan never makes the next attempt harder", () => {
+  const base = { caps: { type: true }, recognition: { tried: true, acc: 0.98, S: 60, recent: "1111111111", seen: 20 },
+    production: { tried: true, acc: 0.95, S: 40, recent: "1111111111", seen: 20 } };
+  const clean = chooseIntervention(base);
+  const missed = chooseIntervention({ ...base, lastFailure: "reading" });
+  lte(missed.cue, clean.cue, "a miss must not raise the demand");
+});
+
+console.log("\n=== latency relative to the learner ===");
+const lat = (skill, format, ms, ok = true) => makeEvidence({ id: "x", deck: "vocab", format, skill, ok, ms });
+t("no norm yet means no verdict — silence rather than a guess", () => {
+  const norms = latencyNorms([lat("production", "type", 3000)]);
+  eq(latencyVerdict(9000, "production", "type", norms), null);
+});
+t("the same duration reads differently for different exercise types", () => {
+  /* Four seconds picking one of four options is slow. Four seconds typing かようび is not.
+     Three universal thresholds cannot express that. */
+  const evs = [];
+  for (let i = 0; i < 12; i++) evs.push(lat("recognition", "mc", 1200 + i * 40));
+  for (let i = 0; i < 12; i++) evs.push(lat("production", "type", 6000 + i * 100));
+  const norms = latencyNorms(evs);
+  eq(latencyVerdict(4000, "recognition", "mc", norms), "slow");
+  eq(latencyVerdict(4000, "production", "type", norms), "fast");
+});
+t("wrong answers do not set the norm", () => {
+  const evs = [];
+  for (let i = 0; i < 12; i++) evs.push(lat("recognition", "mc", 1200, true));
+  for (let i = 0; i < 12; i++) evs.push(lat("recognition", "mc", 30000, false));
+  const norms = latencyNorms(evs);
+  lte(norms["recognition|mc"].median, 2000, "a stalled wrong answer must not become normal");
+});
+
+console.log("\n=== learner-specific confusion ===");
+t("the words this learner actually mixes up are remembered", () => {
+  const evs = [
+    makeEvidence({ id: "miru", deck: "vocab", format: "mc", ok: false, confused: "kiku" }),
+    makeEvidence({ id: "miru", deck: "vocab", format: "mc", ok: false, confused: "kiku" }),
+    makeEvidence({ id: "miru", deck: "vocab", format: "mc", ok: false, confused: "yomu" }),
+  ];
+  const c = confusionFrom(evs);
+  eq(c.get("miru")[0], "kiku", "the most-confused word comes first");
+});
+t("correct answers contribute no confusion", () => {
+  const evs = [makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true, confused: "b" })];
+  eq(confusionFrom(evs).size, 0);
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} learner tests passed`);
