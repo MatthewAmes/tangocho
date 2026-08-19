@@ -696,6 +696,51 @@ t("no contextual material means no contextual exercise", () => {
   ok(f !== "cloze", `got ${f} with no context available`);
 });
 
+console.log("\n=== back-to-back sessions (reported bug) ===");
+t("a word answered minutes ago is not pulled back to pad the next session", () => {
+  /* Reported from real use: the same handful of cards in every lesson, eight lessons
+     running. Cause was padding — review slots were filled from anything studied, due or
+     not, so a small studied pool recycled endlessly. */
+  const justNow = { seen: 4, correct: 4, level: 2, streak: 4, last: NOW - 5 * 60000,
+    fsrs: { S: 2.4, D: 5, last: NOW - 5 * 60000, due: NOW + 2 * DAY }, ms: 12000, msN: 4 };
+  const src = [{
+    deck: "vocab", caps: { type: true, listen: true },
+    items: [
+      ...Array.from({ length: 8 }, (_, i) => ({ id: "done" + i, order: i })),
+      ...Array.from({ length: 40 }, (_, i) => ({ id: "new" + i, order: 100 + i })),
+    ],
+    stats: Object.fromEntries(Array.from({ length: 8 }, (_, i) => ["done" + i, justNow])),
+  }];
+  const picks = buildSession(src, { now: NOW, size: 20 });
+  const recycled = picks.filter((p) => String(p.item.id).startsWith("done"));
+  const fresh = picks.filter((p) => p.fresh);
+  eq(recycled.length, 0, "nothing answered five minutes ago should reappear");
+  gt(fresh.length, 0, "the space should go to new material instead");
+});
+t("a genuinely overdue word is exempt from the cooldown", () => {
+  // Cooling must never outrank actually needing review.
+  const overdue = { seen: 10, correct: 5, level: 1, streak: 0, last: NOW - 30 * 60000,
+    fsrs: { S: 0.05, D: 8, last: NOW - 30 * 60000, due: NOW - DAY }, ms: 30000, msN: 10 };
+  const src = [{
+    deck: "vocab", caps: {},
+    items: [{ id: "urgent" }, ...Array.from({ length: 20 }, (_, i) => ({ id: "n" + i, order: i }))],
+    stats: { urgent: overdue },
+  }];
+  const picks = buildSession(src, { now: NOW, size: 16 });
+  ok(picks.some((p) => p.item.id === "urgent"), "a badly decayed word must still come back");
+});
+t("a repeat beats an empty session when there is nothing else", () => {
+  const justNow = { seen: 3, correct: 3, level: 2, streak: 3, last: NOW - 10 * 60000,
+    fsrs: { S: 3, D: 5, last: NOW - 10 * 60000, due: NOW + DAY }, ms: 9000, msN: 3 };
+  const src = [{
+    deck: "vocab", caps: {},
+    items: Array.from({ length: 5 }, (_, i) => ({ id: "only" + i, order: i })),
+    stats: Object.fromEntries(Array.from({ length: 5 }, (_, i) => ["only" + i, justNow])),
+  }];
+  const picks = buildSession(src, { now: NOW, size: 16 });
+  gt(picks.length, 0, "a short session is fine; an empty one is not");
+});
+
 console.log("\n=== describe ===");
 t("the summary counts unique items, not repeats", () => {
   const picks = buildSession(withNew(), { now: NOW, size: 24 });

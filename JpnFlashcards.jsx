@@ -2294,7 +2294,7 @@ export default function JpnFlashcards() {
     });
   }, []);
 
-  const recordResult = useCallback((id, got, dir, ms, area) => {
+  const recordResult = useCallback((id, got, dir, ms, area, outcome) => {
     const t = ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0;  // sanity bounds: ignore misfires & walked-away cards
     logDay({ ok: got, ms: t, deck: "class", area });
     setCards((prev) => {
@@ -2325,7 +2325,11 @@ export default function JpnFlashcards() {
         const fsrs = isProd ? c.fsrs : nextState;
         const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
-        const base = { ...c, ease, fsrs, rfsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
+        /* The rolling history and the failure kind ride along with the card update.
+           A separate writer racing this one is how a record lost half of itself. */
+        const base = applyOutcome(
+          { ...c, ease, fsrs, rfsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() },
+          { ok: got, failure: outcome && outcome.failure, skill: outcome && outcome.skill });
         if (dir === "prod") {                       // EN→JP recall (production)
           return {
             ...base,
@@ -2513,7 +2517,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const confusion = useMemo(() => confusionFrom(evidence), [evidence]);
   const norms = useMemo(() => latencyNorms(evidence), [evidence]);
   const [foreign, setForeign] = useState([]);
-  useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length]);
+  /* Reloaded whenever a session ends, not once per page load. This snapshot IS the
+     other decks' progress; keeping a stale copy meant a kanji answered in lesson one
+     still looked untouched in lesson eight and was introduced as new every time. */
+  const [foreignEpoch, setForeignEpoch] = useState(0);
+  useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length, foreignEpoch]);
 
   /* The study plan reaches the scheduler here: pace decides how long a session runs, and
      the area priorities weight which decks it draws from. */
@@ -2716,6 +2724,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const isProd = fmt === "type";
   const done = running && pos >= queue.length;
 
+  /* A finished session is the moment the other decks' snapshot is certainly stale.
+     This has to live with the other hooks: there are early returns further down, and a
+     hook placed after them runs on some renders and not others, which React counts as
+     the hook order changing. */
+  useEffect(() => { if (done) setForeignEpoch((n) => n + 1); }, [done]);
+
   /* Multiple choice needs wrong answers that are actually tempting. Same kind and similar
      length beats random: picking "Tuesday" out of {Tuesday, to swim, expensive, library}
      tests nothing, because three options are obviously not days. */
@@ -2783,8 +2797,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        never listen while you have been listening all week. */
     const workedArea = fmt === "listen" ? "listening" : fmt === "type" ? "writing" : areaForDeck(c.src || "class");
     // Kana, kanji and 10k cards belong to their own decks and go home to their own keys.
-    if (c.src) recordForeign(c, got, thinkRef.current || 0, workedArea);
-    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined, workedArea);
+    const outcome = { failure: got ? null : classifyFailure({ format: fmt,
+      expected: c.reading || c.term, got: verdict && verdict.got ? verdict.got : "" }),
+      skill: skillForFormat(fmt) };
+    if (c.src) recordForeign(c, got, thinkRef.current || 0, workedArea, outcome);
+    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined, workedArea, outcome);
 
     /* Evidence about the ABILITY, recorded alongside the card update. "Wrong" on its own
        is nearly useless: someone who reads 火曜日, knows it means Tuesday, and mistypes
@@ -2808,10 +2825,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
-      /* Feed the outcome back into the item so the next intervention can react: a rolling
-         recent history (lifetime accuracy reacts far too slowly to notice a collapse) and
-         the kind of failure, so a reading fumble leads somewhere different from a blank. */
-      recordOutcome(c, { ok: got, failure: rec.failure, skill: evSkill });
+
     }
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -3001,6 +3015,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       </div>
     );
   }
+
 
   if (done) {
     const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
@@ -3734,30 +3749,6 @@ function applyOutcome(st, { ok, failure, skill }) {
   return out;
 }
 
-async function recordOutcome(card, res) {
-  if (!card) return;
-  if (!card.src) {
-    // Vocabulary lives in the deck array; the deck writer owns it, so patch in place.
-    try {
-      const raw = await sGet(STORE_KEY);
-      const list = raw ? JSON.parse(raw) : null;
-      if (!Array.isArray(list)) return;
-      const i = list.findIndex((c) => c.id === card.id);
-      if (i < 0) return;
-      list[i] = applyOutcome(list[i], res);
-      await sSet(STORE_KEY, JSON.stringify(list));
-    } catch (e) { /* a lost signal is better than a broken session */ }
-    return;
-  }
-  try {
-    const key = foreignKey(card.src);
-    const raw = await sGet(key);
-    const store = raw ? JSON.parse(raw) : {};
-    if (Array.isArray(store)) return;                  // legacy shape; migrated elsewhere
-    store[card.srcId] = applyOutcome(store[card.srcId], res);
-    await sSet(key, JSON.stringify(store));
-  } catch (e) {}
-}
 
 const PLAN_KEY = "jpn101:plan";
 
@@ -3914,7 +3905,7 @@ function foreignCard(src, raw) {
    its own copy of the record, so this reads, updates and writes that key rather than
    touching the vocabulary deck. Same stat shape, same memory model, same everything —
    only the key differs. */
-async function recordForeign(card, ok, ms, area) {
+async function recordForeign(card, ok, ms, area, outcome) {
   const key = foreignKey(card.src);
   try {
     const raw = await sGet(key);
@@ -3931,13 +3922,13 @@ async function recordForeign(card, ok, ms, area) {
       await sSet(key, JSON.stringify(next));
     } else {
       const st = store[card.srcId] || { seen: 0, correct: 0, level: 0, streak: 0 };
-      store[card.srcId] = {
+      store[card.srcId] = applyOutcome({
         ...st, last: now, fsrs: statReview(st, ok, ms, now),
         seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
         streak: ok ? (st.streak || 0) + 1 : 0,
         level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
         ms: (st.ms || 0) + (ms || 0), msN: (st.msN || 0) + (ms ? 1 : 0),
-      };
+      }, { ok, ...(outcome || {}) });
       await sSet(key, JSON.stringify(store));
     }
     logDay({ ok, ms: ms || 0, deck: card.src, area });

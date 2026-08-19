@@ -40,6 +40,11 @@ export const DEFAULTS = {
   strongShare: 0.3,     // ...and so does practising what you already half-know, see below
   vocabShare: 0.65,     // vocab-led: the rest of the decks share what's left
   maxLeeches: 3,        // stuck words that may appear at once, matching the vocab tab
+  /* An item answered within this window is not pulled back to pad a session. Review
+     slots used to be filled from whatever had been studied, due or not, so a learner
+     with a small studied pool saw the same handful in every consecutive session — the
+     scheduler was padding rather than reviewing. */
+  cooldownMinutes: 90,
   urgencyFloor: 0.75,   // a deck below this need does not get a guaranteed variety slot
   jitterBand: 0.3,      // tie-break spread only — never wide enough to reorder priorities
   typeAtStability: 14,  // recognition strong enough to UNLOCK production
@@ -246,6 +251,14 @@ export function candidates(sources, opts = {}) {
         item,
         st,
         fresh,
+        /* Answered so recently that showing it again is repetition, not review. An item
+           the scheduler says is actually DUE is never cooling, however recently it was
+           answered — a missed card goes into short relearning steps on purpose, and its
+           decay score can still look mild while it is genuinely owed. */
+        cooling: !fresh
+          && daysSince(st, now) * 1440 < o.cooldownMinutes
+          && !(st && st.fsrs && st.fsrs.due && st.fsrs.due <= now)
+          && urgency < 4,
         stale: staleReason !== null,
         staleReason,
         caps: capsOf(s, item),
@@ -328,7 +341,11 @@ export function buildSession(sources, opts = {}) {
   const leechy = o.isLeech || ((st) => !!(
     st && st.seen >= 8 && (st.correct || 0) / st.seen < 0.5 && !(st.streak > 0)
   ));
-  const knownAll = all.filter((c) => !c.fresh);
+  /* Cooling items are set aside entirely. If that leaves the session short, it is
+     filled with NEW material rather than by showing the same words again — meeting a
+     word you have never seen beats a fourth pass over one answered ten minutes ago. */
+  const knownAll = all.filter((c) => !c.fresh && !c.cooling);
+  const cooling = all.filter((c) => !c.fresh && c.cooling);
   const stuck = knownAll.filter((c) => leechy(c.st)).sort((a, b) => b.score - a.score);
   /* Kept leeches must be RANKED BACK IN, not appended. Concatenating them onto the end
      stripped the rank their score earned, and every later slice() cut from the front — so
@@ -349,7 +366,7 @@ export function buildSession(sources, opts = {}) {
      of the session for them produced a three-card session on an 840-word deck. When the
      review supply cannot fill the session, new material may use what is left — still
      never more than maxNew, because interference is the real limit. */
-  const knownAll0 = all.filter((c) => !c.fresh).length;
+  const knownAll0 = knownAll.length;
   const room = Math.max(Math.floor(size * o.newShare), size - knownAll0);
   const newCount = Math.min(fresh.length, o.maxNew, Math.floor(room / perNew));
   const chosenNew = fresh.slice(0, newCount);
@@ -454,9 +471,14 @@ export function buildSession(sources, opts = {}) {
      slots remain, fill them with whatever is next-most-needed. */
   const chosenKeys = new Set([...vocab, ...others].map(keyOf));
   const shortfall = reviewSlots - (vocab.length + others.length);
-  const filler = shortfall > 0
-    ? known.filter((c) => !chosenKeys.has(keyOf(c))).slice(0, shortfall)
-    : [];
+  /* Cooled items are the last thing reached for, and ONLY to keep a session from being
+     trivially short. Padding a perfectly good eighteen-item session up to twenty with
+     words answered ten minutes ago is the exact behaviour being fixed — a slightly
+     shorter session is the honest outcome. */
+  const spare = shortfall > 0 ? known.filter((c) => !chosenKeys.has(keyOf(c))).slice(0, shortfall) : [];
+  const bodyCount = chosenNew.length * perNew + vocab.length + others.length + spare.length;
+  const rescue = bodyCount < o.minItems ? cooling.slice(0, o.minItems - bodyCount) : [];
+  const filler = [...spare, ...rescue];
 
   /* Interleave rather than concatenate. Blocks of one deck let you settle into a mode,
      and removing that predictability is the entire point of interleaving. Vocabulary is
