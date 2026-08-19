@@ -2150,7 +2150,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         <div className="tc-learn">
           <span className="tc-kindchip tc-learnchip">new word</span>
           {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
-          <div className="tc-term">{card.term}</div>
+          <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
           <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
           <div className="tc-romaji">{card.romaji}</div>
           <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
@@ -2186,7 +2186,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               {card.reading && card.reading !== card.term && (
                 <div className="tc-mcfurigana">{card.reading}</div>
               )}
-              <div className="tc-mcterm">{card.term}</div>
+              <div className={"tc-mcterm" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
               <SpeakBtn text={card.reading || card.term} />
             </div>
           )}
@@ -2244,7 +2244,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             ) : (
               <>
                 <span className="tc-kindchip">{KIND_LABEL[card.kind] || ""}</span>
-                <div className="tc-term">{card.term}</div>
+                <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
                 <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
                 {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
                 <span className="tc-flipcue">tap to flip</span>
@@ -7917,15 +7917,13 @@ body{min-height:100%;overscroll-behavior-y:none;}
   display:flex;flex-direction:column;align-items:center;gap:10px;
   padding:34px 28px;box-sizing:border-box;overflow-y:auto;overscroll-behavior:contain;
   box-shadow:0 24px 54px -22px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14);}
-/* Centred with auto margins rather than justify-content. A centred flex column whose
-   content is taller than the box overflows at BOTH ends, and the top half escapes above
-   the card entirely — which is what put a giant emoji outside the card on long backs.
-   Auto margins collapse to zero when there is no room, so tall content pins to the top
-   and scrolls instead of spilling. */
-.tc-face > *:first-child{margin-top:auto;}
-.tc-face > *:last-child{margin-bottom:auto;}
-.tc-face > .tc-kindchip:first-child{margin-top:0;}
-.tc-face > .tc-kindchip + *{margin-top:auto;}
+/* "safe center" centres normally but falls back to flex-start when the content is taller
+   than the box, so a long back scrolls instead of escaping above the card. The previous
+   fix used auto margins, which looked fine until you noticed the chip and the flip cue
+   are absolutely positioned — so only the top margin ever applied and every card sat low
+   with a band of dead space above it. (No backticks in here: this whole stylesheet lives
+   inside a template literal, and one closes it.) */
+.tc-face{justify-content:center;justify-content:safe center;}
 .tc-back{transform:rotateY(180deg);}
 .tc-kindchip{position:absolute;top:16px;right:18px;font-family:"Yu Gothic","Noto Sans JP",sans-serif;
   font-size:11.5px;color:rgba(255,255,255,.7);letter-spacing:.1em;border:0;
@@ -7933,6 +7931,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-term{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:54px;line-height:1.15;font-weight:600;text-align:center;color:#fff;}
 .tc-term-sm{font-size:46px;}
+/* Size by length instead of one size for everything. A lone kanji at the shared 54px read
+   as small and cramped — and the strokes separating it from a near neighbour are exactly
+   what you are being asked to see — while a ten-character phrase needs to stay on the
+   card. The steps below keep every length filling roughly the same width. */
+.tc-term-1{font-size:132px;line-height:1;}
+.tc-term-2{font-size:104px;line-height:1.02;}
+.tc-term-3{font-size:84px;line-height:1.05;}
+.tc-term-4{font-size:72px;line-height:1.08;}
+.tc-term-5{font-size:62px;line-height:1.1;}
 .tc-frontromaji{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:rgba(255,255,255,.55);font-style:normal;}
 .tc-prompt-en{font-size:26px;font-weight:600;text-align:center;color:#fff;line-height:1.3;}
 .tc-flipcue{position:absolute;bottom:14px;font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);}
@@ -7963,6 +7970,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
   font-size:19px;letter-spacing:.06em;color:rgba(255,255,255,.66);}
 .tc-mcterm{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:44px;line-height:1.15;font-weight:600;text-align:center;color:#fff;}
+.tc-mcterm.tc-term-1{font-size:104px;line-height:1;}
+.tc-mcterm.tc-term-2{font-size:84px;line-height:1.02;}
+.tc-mcterm.tc-term-3{font-size:70px;line-height:1.05;}
+.tc-mcterm.tc-term-4{font-size:60px;line-height:1.08;}
+.tc-mcterm.tc-term-5{font-size:52px;line-height:1.1;}
 .tc-listenprompt{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:6px;}
 .tc-listenprompt .tc-speakbtn{font-size:34px;padding:16px 20px;}
 .tc-noaudio{appearance:none;margin-top:4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);
