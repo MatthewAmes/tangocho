@@ -741,6 +741,35 @@ t("a repeat beats an empty session when there is nothing else", () => {
   gt(picks.length, 0, "a short session is fine; an empty one is not");
 });
 
+t("a card just answered WRONG comes straight back", () => {
+  /* The cooldown that stops padding must never suppress relearning. A miss puts a card
+     into short steps on purpose; holding it back for ninety minutes is a worse bug than
+     the repetition the cooldown exists to prevent. */
+  const justMissed = { seen: 5, correct: 2, level: 0, streak: 0, last: NOW - 4 * 60000,
+    lastFailure: "meaning", recent: "10100",
+    fsrs: { S: 0.4, D: 8, last: NOW - 4 * 60000, due: NOW + 6 * 60000, relearning: true },
+    ms: 15000, msN: 5 };
+  const src = [{
+    deck: "vocab", caps: {},
+    items: [{ id: "missed" }, ...Array.from({ length: 30 }, (_, i) => ({ id: "n" + i, order: i }))],
+    stats: { missed: justMissed },
+  }];
+  const picks = buildSession(src, { now: NOW, size: 20 });
+  ok(picks.some((p) => p.item.id === "missed"), "a card missed four minutes ago must return");
+});
+t("a card answered CORRECTLY four minutes ago does not", () => {
+  const justRight = { seen: 5, correct: 5, level: 3, streak: 5, last: NOW - 4 * 60000,
+    recent: "11111",
+    fsrs: { S: 4, D: 4, last: NOW - 4 * 60000, due: NOW + 3 * DAY }, ms: 15000, msN: 5 };
+  const src = [{
+    deck: "vocab", caps: {},
+    items: [{ id: "fine" }, ...Array.from({ length: 30 }, (_, i) => ({ id: "n" + i, order: i }))],
+    stats: { fine: justRight },
+  }];
+  const picks = buildSession(src, { now: NOW, size: 20 });
+  eq(picks.some((p) => p.item.id === "fine"), false, "a correct answer should not be re-asked immediately");
+});
+
 console.log("\n=== describe ===");
 t("the summary counts unique items, not repeats", () => {
   const picks = buildSession(withNew(), { now: NOW, size: 24 });

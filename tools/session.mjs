@@ -258,6 +258,13 @@ export function candidates(sources, opts = {}) {
         cooling: !fresh
           && daysSince(st, now) * 1440 < o.cooldownMinutes
           && !(st && st.fsrs && st.fsrs.due && st.fsrs.due <= now)
+          /* A card just answered WRONG is the one case where coming straight back is the
+             whole point — it is in short relearning steps deliberately. Suppressing those
+             for ninety minutes broke relearning outright, which is a worse bug than the
+             padding this cooldown exists to stop. */
+          && !(st && st.fsrs && st.fsrs.relearning)
+          && !(st && st.lastFailure)
+          && !(st && st.seen > 0 && !(st.streak > 0))
           && urgency < 4,
         stale: staleReason !== null,
         staleReason,
