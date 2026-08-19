@@ -40,7 +40,8 @@ export const DEFAULTS = {
   vocabShare: 0.65,     // vocab-led: the rest of the decks share what's left
   maxLeeches: 3,        // stuck words that may appear at once, matching the vocab tab
   urgencyFloor: 0.75,   // a deck below this need does not get a guaranteed variety slot
-  typeAtStability: 14,  // produce-and-spell only once a word is genuinely solid
+  typeAtStability: 14,  // recognition strong enough to UNLOCK production
+  prodWeakStability: 4, // ...below this the production memory itself is still fragile
   listenAtStability: 5, // audio recall a little earlier — it is easier than producing
   minItems: 8,
   maxItems: 40,
@@ -64,6 +65,32 @@ export function need(st, now = Date.now()) {
   const days = Math.max(0, (now - (f.last || 0)) / DAY);
   const r = retrievability(days, f.S);
   return (1 - r) * 8 + (st.streak ? 0 : 0.6);
+}
+
+/* ── one item, several memories ──
+   A word is not a single memory. Reading 火曜日 and producing it from "Tuesday" are
+   different abilities of different strength, and the deck already stores them separately
+   (`fsrs` for recognition, `rfsrs` for production). Choosing a production exercise from
+   the RECOGNITION state — which is what this file used to do — trains the ability the
+   learner already has and ignores the one they do not.
+
+   Deliberately only two dimensions for now. Listening, orthography and contextual use are
+   genuinely separate abilities, but the app does not record them yet, and inventing state
+   it cannot observe would be worse than naming the gap. */
+export function skillOf(st, which = "fsrs") {
+  const rec = which === "fsrs";
+  const seen = (st && (rec ? st.seen : st.rseen)) || 0;
+  const correct = (st && (rec ? st.correct : st.rcorrect)) || 0;
+  const f = st && (rec ? (st.fsrs || seedFromHistory(st)) : st.rfsrs);
+  return { seen, acc: seen > 0 ? correct / seen : 0, S: (f && f.S) || 0, tried: seen > 0 };
+}
+
+/* What an item can actually be ASKED. Reserving a slot for typing from stability alone
+   and only discovering in the UI that the item has no reading spends the slot on nothing,
+   so capability belongs in the candidate, not downstream of it. */
+export function capsOf(source, item) {
+  if (source && typeof source.capsFor === "function") return source.capsFor(item) || {};
+  return { ...(source && source.caps), ...(item && item.caps) };
 }
 
 /* Days since an item was last put in front of the learner, whatever the deck. */
@@ -92,19 +119,28 @@ export function daysSince(st, now = Date.now()) {
       nothing can be done. An annual check-in is cheap insurance against model error — a
       different claim from "reviewing feels safer", and the only one worth paying for.
 
-   Never studied does not count as stale — that is "new". */
-export function isStale(st, now = Date.now(), opts = DEFAULTS) {
+   Never studied does not count as stale — that is "new".
+
+   The two triggers are NOT the same intervention and are reported separately. "decay" is
+   a memory about to be lost and deserves the urgency it gets. "annual_check" is a
+   diagnostic sample on an item the model claims is fine — it should be measured, not
+   drilled, and it should not compete with a genuinely fading word for the same priority. */
+export function staleReasonFor(st, now = Date.now(), opts = DEFAULTS) {
   const o = typeof opts === "number"
     ? { ...DEFAULTS, ceilingDays: opts }               // legacy: a bare day count
     : { ...DEFAULTS, ...opts };
-  if (!st || !(st.seen > 0)) return false;
-
-  const d = daysSince(st, now);
-  if (d > o.ceilingDays) return true;                  // (2) too long to trust the estimate
+  if (!st || !(st.seen > 0)) return null;
 
   const f = st.fsrs || seedFromHistory(st);
-  if (!f || !(f.S > 0)) return false;                  // no memory model, no opinion
-  return retrievability(d, f.S) < o.recallFloor;       // (1) genuinely fading
+  const d = daysSince(st, now);
+  // Decay is checked first: an item that is BOTH old and fading is fading, not a sample.
+  if (f && f.S > 0 && retrievability(d, f.S) < o.recallFloor) return "decay";
+  if (d > o.ceilingDays) return "annual_check";
+  return null;
+}
+
+export function isStale(st, now = Date.now(), opts = DEFAULTS) {
+  return staleReasonFor(st, now, opts) !== null;
 }
 
 /* Typical time per item, from the learner's own history rather than a guess.
@@ -152,16 +188,27 @@ export function candidates(sources, opts = {}) {
     for (const item of s.items || []) {
       const st = stats[item.id] || null;
       const fresh = !st || !(st.seen > 0);
-      const stale = isStale(st, now, o);
+      const staleReason = staleReasonFor(st, now, o);
+      /* `need` is pure memory urgency and `score` is need plus policy. Keeping them apart
+         matters because a threshold named urgencyFloor was being compared against the
+         composite — so a deck priority could carry an item over an "urgency" bar it had
+         not met, which is not what the name promises anyone reading it. */
+      const urgency = need(st, now);
       out.push({
         deck: s.deck,
         item,
         st,
         fresh,
-        stale,
-        // A stale item jumps the queue: the whole point of the ceiling is that it beats
-        // whatever FSRS currently believes about the card.
-        score: need(st, now) + (stale ? 4 : 0) + (s.weight || 0),
+        stale: staleReason !== null,
+        staleReason,
+        caps: capsOf(s, item),
+        recognition: skillOf(st, "fsrs"),
+        production: skillOf(st, "rfsrs"),
+        need: urgency,
+        /* A fading item jumps the queue. An annual diagnostic does not: it is a sample on
+           something the model says is fine, and letting it outrank a word actually being
+           lost is exactly the mistake the day-based ceiling used to make. */
+        score: urgency + (staleReason === "decay" ? 4 : staleReason === "annual_check" ? 0.5 : 0) + (s.weight || 0),
       });
     }
   }
@@ -221,7 +268,18 @@ export function buildSession(sources, opts = {}) {
      purely by decay fills up with exactly those words — they are the most decayed things
      you own. The vocabulary tab already caps them at three; the unified session has to as
      well, or it becomes a session of nothing but your worst cards. */
-  const leechy = o.isLeech || ((st) => (st && st.seen >= 8 && (st.correct || 0) / st.seen < 0.5));
+  /* Lifetime accuracy alone is too slow to react. A word missed for months and now being
+     answered correctly stays flagged, and a word that was solid and has just fallen apart
+     stays unflagged until enough history accumulates to drag the average down. Requiring
+     the current streak to be broken as well means throttling applies to words that are
+     stuck NOW, not words that were once hard.
+
+     Honest limit: the stat record keeps totals and a current streak, not a review log, so
+     "recent" here means "the last answer was wrong". A rolling window of the last N
+     results would be better and needs a schema change to store them. */
+  const leechy = o.isLeech || ((st) => !!(
+    st && st.seen >= 8 && (st.correct || 0) / st.seen < 0.5 && !(st.streak > 0)
+  ));
   const knownAll = all.filter((c) => !c.fresh);
   const stuck = knownAll.filter((c) => leechy(c.st)).sort((a, b) => b.score - a.score);
   /* Kept leeches must be RANKED BACK IN, not appended. Concatenating them onto the end
@@ -284,8 +342,13 @@ export function buildSession(sources, opts = {}) {
        reserve as one need-sorted list quietly starved the hardest format: the very
        strongest words are the least decayed, so they sort last, and spelling — the whole
        point of having a production exercise — never appeared at all. */
-    const typeable = rest.filter((c) => stabilityOf(c) >= o.typeAtStability);
+    /* Capability is checked HERE, not downstream. Reserving a production slot for an item
+       the interface cannot ask for production of — a kanji card with no reading, say —
+       spent the slot on a recognition question and quietly defeated the reserve's whole
+       purpose. An item also has to be capable of the exercise it is being reserved FOR. */
+    const typeable = rest.filter((c) => c.caps && c.caps.type && stabilityOf(c) >= o.typeAtStability);
     const listenable = rest.filter((c) => {
+      if (!(c.caps && c.caps.listen)) return false;
       const S = stabilityOf(c);
       return S >= o.listenAtStability && S < o.typeAtStability;
     });
@@ -327,7 +390,9 @@ export function buildSession(sources, opts = {}) {
   const picked = [];
   for (const q of [...byDeck.values()].sort((a, b) => b[0].score - a[0].score)) {
     if (picked.length >= otherSlots) break;
-    if (q[0].score >= o.urgencyFloor) picked.push(q.shift());
+    // Urgency, not the composite. A deck priority should not carry an item over a bar
+    // that is explicitly about how much the memory needs attention.
+    if (q[0].need >= o.urgencyFloor) picked.push(q.shift());
   }
   const pooled = [...byDeck.values()].flat().sort((a, b) => b.score - a.score);
   for (const c of pooled) {
@@ -409,28 +474,37 @@ export function formatFor(pick, opts = {}) {
   // Brand new: introduce, then test it two different ways within the session.
   if (!seen || pick.fresh) return ["learn", "mc", "recall"][Math.min(pick.step || 0, 2)];
 
-  const f = (st && st.fsrs) || seedFromHistory(st);
-  const S = (f && f.S) || 0;
-  const acc = seen > 0 ? ((st.correct || 0) / seen) : 0;
-
-  /* Struggling: drop back to recognition rather than piling on production. A word you keep
-     missing does not need a harder question, it needs a fair one. */
-  if (acc < 0.6 || S < 2) return (pick.step || 0) % 2 === 1 ? "recall" : "mc";
-
-  /* Listening is a REPEAT format, never a first showing, and it needs permission.
-     Audio is the one exercise that depends on where you are — headphones, a quiet room,
-     not being in class — so a session full of it is unusable half the time. Confining it
-     to learning-step repeats makes it naturally uncommon, since most picks are a first
-     showing, and allowLIsten switches it off entirely when the plan deprioritises it or
-     the learner says they cannot play sound. */
+  /* Read the ability the decision is ABOUT. Choosing a production exercise from the
+     recognition state was the real defect here: someone who reads 火曜日 at 99% and
+     produces it at 55% would keep being handed recognition, because recognition is what
+     the selector was looking at — training the ability they already had. */
+  const rec = pick.recognition || skillOf(st, "fsrs");
+  const prod = pick.production || skillOf(st, "rfsrs");
+  const caps = pick.caps || { type: pick.canType, listen: pick.canListen };
   const step = pick.step || 0;
-  const canHear = !!pick.canListen && o.allowListen !== false;
+  const canHear = !!caps.listen && o.allowListen !== false;
 
-  // Solid enough to produce.
-  if (S >= o.typeAtStability && pick.canType) {
-    return step % 2 === 1 ? (canHear ? "listen" : "recall") : "type";
+  /* Struggling at recognition: drop back rather than piling on production. A word you keep
+     missing does not need a harder question, it needs a fair one. */
+  if (rec.acc < 0.6 || rec.S < 2) return step % 2 === 1 ? "recall" : "mc";
+
+  /* Production is UNLOCKED by recognition — you cannot produce what you cannot yet read —
+     but once unlocked it is judged on its own record. */
+  if (caps.type && rec.S >= o.typeAtStability) {
+    /* Weak or untried production is exactly the case that needs producing, so it takes
+       the primary slot and the repeat gives support. The old rule did the opposite. */
+    if (!prod.tried || prod.acc < 0.6 || prod.S < o.prodWeakStability) {
+      return step % 2 === 0 ? "type" : "recall";
+    }
+    // Production is solid too; spread the load across the other abilities.
+    return step % 2 === 0 ? "type" : (canHear ? "listen" : "recall");
   }
-  if (S >= o.listenAtStability) {
+
+  /* Listening is a REPEAT format, never a first showing, and it needs permission. Audio
+     depends on where you are — headphones, a quiet room, not being in class — so a session
+     full of it is unusable half the time. Confining it to repeats makes it naturally
+     uncommon, since most picks are first showings. */
+  if (rec.S >= o.listenAtStability) {
     return step % 2 === 1 ? (canHear ? "listen" : "mc") : "recall";
   }
   return step % 2 === 1 ? "mc" : "recall";

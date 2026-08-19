@@ -1674,10 +1674,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
   const smartPicks = useMemo(() => {
     const items = cards.map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
+    /* Sources declare what their items can be ASKED. This has to reach the scheduler, not
+       just the renderer: reserving a production slot and only discovering downstream that
+       the item has no reading spends the slot on a recognition question. */
     const source = [
       { deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])),
-        weight: deckWeight(plan, "class") },
-      ...foreign.map((s) => ({ ...s, weight: deckWeight(plan, s.deck) })),
+        weight: deckWeight(plan, "class"),
+        capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term) }) },
+      ...foreign.map((s) => ({
+        ...s,
+        weight: deckWeight(plan, s.deck),
+        /* Kanji is deliberately not typeable. Producing a word from its meaning is a
+           different ability from writing a character, and the app has no handwriting
+           input — asking for one while measuring the other would be dishonest. */
+        capsFor: (it) => ({ type: s.deck !== "kanji" && !!it.reading, listen: !!(it.reading || it.term) }),
+      })),
     ];
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace) });
   }, [cards, foreign, plan]);
@@ -1693,14 +1704,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [noAudio, setNoAudio] = useState(false);
   const allowListen = !noAudio && (plan.priorities.listening || 1) >= 2;
 
-  const smartPool = useMemo(() => withFormats(
-    smartPicks.map((p) => ({
-      ...p,
-      canType: p.deck === "vocab" && !!p.item.reading,
-      canListen: !!(p.item.reading || p.item.term),
-    })),
-    { allowListen },
-  ).map((p) => ({ ...p.item, _fmt: p.format, _step: p.step })), [smartPicks, allowListen]);
+  // Capabilities now travel with the candidate from the source, so nothing is re-derived
+  // here and the scheduler and the renderer cannot disagree about what an item can carry.
+  const smartPool = useMemo(
+    () => withFormats(smartPicks, { allowListen })
+      .map((p) => ({ ...p.item, _fmt: p.format, _step: p.step })),
+    [smartPicks, allowListen],
+  );
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
   /* Cards whose repeats are deliberate. A correct answer normally drops a card's later
      copies from the queue — that rule exists for the miss-requeue, and it would silently

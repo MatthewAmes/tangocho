@@ -23,8 +23,10 @@ const studied = (id, S, ago, extra = {}) => ({
   id, seen: 5, correct: 5, level: 3, streak: 2, last: NOW - ago * DAY,
   fsrs: { S, D: 5, last: NOW - ago * DAY, due: NOW, ivl: S }, ms: 4000 * 5, msN: 5, ...extra,
 });
+// Sources must now declare what their items can be ASKED. A deck that declares nothing is
+// capable of nothing, which is the correct default — it is the caller's job to say.
 const deck = (name, n, mk, weight) => ({
-  deck: name, weight,
+  deck: name, weight, caps: { type: true, listen: true },
   items: Array.from({ length: n }, (_, i) => ({ id: `${name}${i}`, order: i })),
   stats: Object.fromEntries(Array.from({ length: n }, (_, i) => [`${name}${i}`, mk(i)]).filter(([, v]) => v)),
 });
@@ -81,7 +83,7 @@ t("an item inside the ceiling is not stale", () => {
 });
 t("staleness lifts an item above equally-decayed peers", () => {
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: [{ id: "stale" }, { id: "fine" }],
     stats: { stale: studied("stale", 3000, 300), fine: studied("fine", 3000, 1) },
   }];
@@ -142,7 +144,7 @@ t("session size stays within its clamps however extreme the pace", () => {
 
 console.log("\n=== learning steps ===");
 const withNew = () => [{
-  deck: "vocab",
+  deck: "vocab", caps: { type: true, listen: true },
   items: [
     ...Array.from({ length: 20 }, (_, i) => ({ id: "old" + i, order: i })),
     ...Array.from({ length: 10 }, (_, i) => ({ id: "new" + i, order: 100 + i })),
@@ -185,7 +187,7 @@ t("the session honours its size budget once step repeats are counted", () => {
 });
 t("new material never swallows the whole session", () => {
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: Array.from({ length: 200 }, (_, i) => ({ id: "n" + i, order: i })),
     stats: {},
   }];
@@ -208,7 +210,7 @@ t("step numbering marks a first showing apart from its repeats", () => {
 console.log("\n=== new-item intake ===");
 t("intake is capped no matter how many new items are waiting", () => {
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: Array.from({ length: 500 }, (_, i) => ({ id: "n" + i, order: i })),
     stats: {},
   }];
@@ -219,7 +221,7 @@ t("intake is capped no matter how many new items are waiting", () => {
 t("a big review backlog does not raise new intake", () => {
   const small = buildSession(withNew(), { now: NOW, size: 12 });
   const big = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: [
       ...Array.from({ length: 300 }, (_, i) => ({ id: "old" + i, order: i })),
       ...Array.from({ length: 50 }, (_, i) => ({ id: "new" + i, order: 900 + i })),
@@ -275,12 +277,14 @@ console.log("\n=== leech throttle ===");
 // Stuck words are the most decayed things you own, so a pool sorted by decay fills with
 // them. Drilling them harder is exactly what does not work.
 const stuckDeck = () => [{
-  deck: "vocab",
+  deck: "vocab", caps: { type: true, listen: true },
   items: Array.from({ length: 60 }, (_, i) => ({ id: "v" + i, order: i })),
   stats: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [
     "v" + i,
     i < 40
-      ? { ...studied("v" + i, 0.4, 90), seen: 20, correct: 3 }   // hopelessly stuck
+      // streak 0 matters now: a leech is a word stuck RIGHT NOW, not one that was once
+      // hard and is currently being answered correctly.
+      ? { ...studied("v" + i, 0.4, 90), seen: 20, correct: 3, streak: 0 }
       : studied("v" + i, 8, 20),                                  // ordinary review
   ])),
 }];
@@ -353,7 +357,7 @@ t("the staleness ceiling survives a deep backlog of decayed cards", () => {
   // against 4.21 for a decaying one, so under any real backlog exactly zero stale items
   // made the session. A ceiling the backlog can outvote is not a ceiling.
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: [
       ...Array.from({ length: 100 }, (_, i) => ({ id: "decayed" + i, order: i })),
       ...Array.from({ length: 10 }, (_, i) => ({ id: "stale" + i, order: 500 + i })),
@@ -503,7 +507,7 @@ t("a session reserves room for words strong enough to carry harder formats", () 
     fsrs: { S, D: 4, last: NOW - ago * DAYm }, ms: 40000, msN: 10,
   });
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: [
       ...Array.from({ length: 60 }, (_, i) => ({ id: "weak" + i, order: i })),
       ...Array.from({ length: 30 }, (_, i) => ({ id: "strong" + i, order: 500 + i })),
@@ -525,7 +529,7 @@ t("a real session uses more than one kind of exercise", () => {
   // The whole complaint this answers: a session that is 28 flip cards is one exercise
   // repeated, however well chosen the cards are.
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: Array.from({ length: 60 }, (_, i) => ({ id: "v" + i, order: i })),
     stats: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [
       "v" + i,
@@ -537,6 +541,101 @@ t("a real session uses more than one kind of exercise", () => {
     .map((p) => ({ ...p, format: formatFor({ ...p, canType: true, canListen: true }) }));
   const kinds = new Set(picks.map((p) => p.format));
   gt(kinds.size, 2, `expected an assorted session, got only: ${[...kinds].join(", ")}`);
+});
+
+console.log("\n=== decision quality (external review, P1) ===");
+/* The previous tests proved things EXIST — that some strong item was picked, that more
+   than two formats appeared. They could not tell a good choice from a bad one. These
+   assert the relative decision instead. */
+
+const skilled = (recS, recAcc, prodS, prodAcc, prodSeen = 10) => ({
+  seen: 20, correct: Math.round(20 * recAcc), level: 4, streak: 3, last: NOW - DAY,
+  fsrs: { S: recS, D: 4, last: NOW - DAY },
+  rseen: prodSeen, rcorrect: Math.round(prodSeen * prodAcc),
+  rfsrs: prodSeen ? { S: prodS, D: 4, last: NOW - DAY } : null,
+  ms: 80000, msN: 20,
+});
+
+t("strong recognition + weak production asks for PRODUCTION, not recognition", () => {
+  // The defect this locks down: the selector read recognition state to choose a
+  // production exercise, so someone who reads a word perfectly and cannot produce it
+  // kept being handed the ability they already had.
+  const st = skilled(60, 0.95, 1.2, 0.4);
+  const f = formatFor({ deck: "vocab", item: { id: "x" }, st, step: 0, caps: { type: true, listen: true } });
+  eq(f, "type", "weak production should be practised, not skipped");
+});
+t("strong recognition + strong production spreads to other abilities", () => {
+  const st = skilled(60, 0.95, 40, 0.95);
+  const first = formatFor({ deck: "vocab", item: { id: "x" }, st, step: 0, caps: { type: true, listen: true } });
+  const rep = formatFor({ deck: "vocab", item: { id: "x" }, st, step: 1, caps: { type: true, listen: true } });
+  eq(first, "type");
+  ok(rep !== "type", "a solid word should not be typed twice running");
+});
+t("weak recognition is never asked to produce, however strong the word once was", () => {
+  const st = skilled(1.2, 0.35, 40, 0.95);
+  for (const step of [0, 1, 2]) {
+    const f = formatFor({ deck: "vocab", item: { id: "x" }, st, step, caps: { type: true, listen: true } });
+    ok(["mc", "recall"].includes(f), `expected recognition support, got ${f}`);
+  }
+});
+t("production is never asked of an item that cannot carry it", () => {
+  const st = skilled(60, 0.95, 1.2, 0.4);
+  for (const step of [0, 1, 2]) {
+    const f = formatFor({ deck: "kanji", item: { id: "x" }, st, step, caps: { type: false, listen: false } });
+    ok(f !== "type" && f !== "listen", `got ${f} for an item with no such capability`);
+  }
+});
+t("the production reserve only picks items that can actually be typed", () => {
+  /* The scheduler used to reserve production slots on stability alone and discover in the
+     UI that the item had no reading — a slot spent on nothing. */
+  const strong = () => ({ seen: 20, correct: 20, level: 4, streak: 3, last: NOW - DAY,
+    fsrs: { S: 60, D: 3, last: NOW - DAY }, ms: 80000, msN: 20 });
+  const src = [
+    { deck: "kanji", caps: { type: false, listen: false },
+      items: Array.from({ length: 40 }, (_, i) => ({ id: "k" + i })),
+      stats: Object.fromEntries(Array.from({ length: 40 }, (_, i) => ["k" + i, strong()])) },
+    { deck: "vocab", caps: { type: true, listen: true },
+      items: Array.from({ length: 10 }, (_, i) => ({ id: "v" + i })),
+      stats: Object.fromEntries(Array.from({ length: 10 }, (_, i) => ["v" + i, strong()])) },
+  ];
+  const picks = withFormats(buildSession(src, { now: NOW, size: 20 }));
+  for (const p of picks) {
+    if (p.format === "type") ok(p.caps && p.caps.type, `typed a ${p.deck} item that cannot be typed`);
+    if (p.format === "listen") ok(p.caps && p.caps.listen, `listened to an item with no audio`);
+  }
+});
+t("a fading item outranks an annual diagnostic", () => {
+  // Both were "stale" and got the same +4. They are different interventions: one is a
+  // memory being lost, the other a spot-check on something the model says is fine.
+  const fading = studied("f", 3, 60);
+  const annual = studied("a", 3000, 400);
+  const src = [{ deck: "vocab", items: [{ id: "f" }, { id: "a" }], stats: { f: fading, a: annual } }];
+  const c = candidates(src, { now: NOW });
+  const f = c.find((x) => x.item.id === "f"), a = c.find((x) => x.item.id === "a");
+  eq(f.staleReason, "decay");
+  eq(a.staleReason, "annual_check");
+  gt(f.score, a.score, "a word being lost must beat a routine check");
+});
+t("a leech currently being answered right is no longer throttled", () => {
+  // Lifetime accuracy alone kept punishing a word that had turned the corner.
+  const recovering = { seen: 20, correct: 6, streak: 3, level: 2, last: NOW - DAY,
+    fsrs: { S: 4, D: 7, last: NOW - DAY }, ms: 80000, msN: 20 };
+  const stuck = { ...recovering, streak: 0 };
+  const src = [{ deck: "vocab", items: [{ id: "r" }, { id: "s" }], stats: { r: recovering, s: stuck } }];
+  const picks = buildSession(src, { now: NOW, size: 10 });
+  ok(picks.some((p) => p.item.id === "r"), "a recovering word should not be treated as stuck");
+});
+t("memory urgency is reported separately from policy weighting", () => {
+  /* These were one number, and a threshold named urgencyFloor was compared against it —
+     so a deck priority could carry an item over a bar that is explicitly about how much
+     the MEMORY needs attention. They are separate fields now, and the variety guarantee
+     reads the urgency one. (Deck weight still influences ordinary fill, which is what a
+     priority is for; it just cannot manufacture urgency.) */
+  const st = studied("x", 4, 12);
+  const plain = candidates([{ deck: "vocab", items: [{ id: "x" }], stats: { x: st } }], { now: NOW })[0];
+  const heavy = candidates([{ deck: "vocab", weight: 5, items: [{ id: "x" }], stats: { x: st } }], { now: NOW })[0];
+  eq(plain.need, heavy.need, "weight must not change memory urgency");
+  gt(heavy.score, plain.score, "but it should change ranking");
 });
 
 console.log("\n=== describe ===");
@@ -551,7 +650,7 @@ t("stale items are reported so the ceiling is visible", () => {
   // Genuinely faded: low stability, long gap. A merely long-scheduled item is no longer
   // "stale" — see the two-trigger tests above.
   const src = [{
-    deck: "vocab",
+    deck: "vocab", caps: { type: true, listen: true },
     items: Array.from({ length: 12 }, (_, i) => ({ id: "s" + i })),
     stats: Object.fromEntries(Array.from({ length: 12 }, (_, i) => ["s" + i, studied("s" + i, 3, 60)])),
   }];
