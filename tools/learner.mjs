@@ -396,13 +396,28 @@ export function chooseIntervention(pick, opts = {}) {
      at all — asking someone to produce what they cannot recognise is not difficulty, it
      is just failure. */
   const unlocked = ["recognition"];
-  if (caps.type && (states.recognition.S || 0) >= (o.typeAtStability || 14)) unlocked.push("production");
+
+  /* Eligibility comes from what the learner has DEMONSTRATED, not from a memory-model
+     quantity. FSRS stability answers "how long until you forget this", which is a
+     different question from "have you shown you can read this well enough to be asked to
+     produce it" — and gating on S was the last place the old card-centric design leaked
+     into the learner model. Production opens once recognition is measured and holding. */
+  const recAbility = abilityFrom(states.recognition);
+  /* "Has shown they can read it" — measured at all, and holding up. Requiring the full
+     STABLE state made this far too strict: twenty answers at 95% still reads as EMERGING
+     once older evidence is discounted, and refusing to ever ask for production of a word
+     answered correctly twenty times is not caution, it is a broken gate. */
+  const recDemonstrated = recAbility.state !== STATE.UNKNOWN
+    && recAbility.mean >= (o.produceAtAccuracy ?? 0.75);
+  if (caps.type && recDemonstrated) unlocked.push("production");
   /* Listening is a REPEAT-only format. Audio depends on where you are, so a session full
      of it is unusable half the time — and because an unmeasured ability ranks as weak, an
      unconstrained listening dimension won nearly every slot in practice. */
   if (caps.listen && o.allowListen !== false && (pick.step || 0) > 0
-      && (states.recognition.S || 0) >= (o.listenAtStability || 5)) unlocked.push("listening");
-  if (caps.context && (states.production.tried || (states.recognition.S || 0) >= (o.typeAtStability || 14))) unlocked.push("context");
+      && recAbility.state !== STATE.UNKNOWN && recAbility.mean >= (o.listenAtAccuracy ?? 0.6)) {
+    unlocked.push("listening");
+  }
+  if (caps.context && (states.production.tried || recDemonstrated)) unlocked.push("context");
 
   /* Target the WEAKEST unlocked ability — the whole point of modelling them separately.
      An untried ability counts as weak: it is the one with no evidence at all. */
@@ -450,6 +465,10 @@ export function chooseIntervention(pick, opts = {}) {
      It never makes the next attempt harder — a miss is not a reason to raise the demand. */
   if (plan && plan.skill === skill) cue = Math.min(cue, plan.cue);
   else if (pick.lastFailure && cue > CUE.CHOOSE) cue -= 1;
+  /* A successful repeat within the same session asks for a little more. Successive
+     retrieval with progressively less support is the point of the learning steps; showing
+     the identical question twice teaches the question. */
+  else if ((pick.step || 0) > 0) cue = Math.min(ladder[ladder.length - 1], cue + 1);
 
   return {
     skill,
@@ -475,8 +494,15 @@ export function chooseIntervention(pick, opts = {}) {
    Strong enough to stop a single lucky answer reading as mastery, weak enough to get out of
    the way once real evidence arrives. */
 export const PRIOR_A = 2, PRIOR_B = 2;
+/* How much an older observation counts toward CURRENT ability. Below 1 by design: it
+   is what stops a long history from certifying an estimate the recent evidence does
+   not support. A stated assumption about nonstationarity, not a measurement. */
+export const STALE_WEIGHT = 0.45;
 
 export function posterior(successes, failures, prior = {}) {
+  /* Fractional counts are expected: discounted older evidence contributes a partial
+     observation, which is the whole mechanism by which stale data widens the interval
+     instead of narrowing it. */
   const a = (prior.a ?? PRIOR_A) + Math.max(0, successes || 0);
   const b = (prior.b ?? PRIOR_B) + Math.max(0, failures || 0);
   const n = a + b;
@@ -548,21 +574,49 @@ export function abilityFrom(skill, opts = {}) {
   const seen = s.seen || 0;
   if (!seen) {
     const post = posterior(0, 0);
-    return { ...post, state: stateOf(post), tried: false };
+    return { ...post, state: stateOf(post), tried: !!s.tried, effective: 0 };
   }
-  /* Recency is a WEIGHTING, not extra evidence. The first version added the recent window
-     on top of the lifetime counts, so ten answers became twenty observations — which
-     halved the posterior variance and manufactured confidence the data had not earned.
-     The trial count stays at what actually happened; only the success RATE is shifted
-     toward recent performance. */
-  const rec = recentAcc(s.recent, 10);
-  const life = s.acc ?? 0;
-  const rate = rec
-    ? (rec.rate * (opts.recentWeight ?? 0.65) + life * (1 - (opts.recentWeight ?? 0.65)))
-    : life;
-  const succ = Math.round(rate * seen);
-  const post = posterior(succ, Math.max(0, seen - succ));
-  return { ...post, state: stateOf(post), tried: true };
+
+  /* Evidence is DISCOUNTED by age, not re-weighted into pseudo-counts.
+
+     The previous version blended lifetime and recent accuracy into one rate and then
+     multiplied it back out over the full trial count. That produced a posterior with a
+     hundred observations behind a claim the data did not support: ninety correct out of a
+     hundred, then five recent failures, came out as "confidently ~32%" — narrow, because
+     the arithmetic still had a hundred trials in it, when the honest reading is "you used
+     to be reliable, something changed, and five answers is not much to go on".
+
+     So older evidence contributes FRACTIONAL counts. Recent answers count fully, older
+     ones are discounted, and the effective sample size is therefore smaller than the raw
+     one — which widens the interval rather than narrowing it. The discount is a stated
+     belief about how quickly ability moves, not a measured quantity, and it is the knob
+     to revisit once calibration data exists. */
+  const staleWeight = opts.staleWeight ?? STALE_WEIGHT;
+  /* Without a recorded window there is no basis for calling anything stale — the record
+     simply predates the rolling history. Treat the most recent RECENT_CAP trials as
+     current at the lifetime rate rather than discounting the entire history, which made
+     ten correct answers read as "unknown". */
+  const rec = recentAcc(s.recent, RECENT_CAP);
+  const recN = rec ? Math.min(rec.n, seen) : Math.min(seen, RECENT_CAP);
+  const recOk = rec ? rec.rate * recN : Math.min(1, Math.max(0, s.acc ?? 0)) * recN;
+
+  const oldN = Math.max(0, seen - recN);
+  const lifeRate = Math.min(1, Math.max(0, s.acc ?? 0));
+  const oldOk = oldN * lifeRate;
+
+  const succ = recOk + staleWeight * oldOk;
+  const fail = (recN - recOk) + staleWeight * (oldN - oldOk);
+
+  const post = posterior(succ, fail);
+  return {
+    ...post,
+    state: stateOf(post),
+    tried: true,
+    /* Raw trials versus how many the model is actually leaning on. When these diverge the
+       estimate is being carried by older evidence and should be trusted less. */
+    observations: seen,
+    effective: Math.round((succ + fail) * 10) / 10,
+  };
 }
 
 /* ── failure leads somewhere specific ──

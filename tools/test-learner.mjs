@@ -224,7 +224,9 @@ t("an untried ability is not assumed competent", () => {
 
 console.log("\n=== the intervention ===");
 const caps = { type: true, listen: true, context: true };
-const strongRec = { tried: true, acc: 0.97, S: 60, recent: "1111111111" };
+// Fixtures carry `seen` because that is what skillOf() produces — an ability estimate is
+// built from a trial COUNT, and shorthand without one reads as no evidence at all.
+const strongRec = { seen: 30, correct: 29, tried: true, acc: 0.97, S: 60, recent: "1111111111" };
 
 t("a never-seen word is shown, not tested", () => {
   const iv = chooseIntervention({ fresh: true, step: 0, caps, recognition: {}, production: {} });
@@ -235,13 +237,13 @@ t("cue is chosen so the exercise is hard but still winnable", () => {
   // Only production capable, so the target is a MEASURED ability rather than an unmeasured
   // one — an untried skill is honestly predicted around 0.55 and that is not the case here.
   const iv = chooseIntervention({ caps: { type: true }, recognition: strongRec,
-    production: { tried: true, acc: 0.95, S: 40, recent: "1111111111" } });
+    production: { seen: 20, correct: 19, tried: true, acc: 0.95, S: 40, recent: "1111111111" } });
   // Which ability wins is not the point here — both are strong and it may pick either.
   gt(iv.expected, 0.6, "should not pick a cue the learner will fail");
   gt(iv.cue, CUE.CHOOSE, "a strong ability should be asked for more than multiple choice");
 });
 t("format is a consequence of skill and cue, not chosen directly", () => {
-  const weak = chooseIntervention({ caps: {}, recognition: { tried: true, acc: 0.3, S: 1, recent: "0000" } });
+  const weak = chooseIntervention({ caps: {}, recognition: { seen: 20, correct: 6, tried: true, acc: 0.3, S: 1, recent: "0000" } });
   eq(weak.skill, "recognition");
   eq(weak.format, "mc", "a struggling reader gets options");
   const solid = chooseIntervention({ caps: {}, recognition: strongRec });
@@ -251,7 +253,7 @@ t("format is a consequence of skill and cue, not chosen directly", () => {
 t("the weakest unlocked ability is targeted", () => {
   const iv = chooseIntervention({
     caps, recognition: strongRec,
-    production: { tried: true, acc: 0.35, S: 2, recent: "00100" },
+    production: { seen: 20, correct: 7, tried: true, acc: 0.35, S: 2, recent: "00100" },
   });
   eq(iv.skill, "production", "strong recognition + weak production must target production");
 });
@@ -261,7 +263,7 @@ t("an unmeasured ability does not monopolise the session", () => {
      genuinely failing. Unmeasured is a reason to sample, not a reason to always win. */
   const iv = chooseIntervention({
     caps, recognition: strongRec,
-    production: { tried: true, acc: 0.15, S: 1, recent: "00000" },
+    production: { seen: 20, correct: 3, tried: true, acc: 0.15, S: 1, recent: "00000" },
     listening: {}, context: {},
   });
   eq(iv.skill, "production", "a failing ability must outrank an unmeasured one");
@@ -290,7 +292,7 @@ t("a reading fumble redirects to producing the form, not another meaning card", 
   // This is the loop the review called decorative: classification existed and changed nothing.
   const iv = chooseIntervention({
     caps, recognition: strongRec,
-    production: { tried: true, acc: 0.8, S: 20, recent: "1111" },
+    production: { seen: 15, correct: 12, tried: true, acc: 0.8, S: 20, recent: "1111" },
     lastFailure: "reading",
   });
   eq(iv.skill, "production");
@@ -298,7 +300,7 @@ t("a reading fumble redirects to producing the form, not another meaning card", 
 t("drawing a blank goes back to the meaning", () => {
   const iv = chooseIntervention({
     caps, recognition: strongRec,
-    production: { tried: true, acc: 0.8, S: 20, recent: "111" },
+    production: { seen: 15, correct: 12, tried: true, acc: 0.8, S: 20, recent: "111" },
     lastFailure: "blank",
   });
   eq(iv.skill, "recognition");
