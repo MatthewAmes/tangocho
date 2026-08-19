@@ -5,7 +5,7 @@
 //   node tools/test-session.mjs
 import {
   DEFAULTS, need, daysSince, isStale, pacePerItem, budgetFor,
-  candidates, buildSession, describe, formatFor, withFormats, FORMATS,
+  candidates, buildSession, describe, formatFor, withFormats, FORMATS, pacePerDeck,
 } from "./session.mjs";
 
 let fail = 0, run = 0;
@@ -636,6 +636,41 @@ t("memory urgency is reported separately from policy weighting", () => {
   const heavy = candidates([{ deck: "vocab", weight: 5, items: [{ id: "x" }], stats: { x: st } }], { now: NOW })[0];
   eq(plain.need, heavy.need, "weight must not change memory urgency");
   gt(heavy.score, plain.score, "but it should change ranking");
+});
+
+console.log("\n=== deterministic jitter and per-deck pace (review Phase 1) ===");
+
+t("the same day gives the same session; a different day does not", () => {
+  /* Math.random() would have been the wrong fix: a session must be reproducible within a
+     day so a reload does not reshuffle work in progress, and so a bug can be reproduced. */
+  const src = () => [deck("v", 80, (i) => studied("v" + i, 6 + (i % 5), 10 + (i % 7)))];
+  const a = buildSession(src(), { now: NOW, size: 20, seed: "2026-08-19" }).map((p) => p.item.id).join();
+  const b = buildSession(src(), { now: NOW, size: 20, seed: "2026-08-19" }).map((p) => p.item.id).join();
+  const c = buildSession(src(), { now: NOW, size: 20, seed: "2026-08-20" }).map((p) => p.item.id).join();
+  eq(a, b, "same day must be identical");
+  ok(a !== c, "a different day should vary the session");
+});
+t("jitter is a tie-break, not a reordering of real priorities", () => {
+  // A badly decayed item must still outrank a healthy one on every seed.
+  const urgent = studied("urgent", 1, 60), fine = studied("fine", 200, 1);
+  for (const seed of ["a", "b", "c", "d", "e", "f"]) {
+    const c = candidates([{ deck: "vocab", items: [{ id: "urgent" }, { id: "fine" }],
+      stats: { urgent, fine } }], { now: NOW, seed });
+    const u = c.find((x) => x.item.id === "urgent"), f = c.find((x) => x.item.id === "fine");
+    gt(u.score, f.score, `seed ${seed}: jitter must not invert urgency`);
+  }
+});
+t("one deck's timing data cannot speak for another", () => {
+  /* Pooled timings let whichever deck had the most observations define the pace of
+     everything, so a kanji-heavy session was estimated at vocabulary speed. */
+  const fastBig = { deck: "vocab", caps: {}, items: Array.from({ length: 500 }, (_, i) => ({ id: "v" + i })),
+    stats: Object.fromEntries(Array.from({ length: 500 }, (_, i) => ["v" + i, studied("v" + i, 8, 5, { ms: 2000 * 5 })])) };
+  const slowSmall = { deck: "kanji", caps: {}, items: Array.from({ length: 10 }, (_, i) => ({ id: "k" + i })),
+    stats: Object.fromEntries(Array.from({ length: 10 }, (_, i) => ["k" + i, studied("k" + i, 8, 5, { ms: 11000 * 5 })])) };
+  const per = pacePerDeck([fastBig, slowSmall]);
+  gt(per.kanji, per.vocab, "the slow deck must keep its own rate");
+  const mixed = pacePerItem([fastBig, slowSmall]);
+  gt(mixed, per.vocab, "a mixed session must not be priced at the fast deck's speed");
 });
 
 console.log("\n=== describe ===");

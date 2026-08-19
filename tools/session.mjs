@@ -40,6 +40,7 @@ export const DEFAULTS = {
   vocabShare: 0.65,     // vocab-led: the rest of the decks share what's left
   maxLeeches: 3,        // stuck words that may appear at once, matching the vocab tab
   urgencyFloor: 0.75,   // a deck below this need does not get a guaranteed variety slot
+  jitterBand: 0.3,      // tie-break spread only — never wide enough to reorder priorities
   typeAtStability: 14,  // recognition strong enough to UNLOCK production
   prodWeakStability: 4, // ...below this the production memory itself is still fragile
   listenAtStability: 5, // audio recall a little earlier — it is easier than producing
@@ -91,6 +92,26 @@ export function skillOf(st, which = "fsrs") {
 export function capsOf(source, item) {
   if (source && typeof source.capsFor === "function") return source.capsFor(item) || {};
   return { ...(source && source.caps), ...(item && item.caps) };
+}
+
+/* ── deterministic jitter ──
+   Ordering was fully deterministic, so an unfinished session rebuilt identically and two
+   sessions on the same day were the same session. The obvious fix is Math.random(), and
+   it is the wrong one: a session should be reproducible for a given day, so a reload does
+   not reshuffle what you were halfway through, and so a bug can be reproduced at all.
+
+   So: a hash of the item and the local date. Stable within a day, different tomorrow. It
+   is applied inside a narrow band, which matters — jitter wide enough to reorder genuine
+   priorities is not variety, it is noise in the scheduler. */
+export function hashSeed(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 100000) / 100000;                 // 0..1
+}
+
+export function dayKey(now = Date.now()) {
+  const d = new Date(now);
+  return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
 }
 
 /* Days since an item was last put in front of the learner, whatever the deck. */
@@ -150,7 +171,31 @@ export function isStale(st, now = Date.now(), opts = DEFAULTS) {
    The individual timings needed for a real median are not retained anywhere, so the
    defence is the clamp below rather than a better estimator. If session length ever feels
    wrong, this is the first thing to suspect. */
+export function pacePerDeck(sources, fallbackMs = DEFAULTS.fallbackMs) {
+  const out = {};
+  for (const s of sources) {
+    let ms = 0, n = 0;
+    for (const id of Object.keys(s.stats || {})) {
+      const st = s.stats[id];
+      if (st && st.ms > 0 && st.msN > 0) { ms += st.ms; n += st.msN; }
+    }
+    out[s.deck] = n ? Math.min(12000, Math.max(1800, (ms / n) * 1.45)) : fallbackMs;
+  }
+  return out;
+}
+
 export function pacePerItem(sources, fallbackMs = DEFAULTS.fallbackMs) {
+  /* Averaged ACROSS decks rather than pooled within them. Pooling let whichever deck had
+     the most timing observations define the speed of everything — with 100k vocabulary
+     samples and 2k kanji samples, a kanji-heavy session was estimated at vocabulary
+     speed. Averaging the per-deck rates stops the biggest deck speaking for the rest.
+     (A per-candidate cost model would be better still, and needs the session composition
+     before it can be computed, which is a chicken-and-egg this does not solve.) */
+  const per = pacePerDeck(sources, fallbackMs);
+  const rates = Object.keys(per).filter((k) => (sources.find((s) => s.deck === k) || {}).items?.length);
+  if (rates.length > 1) {
+    return rates.reduce((a, k) => a + per[k], 0) / rates.length;
+  }
   let ms = 0, n = 0;
   for (const s of sources) {
     for (const id of Object.keys(s.stats || {})) {
@@ -208,7 +253,8 @@ export function candidates(sources, opts = {}) {
         /* A fading item jumps the queue. An annual diagnostic does not: it is a sample on
            something the model says is fine, and letting it outrank a word actually being
            lost is exactly the mistake the day-based ceiling used to make. */
-        score: urgency + (staleReason === "decay" ? 4 : staleReason === "annual_check" ? 0.5 : 0) + (s.weight || 0),
+        score: urgency + (staleReason === "decay" ? 4 : staleReason === "annual_check" ? 0.5 : 0) + (s.weight || 0)
+          + (hashSeed(s.deck + ":" + item.id + ":" + (o.seed || dayKey(now))) - 0.5) * o.jitterBand,
       });
     }
   }
