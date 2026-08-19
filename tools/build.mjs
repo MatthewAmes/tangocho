@@ -108,7 +108,7 @@ fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
 // data that changes on a completely different schedule from the code, and keeping it out
 // means the app still starts instantly if it fails to load.
 // data assets that ship alongside the bundle
-for (const asset of ["kanji.json"]) {
+for (const asset of ["kanji.json", "freq.json"]) {
   const src = path.join(ROOT, "data", asset);
   if (fs.existsSync(src)) fs.writeFileSync(path.join(CF_PUBLIC, asset), fs.readFileSync(src, "utf8"), "utf8");
 }

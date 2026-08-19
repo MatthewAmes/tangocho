@@ -8417,6 +8417,49 @@ function ConjDrill() {
    new-word quota + SRS, separate from the class deck. Tier 1 below;
    later tiers get appended with FREQ_VERSION bumped. Every review
    stores seen/correct/level/ease AND think-time (ms before reveal). */
+/* ── the 10k word list ──
+   Fetched rather than bundled, and its PROGRESS is stored separately from its CONTENT.
+   Ten thousand full card records in localStorage is well over a megabyte that would then
+   be re-uploaded on every cloud sync; the words are static data and belong in a file,
+   while only the handful you have actually studied needs saving. This is the same split
+   the Kanji tab already uses. */
+let _freqPromise = null;
+function loadFreqWords() {
+  if (_freqPromise) return _freqPromise;
+  _freqPromise = (async () => {
+    let cached = null;
+    try { cached = JSON.parse(window.localStorage.getItem("jpn101:freqData") || "null"); } catch (e) {}
+    try {
+      const r = await fetch("/freq.json", { cache: "no-cache" });
+      if (r.ok && (r.headers.get("content-type") || "").includes("json")) {
+        const d = await r.json();
+        if (d && d.words) {
+          try { window.localStorage.setItem("jpn101:freqData", JSON.stringify(d)); } catch (e) {}
+          return d;
+        }
+      }
+    } catch (e) { /* offline — the cached copy is the point */ }
+    return cached;
+  })();
+  return _freqPromise;
+}
+
+/* Progress used to live inline on each card. Anything already recorded is folded into the
+   new keyed-by-term shape so no study history is lost. */
+function migrateFreqStats(raw) {
+  if (!raw) return {};
+  if (!Array.isArray(raw)) return raw;
+  const out = {};
+  for (const c of raw) {
+    if (!c || !c.term || !((c.seen || 0) > 0)) continue;
+    out[c.term] = {
+      seen: c.seen || 0, correct: c.correct || 0, level: c.level || 0, streak: c.streak || 0,
+      last: c.last || 0, ease: c.ease || 1, fsrs: c.fsrs || null, ms: c.ms || 0, msN: c.msN || 0,
+    };
+  }
+  return out;
+}
+
 const FREQ_KEY = "jpn101:freq", FREQ_VER_KEY = "jpn101:freqVersion", FREQ_QUOTA_KEY = "jpn101:freqQuota";
 const FREQ_VERSION = 1;
 const FREQ_SEED = [
@@ -8584,7 +8627,19 @@ function fmtIn(ms) {
 }
 
 function Freq() {
-  const [deck, setDeck] = useState(null);
+  const [words, setWords] = useState(null);      // static list from freq.json
+  const [statsMap, setStatsMap] = useState(null); // progress, keyed by term
+  /* The component still works on one merged array — only the STORAGE is split. */
+  const deck = useMemo(() => {
+    if (!words) return null;
+    return words.map((w) => ({
+      id: w.t, term: w.t, reading: w.r || w.t, romaji: "", meaning: w.m,
+      kind: /[一-龯]/.test(w.t) ? "kanji" : /^[゠-ヿー]+$/.test(w.t) ? "katakana" : "hiragana",
+      rank: w.k, pos: w.p,
+      seen: 0, correct: 0, ms: 0, msN: 0,
+      ...((statsMap && statsMap[w.t]) || {}),
+    }));
+  }, [words, statsMap]);
   const [quota, setQuota] = useState(15);
   const [todayNew, setTodayNew] = useState(0);
   const [queue, setQueue] = useState([]);
@@ -8607,20 +8662,17 @@ function Freq() {
   // load + seed/merge, quota, and today's new-word count
   useEffect(() => {
     (async () => {
-      let list = null;
-      try { const r = await sGet(FREQ_KEY); list = r ? JSON.parse(r) : null; } catch (e) { list = null; }
-      let ver = 0;
-      try { const v = await sGet(FREQ_VER_KEY); ver = v ? Number(v) : 0; } catch (e) {}
-      if (!list) {
-        list = FREQ_SEED.map((c) => ({ id: uid(), seen: 0, correct: 0, ms: 0, msN: 0, ...c }));
-        await sSet(FREQ_KEY, JSON.stringify(list)); await sSet(FREQ_VER_KEY, String(FREQ_VERSION));
-      } else if (ver < FREQ_VERSION) {
-        try { await sSet("jpn101:freqSnapshot", JSON.stringify({ date: new Date().toISOString(), note: "auto-snapshot before tier merge", freq: list })); } catch (e) {}
-        const have = new Set(list.map((c) => c.term));
-        FREQ_SEED.forEach((s) => { if (!have.has(s.term)) { list.push({ id: uid(), seen: 0, correct: 0, ms: 0, msN: 0, ...s }); have.add(s.term); } });
-        await sSet(FREQ_KEY, JSON.stringify(list)); await sSet(FREQ_VER_KEY, String(FREQ_VERSION));
-      }
-      setDeck(list);
+      /* Words from the shipped file, progress from storage. The 148 hand-picked words
+         that used to live inline are gone — this is the real 10,000, ranked by corpus
+         frequency — and any progress recorded against the old ones is migrated by term. */
+      let raw = null;
+      try { const r = await sGet(FREQ_KEY); raw = r ? JSON.parse(r) : null; } catch (e) { raw = null; }
+      const stats0 = migrateFreqStats(raw);
+      if (Array.isArray(raw)) await sSet(FREQ_KEY, JSON.stringify(stats0));
+      const data = await loadFreqWords();
+      const words = (data && data.words) || [];
+      setStatsMap(stats0);
+      setWords(words);
       try { const q = await sGet(FREQ_QUOTA_KEY); if (q) setQuota(Number(q) || 15); } catch (e) {}
       const days = await loadDays();
       const today = days[new Date().toISOString().slice(0, 10)];
@@ -8628,7 +8680,18 @@ function Freq() {
     })();
   }, []);
 
-  const persist = useCallback((next) => { setDeck(next); sSet(FREQ_KEY, JSON.stringify(next)); }, []);
+  /* Only studied words are stored. Ten thousand untouched records would be a megabyte of
+     zeroes re-synced on every save. */
+  const persist = useCallback((next) => {
+    const map = {};
+    for (const c of next) {
+      if (!((c.seen || 0) > 0)) continue;
+      map[c.term] = { seen: c.seen, correct: c.correct, level: c.level || 0, streak: c.streak || 0,
+        last: c.last || 0, ease: c.ease || 1, fsrs: c.fsrs || null, ms: c.ms || 0, msN: c.msN || 0 };
+    }
+    setStatsMap(map);
+    sSet(FREQ_KEY, JSON.stringify(map));
+  }, []);
   const setQ = (n) => { setQuota(n); sSet(FREQ_QUOTA_KEY, String(n)); };
 
   const stats = useMemo(() => {

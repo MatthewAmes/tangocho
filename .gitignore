@@ -14,3 +14,5 @@ cf/public/
 tools/.yt-candidates.json
 tools/.yt-raw.json
 tools/.kanji-cache.json
+tools/.jmdict-cache.gz
+tools/.freqlist-cache.txt
