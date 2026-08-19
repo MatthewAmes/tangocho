@@ -7,6 +7,7 @@ import {
   SKILLS, skillForFormat, CUE, cueFor, maskReading, cueHint,
   classifyFailure, editDistance, makeEvidence, profileFrom, confidenceFor,
   CONFIDENCE, biggestGap, explainPick, summarise,
+  DIRECTIONS, pushRecent, recentAcc, predictSuccess, chooseIntervention, skillAfterFailure,
 } from "./learner.mjs";
 
 let fail = 0, run = 0;
@@ -181,6 +182,129 @@ t("an empty session summarises to nothing rather than crashing", () => {
   const s = summarise([]);
   eq(s.answered, 0);
   eq(s.commonestFailure, null);
+});
+
+console.log("\n=== rolling recent history ===");
+t("recent history keeps the newest results and caps its length", () => {
+  let r = "";
+  for (let i = 0; i < 15; i++) r = pushRecent(r, i % 2 === 0);
+  eq(r.length, 10, "should cap");
+  eq(r.slice(-1), "1", "newest last");
+});
+t("recent accuracy distinguishes deterioration from lifetime average", () => {
+  // The failure of the old proxy: 78% lifetime with a recent collapse looked identical to
+  // 78% lifetime doing fine, unless the current streak happened to expose it.
+  const collapsing = recentAcc("1111100000", 5);
+  const recovering = recentAcc("0000011111", 5);
+  eq(collapsing.rate, 0);
+  eq(recovering.rate, 1);
+});
+t("no history reports null, not zero", () => {
+  eq(recentAcc(""), null);
+  eq(recentAcc(undefined), null);
+});
+
+console.log("\n=== predicted success ===");
+t("more help means a higher predicted success", () => {
+  const st = { tried: true, acc: 0.7, S: 10, recent: "1101101" };
+  gt(predictSuccess(st, CUE.CHOOSE), predictSuccess(st, CUE.FREE));
+});
+t("recent performance outweighs lifetime when they disagree", () => {
+  const same = { tried: true, acc: 0.8, S: 10 };
+  const collapsed = { ...same, recent: "00000" };
+  const strong = { ...same, recent: "11111" };
+  gt(predictSuccess(strong, CUE.PARTIAL), predictSuccess(collapsed, CUE.PARTIAL));
+});
+t("an untried ability is not assumed competent", () => {
+  lt(predictSuccess({ tried: false }, CUE.FREE), 0.5);
+});
+
+console.log("\n=== the intervention ===");
+const caps = { type: true, listen: true, context: true };
+const strongRec = { tried: true, acc: 0.97, S: 60, recent: "1111111111" };
+
+t("a never-seen word is shown, not tested", () => {
+  const iv = chooseIntervention({ fresh: true, step: 0, caps, recognition: {}, production: {} });
+  eq(iv.format, "learn");
+  eq(iv.cue, CUE.SHOWN);
+});
+t("cue is chosen so the exercise is hard but still winnable", () => {
+  // Only production capable, so the target is a MEASURED ability rather than an unmeasured
+  // one — an untried skill is honestly predicted around 0.55 and that is not the case here.
+  const iv = chooseIntervention({ caps: { type: true }, recognition: strongRec,
+    production: { tried: true, acc: 0.95, S: 40, recent: "1111111111" } });
+  // Which ability wins is not the point here — both are strong and it may pick either.
+  gt(iv.expected, 0.6, "should not pick a cue the learner will fail");
+  gt(iv.cue, CUE.CHOOSE, "a strong ability should be asked for more than multiple choice");
+});
+t("format is a consequence of skill and cue, not chosen directly", () => {
+  const weak = chooseIntervention({ caps: {}, recognition: { tried: true, acc: 0.3, S: 1, recent: "0000" } });
+  eq(weak.skill, "recognition");
+  eq(weak.format, "mc", "a struggling reader gets options");
+  const solid = chooseIntervention({ caps: {}, recognition: strongRec });
+  eq(solid.format, "recall", "a solid reader gets cold recall — same skill, harder cue");
+  gt(solid.cue, weak.cue);
+});
+t("the weakest unlocked ability is targeted", () => {
+  const iv = chooseIntervention({
+    caps, recognition: strongRec,
+    production: { tried: true, acc: 0.35, S: 2, recent: "00100" },
+  });
+  eq(iv.skill, "production", "strong recognition + weak production must target production");
+});
+t("an unmeasured ability does not monopolise the session", () => {
+  /* Scoring "no evidence" as automatically worst meant listening and context — which the
+     app does not yet populate — won every single session, starving an ability that was
+     genuinely failing. Unmeasured is a reason to sample, not a reason to always win. */
+  const iv = chooseIntervention({
+    caps, recognition: strongRec,
+    production: { tried: true, acc: 0.15, S: 1, recent: "00000" },
+    listening: {}, context: {},
+  });
+  eq(iv.skill, "production", "a failing ability must outrank an unmeasured one");
+});
+t("an untried ability is still preferred over a healthy one", () => {
+  const iv = chooseIntervention({ caps, recognition: strongRec, production: { tried: false } });
+  eq(iv.skill, "production");
+});
+t("a locked ability is never targeted", () => {
+  // Production stays locked until the word can be read at all.
+  const iv = chooseIntervention({ caps, recognition: { tried: true, acc: 0.4, S: 1, recent: "0100" }, production: { tried: false } });
+  eq(iv.skill, "recognition");
+});
+t("capabilities still gate everything", () => {
+  const iv = chooseIntervention({ caps: { type: false, listen: false, context: false }, recognition: strongRec, production: { tried: false } });
+  eq(iv.skill, "recognition");
+  ok(iv.format !== "type" && iv.format !== "listen" && iv.format !== "cloze");
+});
+t("every intervention names a direction", () => {
+  const iv = chooseIntervention({ caps, recognition: strongRec, production: { tried: false } });
+  ok(Object.values(DIRECTIONS).includes(iv.direction), "got " + iv.direction);
+});
+
+console.log("\n=== failure changes the next intervention ===");
+t("a reading fumble redirects to producing the form, not another meaning card", () => {
+  // This is the loop the review called decorative: classification existed and changed nothing.
+  const iv = chooseIntervention({
+    caps, recognition: strongRec,
+    production: { tried: true, acc: 0.8, S: 20, recent: "1111" },
+    lastFailure: "reading",
+  });
+  eq(iv.skill, "production");
+});
+t("drawing a blank goes back to the meaning", () => {
+  const iv = chooseIntervention({
+    caps, recognition: strongRec,
+    production: { tried: true, acc: 0.8, S: 20, recent: "111" },
+    lastFailure: "blank",
+  });
+  eq(iv.skill, "recognition");
+});
+t("a miss hands support back", () => {
+  const base = { caps: { type: true }, recognition: strongRec, production: { tried: true, acc: 0.9, S: 30, recent: "1111" } };
+  const clean = chooseIntervention(base);
+  const missed = chooseIntervention({ ...base, lastFailure: "production" });
+  lt(missed.cue, clean.cue, "after a miss the next attempt must demand less");
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} learner tests passed`);

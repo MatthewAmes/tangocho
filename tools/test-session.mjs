@@ -564,12 +564,16 @@ t("strong recognition + weak production asks for PRODUCTION, not recognition", (
   const f = formatFor({ deck: "vocab", item: { id: "x" }, st, step: 0, caps: { type: true, listen: true } });
   eq(f, "type", "weak production should be practised, not skipped");
 });
-t("strong recognition + strong production spreads to other abilities", () => {
-  const st = skilled(60, 0.95, 40, 0.95);
-  const first = formatFor({ deck: "vocab", item: { id: "x" }, st, step: 0, caps: { type: true, listen: true } });
-  const rep = formatFor({ deck: "vocab", item: { id: "x" }, st, step: 1, caps: { type: true, listen: true } });
-  eq(first, "type");
-  ok(rep !== "type", "a solid word should not be typed twice running");
+t("the weaker of two strong abilities is the one practised", () => {
+  /* This test used to assert "strong everything → type", which encoded the OLD rule where
+     format followed recognition stability. Under the intervention model the target is
+     whichever ability is actually weaker, so the assertion is now about that. */
+  const prodWeaker = skilled(60, 0.98, 40, 0.70);
+  eq(formatFor({ deck: "vocab", item: { id: "x" }, st: prodWeaker, step: 0, caps: { type: true } }), "type",
+    "weaker production should be practised");
+  const recWeaker = skilled(60, 0.70, 40, 0.99);
+  const f = formatFor({ deck: "vocab", item: { id: "x" }, st: recWeaker, step: 0, caps: { type: true } });
+  ok(f === "recall" || f === "mc", "weaker recognition should be practised, got " + f);
 });
 t("weak recognition is never asked to produce, however strong the word once was", () => {
   const st = skilled(1.2, 0.35, 40, 0.95);

@@ -26,6 +26,7 @@
       with the review backlog, while the number of genuinely new things stays capped. */
 
 import { retrievability, seedFromHistory } from "./fsrs.mjs";
+import { chooseIntervention, TARGET_SUCCESS } from "./learner.mjs";
 
 const DAY = 86400000;
 
@@ -44,6 +45,7 @@ export const DEFAULTS = {
   typeAtStability: 14,  // recognition strong enough to UNLOCK production
   prodWeakStability: 4, // ...below this the production memory itself is still fragile
   listenAtStability: 5, // audio recall a little earlier — it is easier than producing
+  targetSuccess: TARGET_SUCCESS,   // aim for effortful-but-successful retrieval
   minItems: 8,
   maxItems: 40,
   /* Two items a minute, which lands the normal pace on ~20. The first cut used four and
@@ -512,57 +514,38 @@ export function buildSession(sources, opts = {}) {
    card three times teaches the card; being asked three different ways teaches the word. */
 export const FORMATS = ["learn", "mc", "recall", "listen", "type", "cloze"];
 
+/* Format is now a CONSEQUENCE of choosing an ability and a cue level, not the thing being
+   chosen. The decision lives in learner.mjs — chooseIntervention() — because it is about the
+   learner rather than about the queue. This wrapper stays so callers that only want a
+   format keep working, and so the existing behaviour tests still bite. */
 export function formatFor(pick, opts = {}) {
+  return interventionFor(pick, opts).format;
+}
+
+export function interventionFor(pick, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const st = pick.st;
-  const seen = (st && st.seen) || 0;
-
-  // Brand new: introduce, then test it two different ways within the session.
-  if (!seen || pick.fresh) return ["learn", "mc", "recall"][Math.min(pick.step || 0, 2)];
-
-  /* Read the ability the decision is ABOUT. Choosing a production exercise from the
-     recognition state was the real defect here: someone who reads 火曜日 at 99% and
-     produces it at 55% would keep being handed recognition, because recognition is what
-     the selector was looking at — training the ability they already had. */
-  const rec = pick.recognition || skillOf(st, "fsrs");
-  const prod = pick.production || skillOf(st, "rfsrs");
-  const caps = pick.caps || { type: pick.canType, listen: pick.canListen };
-  const step = pick.step || 0;
-  const canHear = !!caps.listen && o.allowListen !== false;
-
-  /* Struggling at recognition: drop back rather than piling on production. A word you keep
-     missing does not need a harder question, it needs a fair one. */
-  if (rec.acc < 0.6 || rec.S < 2) return step % 2 === 1 ? "recall" : "mc";
-
-  /* Production is UNLOCKED by recognition — you cannot produce what you cannot yet read —
-     but once unlocked it is judged on its own record. */
-  if (caps.type && rec.S >= o.typeAtStability) {
-    /* Weak or untried production is exactly the case that needs producing, so it takes
-       the primary slot and the repeat gives support. The old rule did the opposite. */
-    if (!prod.tried || prod.acc < 0.6 || prod.S < o.prodWeakStability) {
-      return step % 2 === 0 ? "type" : "recall";
-    }
-    /* Production is solid too. This is the only point where contextual use is a fair
-       question: knowing 取る means "take" says nothing about 写真を撮る, and asking for
-       that before the word itself is secure is just a harder way to fail. */
-    if (caps.context) return step % 2 === 0 ? "cloze" : (canHear ? "listen" : "type");
-    return step % 2 === 0 ? "type" : (canHear ? "listen" : "recall");
-  }
-
-  /* Listening is a REPEAT format, never a first showing, and it needs permission. Audio
-     depends on where you are — headphones, a quiet room, not being in class — so a session
-     full of it is unusable half the time. Confining it to repeats makes it naturally
-     uncommon, since most picks are first showings. */
-  if (rec.S >= o.listenAtStability) {
-    return step % 2 === 1 ? (canHear ? "listen" : "mc") : "recall";
-  }
-  return step % 2 === 1 ? "mc" : "recall";
+  return chooseIntervention({
+    fresh: pick.fresh || !((st && st.seen) || 0),
+    step: pick.step || 0,
+    caps: pick.caps || { type: pick.canType, listen: pick.canListen },
+    recognition: pick.recognition || skillOf(st, "fsrs"),
+    production: pick.production || skillOf(st, "rfsrs"),
+    listening: pick.listening || {},
+    context: pick.context || {},
+    lastFailure: pick.lastFailure || (st && st.lastFailure) || null,
+  }, {
+    target: o.targetSuccess,
+    allowListen: o.allowListen,
+    typeAtStability: o.typeAtStability,
+    listenAtStability: o.listenAtStability,
+  });
 }
 
 /* Attach a format to every pick. Kept separate from buildSession so the selection and the
    presentation can be reasoned about — and tested — independently. */
 export function withFormats(picks, opts = {}) {
-  return picks.map((p) => ({ ...p, format: formatFor(p, opts) }));
+  return picks.map((p) => ({ ...p, ...interventionFor(p, opts) }));
 }
 
 /* A short, honest description of why this session looks the way it does. The scheduler is

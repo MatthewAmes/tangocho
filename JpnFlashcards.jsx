@@ -12,8 +12,9 @@ import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency
 import { buildSession, withFormats, describe as describeSession } from "./tools/session.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
 import {
-  SKILLS, SKILL_LABEL, skillForFormat, CUE, cueFor, cueHint, classifyFailure,
+  SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
+  pushRecent,
 } from "./tools/learner.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
@@ -1751,7 +1752,11 @@ async function sSet(key, value) {
 const SYNC_KEY = "jpn101:syncCode";
 const SYNC_ENDPOINT = "/.netlify/functions/sync";
 const SYNC_PREFIX = "jpn101:";
-const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncCode", "jpn101:syncLastPulled", "jpn101:snapshot"]);
+/* Caches of files the app already ships are excluded: kanjiData and freqData are ~1.1MB of
+   static content that would otherwise be uploaded to the cloud on every save and counted
+   against the sync payload for no benefit at all. */
+const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncCode", "jpn101:syncLastPulled", "jpn101:snapshot",
+  "jpn101:kanjiData", "jpn101:freqData"]);
 
 function genSyncCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous-looking chars
@@ -1866,6 +1871,33 @@ function mergeStats(localRaw, cloudRaw) {
   }
   return JSON.stringify(out);
 }
+/* ── evidence across devices ──
+   Evidence was already being synced, but under the default rule — whichever whole snapshot
+   is newer wins — which meant studying on a second machine silently discarded the first
+   machine's log. The learner profile is supposed to describe the LEARNER, not the learner
+   on this browser, so the two logs are unioned instead.
+
+   Records are identified by timestamp + item + format. Two answers to the same card in the
+   same millisecond do not happen, and if they somehow did, losing one is harmless. */
+function mergeEvidence(localRaw, cloudRaw) {
+  let a = [], b = [];
+  try { a = JSON.parse(localRaw || "[]"); } catch (e) {}
+  try { b = JSON.parse(cloudRaw || "[]"); } catch (e) {}
+  if (!Array.isArray(a)) a = [];
+  if (!Array.isArray(b)) b = [];
+  const seen = new Set();
+  const all = [];
+  for (const e of [...a, ...b]) {
+    if (!e || !e.at) continue;
+    const k = e.at + "|" + e.id + "|" + e.format;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    all.push(e);
+  }
+  all.sort((x, y) => (x.at || 0) - (y.at || 0));
+  return JSON.stringify(all.slice(-4000));            // same ring-buffer cap as local
+}
+
 function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
   const out = { ...localSnap };
   const keys = new Set([...Object.keys(localSnap), ...Object.keys(cloudSnap)]);
@@ -1875,6 +1907,7 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
     if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:input") { out[k] = mergeInput(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:kanji" || k === "jpn101:dates") { out[k] = mergeStats(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:evidence") { out[k] = mergeEvidence(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:deckVersion") { out[k] = String(Math.max(Number(localSnap[k] || 0), Number(cloudSnap[k] || 0))); return; }
     if (!(k in localSnap)) { out[k] = cloudSnap[k]; return; }   // new key we don't have locally yet
     if (k in cloudSnap && cloudUpdatedAt && cloudUpdatedAt > (localLastPulled || 0)) out[k] = cloudSnap[k];   // secondary keys: newer whole snapshot wins
@@ -2520,11 +2553,17 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       /* Each card carries how much help it should come with and why it was chosen. The
          cue level is what turns three fixed formats into one retrieval with a sliding
          amount of support — か＿＿び before かよう＿＿ before nothing at all. */
+      /* The whole intervention travels with the card: which ability is being worked, in
+         which direction, and how much help it comes with. Cue is a first-class property of
+         every exercise now, not metadata attached to typing afterwards. */
       .map((p) => ({
         ...p.item,
         _fmt: p.format,
         _step: p.step,
-        _cue: p.format === "type" ? cueFor(p.production, { allowContext: false }) : null,
+        _cue: p.cue,
+        _skill: p.skill,
+        _dir: p.direction,
+        _expected: p.expected,
         _why: explainPick(p),
       })),
     [smartPicks, allowListen],
@@ -2752,6 +2791,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
+      /* Feed the outcome back into the item so the next intervention can react: a rolling
+         recent history (lifetime accuracy reacts far too slowly to notice a collapse) and
+         the kind of failure, so a reading fumble leads somewhere different from a blank. */
+      recordOutcome(c, { ok: got, failure: rec.failure, skill: evSkill });
     }
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -3170,7 +3213,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               <>
                 <span className="tc-kindchip">{KIND_LABEL[card.kind] || ""}</span>
                 <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
-                <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
+                {/* Support is a property of every exercise, not only of typing. At a high
+                    cue level the reading is simply shown; lower down it is masked, so the
+                    same card can be made harder without changing what it is. */}
+                {card._cue != null && card._cue >= CUE.PARTIAL && card.reading !== card.term
+                  ? <div className="tc-reading-front tc-reading-masked">{cueHint(card.reading, card._cue)} <SpeakBtn text={card.reading || card.term} /></div>
+                  : <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>}
                 {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
                 <span className="tc-flipcue">tap to flip</span>
               </>
@@ -3607,6 +3655,47 @@ async function logEvidence(rec) {
   if (list.length > EVIDENCE_CAP) list.splice(0, list.length - EVIDENCE_CAP);
   sSet(EVIDENCE_KEY, JSON.stringify(list));
   for (const fn of _evidenceWatchers) { try { fn(list.slice()); } catch (e) {} }
+}
+
+/* ── outcome feedback ──
+   The last review's sharpest point: failure classification existed and changed nothing.
+   These write the two signals the next intervention actually reads — a rolling recent
+   history, and which ability broke — back onto the item, in whichever store owns it.
+
+   `recent` is a short string of 1s and 0s, newest last. Lifetime accuracy reacts far too
+   slowly: a word answered wrong for months and right all week still looks broken, and one
+   that was solid and has just fallen apart still looks fine. */
+function applyOutcome(st, { ok, failure, skill }) {
+  const base = st || {};
+  const out = { ...base, recent: pushRecent(base.recent, ok) };
+  if (skill === "production") out.rrecent = pushRecent(base.rrecent, ok);
+  out.lastFailure = ok ? null : (failure || null);
+  return out;
+}
+
+async function recordOutcome(card, res) {
+  if (!card) return;
+  if (!card.src) {
+    // Vocabulary lives in the deck array; the deck writer owns it, so patch in place.
+    try {
+      const raw = await sGet(STORE_KEY);
+      const list = raw ? JSON.parse(raw) : null;
+      if (!Array.isArray(list)) return;
+      const i = list.findIndex((c) => c.id === card.id);
+      if (i < 0) return;
+      list[i] = applyOutcome(list[i], res);
+      await sSet(STORE_KEY, JSON.stringify(list));
+    } catch (e) { /* a lost signal is better than a broken session */ }
+    return;
+  }
+  try {
+    const key = foreignKey(card.src);
+    const raw = await sGet(key);
+    const store = raw ? JSON.parse(raw) : {};
+    if (Array.isArray(store)) return;                  // legacy shape; migrated elsewhere
+    store[card.srcId] = applyOutcome(store[card.srcId], res);
+    await sSet(key, JSON.stringify(store));
+  } catch (e) {}
 }
 
 const PLAN_KEY = "jpn101:plan";
@@ -9076,6 +9165,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   text-transform:uppercase;color:rgba(255,255,255,.4);}
 .tc-mchint{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.45);}
 /* ── cue, explanation, session summary ── */
+.tc-reading-masked{letter-spacing:.1em;color:rgba(255,255,255,.55);}
 .tc-cuehint{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:26px;letter-spacing:.12em;color:#c9b8ff;background:rgba(124,92,255,.14);
   border-radius:10px;padding:5px 14px;}

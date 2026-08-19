@@ -248,3 +248,183 @@ export function summarise(evidence = []) {
     commonestFailure: Object.keys(failures).sort((a, b) => failures[b] - failures[a])[0] || null,
   };
 }
+
+/* ── retrieval direction ──
+   The review's point: mc ("which of these four means 火曜日?") and recall ("what does
+   火曜日 mean?") are not the same cognitive demand, and calling both "recognition" throws
+   that away. They are the same SKILL in the same DIRECTION at different CUE levels — which
+   is exactly what the cue scale already expresses, so the taxonomy is
+   skill × direction × cue rather than a flat list of format names. */
+export const DIRECTIONS = {
+  JP_EN: "jp_to_en",          // see the word, retrieve the meaning
+  EN_JP: "en_to_jp",          // see the meaning, retrieve the word
+  AUDIO_EN: "audio_to_meaning",
+  IN_CONTEXT: "en_to_jp_in_context",
+};
+
+/* ── rolling recent history ──
+   Lifetime accuracy reacts far too slowly: a word answered wrong for months and right all
+   week still looks broken, and one that was solid and just fell apart still looks fine.
+   The previous fix used "was the last answer wrong", which is a proxy and cannot tell
+   78% lifetime / recently terrible from 78% lifetime / recently excellent.
+
+   Stored as a short string of 1s and 0s, newest last. Compact enough to sit on every stat
+   record and sync without bloating anything. */
+export const RECENT_CAP = 10;
+
+export function pushRecent(recent, ok) {
+  const s = (typeof recent === "string" ? recent : "").replace(/[^01]/g, "");
+  return (s + (ok ? "1" : "0")).slice(-RECENT_CAP);
+}
+
+export function recentAcc(recent, n = 5) {
+  const s = (typeof recent === "string" ? recent : "").replace(/[^01]/g, "");
+  if (!s.length) return null;                        // no history is not the same as zero
+  const window = s.slice(-n);
+  let ok = 0;
+  for (const ch of window) if (ch === "1") ok += 1;
+  return { rate: ok / window.length, n: window.length };
+}
+
+/* ── predicted success ──
+   How likely this learner is to get this exercise right, given the ability and how much
+   help the exercise offers. Deliberately simple and deliberately explicit: it is a
+   stated model that can be checked against logged outcomes later, which is the whole
+   point of recording `predicted` on every evidence record.
+
+   Recent performance outranks lifetime when the two disagree, because the question is
+   "can you do it now", not "have you historically". */
+export function predictSuccess(skill, cue) {
+  const s = skill || {};
+  if (!s.tried) return cue <= CUE.CHOOSE ? 0.55 : 0.3;
+  const life = s.acc != null ? s.acc : 0.5;
+  const rec = recentAcc(s.recent, 5);
+  const base = rec ? (rec.rate * 0.65 + life * 0.35) : life;
+  // Each step up the demand ladder costs something; a strong memory pays less for it.
+  const strength = Math.min(1, (s.S || 0) / 30);
+  const cost = 0.13 * (1 - strength * 0.6);
+  return Math.max(0.05, Math.min(0.98, base - cost * cue));
+}
+
+/* ── the intervention ──
+   Replaces "pick a format, then decorate it with a cue". The decision is now:
+   which ability is weakest and available → how much help does it need to be effortful but
+   still successful → which renderer shows that. Format is a CONSEQUENCE of skill and cue,
+   not the thing being chosen. */
+export const TARGET_SUCCESS = 0.72;
+/* Where an ability with no evidence sits when choosing what to work on. */
+export const UNTRIED_SCORE = 0.45;
+
+function formatFromSkillCue(skill, cue) {
+  if (cue === CUE.SHOWN) return "learn";
+  switch (skill) {
+    case "listening": return "listen";
+    case "context": return "cloze";
+    case "production": return cue >= CUE.CONTEXT ? "cloze" : "type";
+    default: return cue <= CUE.CHOOSE ? "mc" : "recall";
+  }
+}
+
+function directionFor(skill) {
+  if (skill === "listening") return DIRECTIONS.AUDIO_EN;
+  if (skill === "context") return DIRECTIONS.IN_CONTEXT;
+  if (skill === "production") return DIRECTIONS.EN_JP;
+  return DIRECTIONS.JP_EN;
+}
+
+/* A failure tells you which ability actually broke, so the next exercise should address
+   THAT rather than simply repeating the same question. This is the loop the last review
+   called decorative — classification existed but changed nothing. */
+export function skillAfterFailure(failure, fallback) {
+  switch (failure) {
+    case "reading": return "production";   // knew the word, fumbled the reading — drill the form
+    case "listening": return "listening";
+    case "context": return "context";
+    case "orthography": return "orthography";
+    case "meaning": return "recognition";
+    case "blank": return "recognition";        // nothing retrieved: go back to the meaning
+    default: return fallback;
+  }
+}
+
+export function chooseIntervention(pick, opts = {}) {
+  const o = { target: TARGET_SUCCESS, ...opts };
+  const caps = (pick && pick.caps) || {};
+  const states = {
+    recognition: pick.recognition || {},
+    production: pick.production || {},
+    listening: pick.listening || {},
+    context: pick.context || {},
+  };
+
+  // Never met: show it. There is nothing to retrieve yet.
+  if (pick.fresh || !(states.recognition.tried)) {
+    // Shown, then recognised among options, then recalled cold. Three showings of one card
+    // teaches the card; three different demands teach the word.
+    const cue = [CUE.SHOWN, CUE.CHOOSE, CUE.STRONG][Math.min(pick.step || 0, 2)];
+    const skill = "recognition";
+    return { skill, direction: directionFor(skill), cue, format: formatFromSkillCue(skill, cue), expected: predictSuccess(states.recognition, cue) };
+  }
+
+  /* Which abilities are even askable. Production stays locked until the word can be read
+     at all — asking someone to produce what they cannot recognise is not difficulty, it
+     is just failure. */
+  const unlocked = ["recognition"];
+  if (caps.type && (states.recognition.S || 0) >= (o.typeAtStability || 14)) unlocked.push("production");
+  /* Listening is a REPEAT-only format. Audio depends on where you are, so a session full
+     of it is unusable half the time — and because an unmeasured ability ranks as weak, an
+     unconstrained listening dimension won nearly every slot in practice. */
+  if (caps.listen && o.allowListen !== false && (pick.step || 0) > 0
+      && (states.recognition.S || 0) >= (o.listenAtStability || 5)) unlocked.push("listening");
+  if (caps.context && (states.production.tried || (states.recognition.S || 0) >= (o.typeAtStability || 14))) unlocked.push("context");
+
+  /* Target the WEAKEST unlocked ability — the whole point of modelling them separately.
+     An untried ability counts as weak: it is the one with no evidence at all. */
+  /* Preference order breaks ties. When two abilities are equally strong the one that is
+     harder and less practised should win — producing a word beats recognising it, and
+     recognition is the fallback rather than the default. */
+  const ORDER = ["production", "context", "listening", "recognition"];
+  const ranked = ORDER.filter((s) => unlocked.includes(s));
+  let skill = ranked[0] || unlocked[0];
+  let worst = 2;
+  for (const s of ranked) {
+    const st = states[s] || {};
+    /* An untried ability ranks BELOW average but not automatically last. Scoring it worst
+       meant any dimension the app does not yet populate — listening, context — won every
+       session forever and starved an ability that is genuinely failing at 20%. Unmeasured
+       is a reason to sample, not a reason to monopolise. */
+    const score = !st.tried ? UNTRIED_SCORE : (recentAcc(st.recent, 5)?.rate ?? st.acc ?? 0.5);
+    if (score < worst) { worst = score; skill = s; }
+  }
+
+  // A recent failure redirects to the ability that actually broke, when it is available.
+  if (pick.lastFailure) {
+    const want = skillAfterFailure(pick.lastFailure, skill);
+    if (unlocked.includes(want)) skill = want;
+  }
+
+  /* Pick the HARDEST cue this ability can still succeed at. Effortful and successful is
+     the target; effortful and failing teaches nothing, and easy teaches nothing either. */
+  /* The top rung is contextual use, and it only exists when the item actually HAS
+     contextual material. Without this, a strong production memory climbed to CUE.CONTEXT
+     and rendered as a cloze for a word with no sentence to put it in. */
+  const ladder = (skill === "recognition" || !caps.context)
+    ? [CUE.CHOOSE, CUE.STRONG, CUE.PARTIAL, CUE.FREE]
+    : [CUE.CHOOSE, CUE.STRONG, CUE.PARTIAL, CUE.FREE, CUE.CONTEXT];
+  let cue = ladder[0];
+  for (const c of ladder) {
+    if (skill === "context" && c < CUE.CONTEXT) continue;
+    if (predictSuccess(states[skill], c) >= o.target) cue = c; else break;
+  }
+  if (skill === "context") cue = CUE.CONTEXT;
+  // A miss last time hands support back regardless of what the model predicts.
+  if (pick.lastFailure && cue > CUE.CHOOSE) cue -= 1;
+
+  return {
+    skill,
+    direction: directionFor(skill),
+    cue,
+    format: formatFromSkillCue(skill, cue),
+    expected: predictSuccess(states[skill], cue),
+  };
+}
