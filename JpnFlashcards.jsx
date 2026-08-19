@@ -3093,14 +3093,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           meaning, picture, sound — and the testing starts on its next appearance, a few
           cards later, while it is still warm. */}
       {fmt === "learn" && (
-        <div className="tc-learn">
+        /* An introduction has nothing to reveal and only one way forward, so the whole
+           card is the control. Tapping anywhere continues, and the audio button stops
+           the click from bubbling so hearing it does not skip past it. */
+        <div className="tc-learn tc-learn-tap" role="button" tabIndex={0}
+             aria-label="Continue"
+             onClick={() => grade(true)}
+             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); grade(true); } }}>
           <span className="tc-kindchip tc-learnchip">new word</span>
           {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
           <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
           <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
           <div className="tc-romaji">{card.romaji}</div>
           <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
-          <p className="tc-learnnote">Look it over — you'll be asked in a moment.</p>
+          <p className="tc-learnnote">Look it over, then tap anywhere — you'll be asked in a moment.</p>
         </div>
       )}
 
@@ -9180,6 +9186,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
   border-radius:26px;padding:34px 28px 30px;margin-bottom:18px;min-height:340px;box-sizing:border-box;
   justify-content:center;color:#fff;
   box-shadow:0 24px 54px -22px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14);}
+.tc-learn-tap{cursor:pointer;}
+.tc-learn-tap:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:3px;}
+.tc-learn-tap:hover{background:radial-gradient(140% 130% at 30% -12%, rgba(124,92,255,.3) 0%, rgba(64,84,168,.16) 45%, rgba(255,255,255,.06) 80%);}
 .tc-learnchip{background:rgba(120,220,170,.2);color:#c8f5df;}
 .tc-mcchip{background:rgba(140,170,255,.2);color:#d3e0ff;}
 .tc-listenchip{background:rgba(255,200,120,.2);color:#ffe2b8;}
