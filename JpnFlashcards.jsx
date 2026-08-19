@@ -11,6 +11,10 @@ import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
 import { buildSession, withFormats, describe as describeSession } from "./tools/session.mjs";
 import {
+  SKILLS, SKILL_LABEL, skillForFormat, CUE, cueFor, cueHint, classifyFailure,
+  makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
+} from "./tools/learner.mjs";
+import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
   acceptedReadings, COUNTERS, DAY_READING, MONTH_READING, MONTH_KANJI, HOUR_READING,
   WEEKDAYS, WEEKDAY_EN, counterForm, ordinal,
@@ -1587,6 +1591,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [firstTry, setFirstTry] = useState(() => new Set()); // correct with no prior miss
   const [struggled, setStruggled] = useState(() => new Set()); // missed at least once
   const missRef = useRef({});                          // id -> miss count this session
+  const sessionLog = useRef([]);                       // evidence gathered this session, for the debrief
   const hooksRef = useRef(null);                       // term -> memory hook (cached forever)
   const [hook, setHook] = useState(null);              // {term, text|"...", err}
   const [debrief, setDebrief] = useState(null);        // {text} | {err} | {busy:true}
@@ -1608,6 +1613,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [flipped, setFlipped] = useState(false);
   const [typed, setTyped] = useState("");        // rōmaji the learner types on a production card
   const [verdict, setVerdict] = useState(null);  // {ok, got, want} once that answer is checked
+  const [showWhy, setShowWhy] = useState(false);  // per-card "why am I seeing this?"
   const [running, setRunning] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
@@ -1708,7 +1714,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   // here and the scheduler and the renderer cannot disagree about what an item can carry.
   const smartPool = useMemo(
     () => withFormats(smartPicks, { allowListen })
-      .map((p) => ({ ...p.item, _fmt: p.format, _step: p.step })),
+      /* Each card carries how much help it should come with and why it was chosen. The
+         cue level is what turns three fixed formats into one retrieval with a sliding
+         amount of support — か＿＿び before かよう＿＿ before nothing at all. */
+      .map((p) => ({
+        ...p.item,
+        _fmt: p.format,
+        _step: p.step,
+        _cue: p.format === "type" ? cueFor(p.production, { allowContext: false }) : null,
+        _why: explainPick(p),
+      })),
     [smartPicks, allowListen],
   );
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
@@ -1834,7 +1849,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setProdSet(new Set(owed.slice(0, 6).map((c) => c.id)));
     missRef.current = {};
     setHook(null); setDebrief(null);
-    setFlipped(false); setTyped(""); setVerdict(null); setRunning(true);
+    setFlipped(false); setTyped(""); setVerdict(null); setShowWhy(false); setRunning(true);
+    sessionLog.current = [];
   }, [cards, coverage]);
 
   const card = queue[pos];
@@ -1908,6 +1924,28 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     // Kana, kanji and 10k cards belong to their own decks and go home to their own keys.
     if (c.src) recordForeign(c, got, thinkRef.current || 0, workedArea);
     else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined, workedArea);
+
+    /* Evidence about the ABILITY, recorded alongside the card update. "Wrong" on its own
+       is nearly useless: someone who reads 火曜日, knows it means Tuesday, and mistypes
+       かようび has a reading fumble, not a vocabulary gap, and the next intervention
+       should differ. The predicted-recall figure is kept so the model's confidence can
+       later be checked against what actually happened. */
+    const evSkill = skillForFormat(fmt);
+    if (evSkill) {
+      const rec = makeEvidence({
+        id: c.id, deck: c.src || "vocab", format: fmt, skill: evSkill,
+        cue: typeof c._cue === "number" ? c._cue : null,
+        ok: got, ms: think,
+        failure: got ? null : classifyFailure({
+          format: fmt,
+          expected: c.reading || c.term,
+          got: verdict && verdict.got ? verdict.got : "",
+        }),
+        predicted: recallChance(c, Date.now()),
+      });
+      logEvidence(rec);
+      sessionLog.current.push(rec);
+    }
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       setPassed((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -1922,7 +1960,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       }
     }
     setFlipped(false);
-    setTyped(""); setVerdict(null);
+    setTyped(""); setVerdict(null); setShowWhy(false);
     setPos((p) => p + 1);
   }, [queue, pos, onResult]);
 
@@ -2113,6 +2151,37 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         {debrief && debrief.err && missedCards.length > 0 && (
           <p className="tc-debrief tc-debrief-busy">Missed: {missedCards.slice(0, 6).map((c) => c.term).join("、")} — hit "Review" below and they'll come right back.</p>
         )}
+        {/* What actually happened, per ability. Deliberately phrased as counts the app
+            can defend — "12 answered on production" is measurable, "you mastered 12
+            words" is a claim the model has no standing to make. */}
+        {(() => {
+          const s = summarise(sessionLog.current);
+          if (!s.answered) return null;
+          const FAIL_LABEL = {
+            reading: "recalling readings", meaning: "meanings", listening: "catching it by ear",
+            production: "producing it", orthography: "spelling", context: "using it in context",
+            blank: "drawing a blank",
+          };
+          return (
+            <div className="tc-sessum">
+              <p className="tc-sessumh">What this worked on</p>
+              <ul className="tc-sessumlist">
+                {s.skillsWorked.map((k) => (
+                  <li key={k}>
+                    <span>{SKILL_LABEL[k] || k}</span>
+                    <b>{s.bySkill[k].ok}/{s.bySkill[k].n}</b>
+                  </li>
+                ))}
+                {s.introduced > 0 && <li><span>New words met</span><b>{s.introduced}</b></li>}
+              </ul>
+              {s.commonestFailure && (
+                <p className="tc-sessumnote">
+                  Most misses were about <b>{FAIL_LABEL[s.commonestFailure] || s.commonestFailure}</b>.
+                </p>
+              )}
+            </div>
+          );
+        })()}
         <div className="tc-donebtns">
           {missedCards.length > 0 && (
             <button className="tc-btn tc-btn-primary" onClick={() => start(missedCards)}>Review the {missedCards.length} you missed</button>
@@ -2246,6 +2315,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     onChange={(e) => setTyped(e.target.value)}
                     onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") checkSpelling(); }}
                   />
+                  {/* The cue. A first attempt at producing a word gets か＿＿び; once
+                      production is developing it drops to かよう＿＿; solid production gets
+                      nothing at all. Support is handed back after a miss — the aim is
+                      retrieval that is effortful and still succeeds. */}
+                  {card._cue != null && card._cue < CUE.FREE && card.reading && (
+                    <div className="tc-cuehint" aria-label="hint">{cueHint(card.reading, card._cue)}</div>
+                  )}
                   <div className="tc-spellkana">{typed.trim() ? toKana(typed.trim()) : " "}</div>
                   <button type="button" className="tc-btn tc-btn-wide" onClick={checkSpelling} disabled={!typed.trim()}>Check</button>
                 </div>
@@ -2337,6 +2413,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           </>
         )}
       </div>
+      {/* "Why am I seeing this?" — plain language, no scheduler vocabulary. It earns
+          trust, and it makes the algorithm inspectable by the person using it rather
+          than only by whoever wrote it. */}
+      {card._why && (
+        <div className="tc-whywrap">
+          {showWhy ? (
+            <p className="tc-whytext">{card._why}</p>
+          ) : (
+            <button type="button" className="tc-whybtn" onClick={() => setShowWhy(true)}>
+              Why this one?
+            </button>
+          )}
+        </div>
+      )}
       <div ref={liveRef} aria-live="polite" className="tc-sr" />
     </div>
   );
@@ -2356,6 +2446,10 @@ function Plan() {
 
   const update = (patch) => { const next = { ...plan, ...patch }; setPlan(next); savePlan(next); };
   const cover = useMemo(() => coverageFrom(days, 14), [days]);
+  const [evidence, setEvidence] = useState([]);
+  useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())); return subscribeEvidence(setEvidence); }, []);
+  const profile = useMemo(() => profileFrom(evidence, { days: 60 }), [evidence]);
+  const gap = useMemo(() => biggestGap(profile), [profile]);
   const busiest = Math.max(1, ...Object.values(cover));
   const totalReviews = Object.values(cover).reduce((a, b) => a + b, 0);
 
@@ -2457,6 +2551,44 @@ function Plan() {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* ── the learner profile ──
+          Model outputs, not XP bars. Each row is an ability with its own evidence, and a
+          row without enough evidence says so rather than inventing a percentage — being
+          told you are "72% fluent" off nine answers is how learning apps lose the plot. */}
+      <section className="tc-plansec">
+        <h2 className="tc-planh">What you can actually do <span className="tc-planh-sub">last 60 days</span></h2>
+        <p className="tc-planhint">
+          These come from how you've answered, split by ability — not from how many cards
+          you've seen. A word you can read but can't say counts as one, not both.
+        </p>
+        <div className="tc-cover">
+          {SKILLS.map((k) => {
+            const row = profile[k] || { n: 0, rate: null, confidence: CONFIDENCE.NONE };
+            const pct = row.rate == null ? null : Math.round(row.rate * 100);
+            return (
+              <div key={k} className="tc-coverrow">
+                <span className="tc-covername">{SKILL_LABEL[k]}</span>
+                <div className="tc-coverbar">
+                  <div className={"tc-coverfill" + (pct != null && pct < 60 ? " is-gap" : "")}
+                    style={{ width: (pct == null ? 0 : pct) + "%" }} />
+                </div>
+                <span className="tc-covernum">{pct == null ? "—" : pct + "%"}</span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="tc-planhint" style={{ marginTop: 10 }}>
+          {SKILLS.filter((k) => (profile[k] || {}).n > 0).length === 0
+            ? "Nothing measured yet — do a session and this fills in."
+            : gap
+              ? <>Biggest opportunity: <b>{SKILL_LABEL[gap.skill]}</b>. Your {SKILL_LABEL[gap.ahead].toLowerCase()} is about {Math.round(gap.spread * 100)} points ahead.</>
+              : "No clear weak spot yet — the abilities measured so far are close together."}
+        </p>
+        <p className="tc-planhint">
+          {SKILLS.map((k) => `${SKILL_LABEL[k]}: ${(profile[k] || {}).confidence || CONFIDENCE.NONE}`).join(" · ")}
+        </p>
       </section>
 
       <section className="tc-plansec">
@@ -2607,6 +2739,37 @@ function prodDue(c, now) {
    The part that makes this more than a notes page: the plan drives the scheduler. The
    priorities weight what Smart Review serves, and the pace sets how long a session runs.
    A plan the app ignores is a wish list. */
+/* ── evidence ──
+   One record per answered exercise: which item, which ability it tested, how much help it
+   came with, what went wrong, and what the model had predicted. The reviews are right
+   that this is the unlock — a learner profile, failure targeting, and eventually
+   measuring whether the model's confidence is justified all need outcomes recorded per
+   SKILL rather than per card.
+
+   Capped as a ring buffer. A log nobody can afford to keep is a log that stops existing
+   the first time it fills localStorage, and 4,000 answers is already months of study. */
+const EVIDENCE_KEY = "jpn101:evidence";
+const EVIDENCE_CAP = 4000;
+
+let _evidence = null;
+async function loadEvidence() {
+  if (_evidence) return _evidence;
+  try { const r = await sGet(EVIDENCE_KEY); _evidence = r ? JSON.parse(r) : []; }
+  catch (e) { _evidence = []; }
+  if (!Array.isArray(_evidence)) _evidence = [];
+  return _evidence;
+}
+const _evidenceWatchers = new Set();
+function subscribeEvidence(fn) { _evidenceWatchers.add(fn); return () => _evidenceWatchers.delete(fn); }
+
+async function logEvidence(rec) {
+  const list = await loadEvidence();
+  list.push(rec);
+  if (list.length > EVIDENCE_CAP) list.splice(0, list.length - EVIDENCE_CAP);
+  sSet(EVIDENCE_KEY, JSON.stringify(list));
+  for (const fn of _evidenceWatchers) { try { fn(list.slice()); } catch (e) {} }
+}
+
 const PLAN_KEY = "jpn101:plan";
 
 export const AREAS = [
@@ -8001,6 +8164,25 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcopt.is-answer{background:rgba(90,220,150,.2);border-color:rgba(90,220,150,.65);color:#d6ffe9;opacity:1;}
 .tc-mcopt.is-wrongpick{background:rgba(255,110,90,.18);border-color:rgba(255,110,90,.6);color:#ffd5cf;opacity:1;}
 .tc-mchint{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.45);}
+/* ── cue, explanation, session summary ── */
+.tc-cuehint{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
+  font-size:26px;letter-spacing:.12em;color:#c9b8ff;background:rgba(124,92,255,.14);
+  border-radius:10px;padding:5px 14px;}
+.tc-whywrap{display:flex;justify-content:center;margin:-6px 0 14px;}
+.tc-whybtn{appearance:none;background:none;border:0;cursor:pointer;font:inherit;font-size:12.5px;
+  color:var(--mut-2);text-decoration:underline;text-underline-offset:3px;padding:4px 8px;}
+.tc-whybtn:hover{color:#fff;}
+.tc-whytext{margin:0;max-width:46ch;text-align:center;font-size:13px;line-height:1.6;color:var(--mut-2);
+  background:rgba(255,255,255,.05);border-radius:10px;padding:9px 14px;}
+.tc-sessum{margin:18px auto 0;max-width:340px;text-align:left;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:14px 16px;}
+.tc-sessumh{margin:0 0 9px;font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--mut-2);}
+.tc-sessumlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.tc-sessumlist li{display:flex;justify-content:space-between;gap:12px;font-size:14px;color:#fff;}
+.tc-sessumlist b{font-variant-numeric:tabular-nums;color:#c9b8ff;}
+.tc-sessumnote{margin:11px 0 0;font-size:12.5px;line-height:1.5;color:var(--mut-2);}
+.tc-sessumnote b{color:#ffd0c8;}
 /* ── study plan ── */
 .tc-plan{display:flex;flex-direction:column;gap:26px;padding-bottom:40px;}
 .tc-plansec{display:flex;flex-direction:column;gap:11px;background:rgba(255,255,255,.04);
