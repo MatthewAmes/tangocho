@@ -123,7 +123,7 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, at, confused }) {
+export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, pRecall, at, confused }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
@@ -134,6 +134,10 @@ export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, pr
     // What the model expected. Kept so calibration can later be measured rather than
     // assumed — "predicted 80%, actually 52%" is the only way to learn the model is wrong.
     predicted: typeof predicted === "number" ? Math.round(predicted * 100) / 100 : null,
+    /* FSRS's card-level retrievability, recorded next to the intervention's prediction rather
+       than instead of it. Its presence is also what marks a record as belonging to the era
+       where `predicted` means the intervention model — older records have neither. */
+    pRecall: typeof pRecall === "number" ? Math.round(pRecall * 100) / 100 : null,
     // Which wrong option was picked, when there was one. This is the raw material for
     // learner-specific distractors: what THIS person mixes up beats "same length".
     confused: !ok && confused ? confused : null,
@@ -310,9 +314,24 @@ export function recentAcc(recent, n = 5) {
 export function predictSuccess(skill, cue) {
   const s = skill || {};
   if (!s.tried) return cue <= CUE.CHOOSE ? 0.55 : 0.3;
-  const life = s.acc != null ? s.acc : 0.5;
+  /* The base comes from the POSTERIOR, not from raw accuracy. Reading s.acc directly let
+     one missed answer produce acc = 0, which clamps to a 5% prediction at every rung — the
+     same overclaiming-from-nothing that abilityFrom was rewritten to stop, reintroduced by
+     a second estimator that quietly disagreed with the first. Through the posterior a
+     single miss reads as about 40%, which is what one miss actually justifies.
+
+     Recency still gets the larger share on top, because how the last few answers went says
+     more about right now than a lifetime average does. */
+  const post = abilityFrom(s);
+  const life = post.mean;
+  /* Recency earns its weight rather than being handed it. A flat 0.65 on the recent
+     window gave a SINGLE recent answer two-thirds of the vote, so one miss on a new word
+     dragged the prediction to 14% — recency correcting a stale estimate is the point, but
+     one answer is not a trend. The weight now grows with the size of the window and only
+     reaches its full share once there are five answers in it. */
   const rec = recentAcc(s.recent, 5);
-  const base = rec ? (rec.rate * 0.65 + life * 0.35) : life;
+  const w = rec ? 0.65 * Math.min(1, rec.n / 5) : 0;
+  const base = rec ? (rec.rate * w + life * (1 - w)) : life;
 
   /* On the log-odds scale, not by subtraction. Taking a flat amount off a probability
      assumes a cue level costs the same whether the learner is at 95% or 50%, and it runs
@@ -324,7 +343,26 @@ export function predictSuccess(skill, cue) {
   const logit = Math.log(b / (1 - b));
   const strength = Math.min(1, (s.S || 0) / 30);
   const perCue = 0.75 * (1 - strength * 0.55);   // a strong memory pays less per step
-  const z = logit - perCue * cue;
+
+  /* The penalty is a DIFFERENCE from the rung the evidence came from, not a charge from
+     zero. Accuracy is never measured in the abstract — it is measured at whatever cue the
+     learner was actually given, and almost all of it comes from the ladder floor. Charging
+     the full cue cost on top of a number that already includes it predicted that someone
+     scoring 70% on multiple choice would get 49% on multiple choice: the model disagreeing
+     with the very observation it was built from.
+
+     The consequence was worse than a wrong number. The ladder search takes the hardest rung
+     still predicted above target and stops at the first one that fails, so a floor
+     prediction below target meant it broke on its first iteration EVERY time and returned
+     the floor. Across a simulated fourteen sessions, 89% of exercises came out at the
+     bottom rung whatever the learner did — the cue continuum, the centrepiece of this
+     design, was inert.
+
+     REFERENCE_CUE is an assumption, not a measurement: it says the accuracy on file was
+     earned at the floor rung. That is true of most of the log today and will drift as the
+     ladder starts working. It is exactly the kind of claim calibration.mjs exists to check,
+     and the cue-calibration table is where it will show up as wrong. */
+  const z = logit - perCue * (cue - REFERENCE_CUE);
   return Math.max(0.05, Math.min(0.98, 1 / (1 + Math.exp(-z))));
 }
 
@@ -334,6 +372,8 @@ export function predictSuccess(skill, cue) {
    still successful → which renderer shows that. Format is a CONSEQUENCE of skill and cue,
    not the thing being chosen. */
 export const TARGET_SUCCESS = 0.72;
+/* The rung the recorded accuracy is assumed to have been earned at. See predictSuccess. */
+export const REFERENCE_CUE = CUE.CHOOSE;
 /* Where an ability with no evidence sits when choosing what to work on. */
 /* How much an unmeasured ability is worth sampling, relative to a known-weak one. */
 export const CURIOSITY = 0.35;

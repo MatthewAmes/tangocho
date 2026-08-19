@@ -10,6 +10,7 @@ import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor, AGAIN, HARD, GOOD, EASY } from "./tools/fsrs.mjs";
 import { buildSession, interventionFor, skillOf, describe as describeSession } from "./tools/session.mjs";
+import { calibrationReport } from "./tools/calibration.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -2820,7 +2821,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     if (evSkill) {
       const rec = makeEvidence({
         id: c.id, deck: c.src || "vocab", format: fmt, skill: evSkill,
-        cue: typeof c._cue === "number" ? c._cue : null,
+        /* The cue the learner actually saw. This read c._cue, a field the just-in-time
+           intervention rewrite renamed out of existence — so every record written since
+           then carries cue: null and no cue calibration was possible. */
+        cue: typeof cueLevel === "number" ? cueLevel : null,
         ok: got, ms: think,
         failure: got ? null : classifyFailure({
           format: fmt,
@@ -2829,7 +2833,19 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         }),
         // The specific wrong word picked — the raw material for learner-aware distractors.
         confused: !got && verdict && verdict.chosenId ? verdict.chosenId : null,
-        predicted: recallChance(c, Date.now()),
+        /* Two different predictions, kept apart because they answer different questions.
+           `predicted` is what the intervention model believed about THIS exercise —
+           this ability, at this cue — and it is the number that chose the exercise, so it
+           is the one whose calibration decides whether the scheduler is trustworthy.
+           `pRecall` is FSRS asking only "would the card come back today", which knows
+           nothing about being asked to produce rather than recognise.
+
+           Records written before this split have `predicted` holding the FSRS figure and
+           no `pRecall` at all; the calibration report keys off that absence rather than
+           averaging two different quantities together. */
+        predicted: intervention && typeof intervention.expected === "number"
+          ? intervention.expected : recallChance(c, Date.now()),
+        pRecall: recallChance(c, Date.now()),
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
@@ -3384,6 +3400,11 @@ function Plan() {
   useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())); return subscribeEvidence(setEvidence); }, []);
   const profile = useMemo(() => profileFrom(evidence, { days: 60 }), [evidence]);
   const gap = useMemo(() => biggestGap(profile), [profile]);
+  /* Is the app right about you? Everything above reports what the model BELIEVES; this is
+     the only part that checks those beliefs against what actually happened. A year is the
+     window because calibration moves slowly and there is no point asking the question of
+     three sessions. */
+  const cal = useMemo(() => calibrationReport(evidence, { days: 365 }), [evidence]);
   const busiest = Math.max(1, ...Object.values(cover));
   const totalReviews = Object.values(cover).reduce((a, b) => a + b, 0);
 
@@ -3536,6 +3557,59 @@ function Plan() {
             return SKILL_LABEL[k] + ": " + STATE_LABEL[stateOf(posterior(row.ok || 0, (row.n || 0) - (row.ok || 0)))];
           }).join(" · ")}
         </p>
+      </section>
+
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Is the app right about you? <span className="tc-planh-sub">its predictions vs what happened</span></h2>
+        {/* Everything else on this page reports what the model believes. This is the one
+            place that checks those beliefs. It says "not enough yet" far more often than it
+            says anything else, on purpose: a verdict drawn from thirty answers would be
+            noise dressed as a finding, and tuning the app against noise is worse than
+            leaving it alone. */}
+        <p className="tc-planhint" style={{ marginTop: 0 }}>{cal.headline}</p>
+
+        {cal.prediction.bins.length > 0 && (
+          <>
+            <div className="tc-cover" style={{ marginTop: 10 }}>
+              {cal.prediction.bins.map((b) => (
+                <div key={b.lo} className="tc-coverrow">
+                  <span className="tc-covername">said {Math.round(b.predicted * 100)}%</span>
+                  <div className="tc-coverbar">
+                    <div className={"tc-coverfill" + (b.verdict === "overconfident" ? " is-gap" : "")}
+                      style={{ width: Math.round(b.observed * 100) + "%" }} />
+                  </div>
+                  <span className="tc-covernum">{Math.round(b.observed * 100)}%</span>
+                </div>
+              ))}
+            </div>
+            <p className="tc-planhint">
+              Each row: how often you actually got those right. The range around every figure
+              is wide until there are a few hundred answers behind it, so only a bar far from
+              its label means anything yet.
+            </p>
+          </>
+        )}
+
+        {cal.cue.rows.some((r) => r.verdict !== "insufficient") && (
+          <p className="tc-planhint">
+            Help levels: {cal.cue.rows.filter((r) => r.verdict !== "insufficient").map((r) =>
+              `${CUE_NAME[r.cue] || ("level " + r.cue)} ${Math.round(r.observed * 100)}% (${r.verdict === "on_target" ? "about right" : r.verdict === "too_hard" ? "too hard" : "too easy"})`).join(" · ")}
+            {cal.cue.monotonic === false && " — and they are not actually getting harder in order, which means the levels need reworking."}
+          </p>
+        )}
+
+        {cal.efficacy.rows.filter((r) => r.confident).length > 0 && (
+          <p className="tc-planhint">
+            After a miss, you get it right next time: {cal.efficacy.rows.filter((r) => r.confident)
+              .map((r) => `${FAILURE_NAME[r.failure] || r.failure} ${Math.round(r.recovered * 100)}%`).join(" · ")}
+          </p>
+        )}
+
+        {cal.n > 0 && (
+          <p className="tc-planhint" style={{ opacity: 0.7 }}>
+            {cal.n} answers on file{cal.modelEra < cal.n ? `, ${cal.modelEra} of them from the current version of the model` : ""}.
+          </p>
+        )}
       </section>
 
       <section className="tc-plansec">
@@ -3695,6 +3769,20 @@ function prodDue(c, now) {
 
    Capped as a ring buffer. A log nobody can afford to keep is a log that stops existing
    the first time it fills localStorage, and 4,000 answers is already months of study. */
+/* Names for the report. The cue ladder and the failure taxonomy are internal vocabulary —
+   "CUE.PARTIAL" and "orthography" mean nothing to someone trying to learn Japanese — and
+   the rule that no scheduler jargon reaches the learner applies to this page too. */
+const CUE_NAME = {
+  0: "shown to you", 1: "multiple choice", 2: "with a big hint",
+  3: "with a small hint", 4: "from memory", 5: "in a sentence",
+};
+const FAILURE_NAME = {
+  meaning: "forgot the meaning", reading: "fumbled the reading",
+  listening: "missed it by ear", production: "could not write it",
+  orthography: "wrong characters", context: "wrong in context",
+  blank: "drew a blank", unclassified: "unclassified",
+};
+
 const EVIDENCE_KEY = "jpn101:evidence";
 const EVIDENCE_CAP = 4000;
 

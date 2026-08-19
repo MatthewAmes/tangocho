@@ -306,7 +306,10 @@ t("drawing a blank goes back to the meaning", () => {
   eq(iv.skill, "recognition");
 });
 t("a miss hands support back", () => {
-  const base = { caps: { type: true }, recognition: strongRec, production: { tried: true, acc: 0.9, S: 30, recent: "1111" } };
+  // A strong production ability, so the clean pick sits well up the ladder and a miss has
+  // somewhere to fall. At the floor rung there is nothing lower to hand back.
+  const base = { caps: { type: true }, recognition: strongRec,
+    production: { seen: 30, correct: 27, tried: true, acc: 0.9, S: 30, recent: "1111" } };
   const clean = chooseIntervention(base);
   const missed = chooseIntervention({ ...base, lastFailure: "production" });
   lt(missed.cue, clean.cue, "after a miss the next attempt must demand less");
