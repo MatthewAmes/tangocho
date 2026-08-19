@@ -526,17 +526,24 @@ t("a session reserves room for words strong enough to carry harder formats", () 
 });
 
 t("a real session uses more than one kind of exercise", () => {
-  // The whole complaint this answers: a session that is 28 flip cards is one exercise
-  // repeated, however well chosen the cards are.
-  const src = [{
-    deck: "vocab", caps: { type: true, listen: true },
-    items: Array.from({ length: 60 }, (_, i) => ({ id: "v" + i, order: i })),
-    stats: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [
-      "v" + i,
-      { seen: 10 + i, correct: 9 + i, level: 4, streak: 3, last: NOW - (i + 1) * DAY,
-        fsrs: { S: 1 + i * 3, D: 4, last: NOW - (i + 1) * DAY }, ms: 40000, msN: 10 },
-    ])),
-  }];
+  /* The complaint this answers: a session that is 28 flip cards is one exercise repeated,
+     however well chosen the cards are. The fixture is a MIXED deck — some brand new, some
+     failing, some solid, some with production history — because a fixture where every item
+     has the same shape will correctly produce one or two formats and prove nothing. */
+  const items = [], stats = {};
+  for (let i = 0; i < 80; i++) {
+    const id = "v" + i;
+    items.push({ id, order: i, reading: "よみ", term: "語" });
+    if (i % 5 === 0) continue;                         // some never studied
+    const S = [0.5, 3, 9, 25, 70][i % 5], ago = [2, 6, 12, 20, 40][i % 5];
+    stats[id] = {
+      seen: 10, correct: i % 7 === 0 ? 4 : 9, level: 3, streak: i % 7 === 0 ? 0 : 3,
+      last: NOW - ago * DAY, fsrs: { S, D: 5, last: NOW - ago * DAY, due: NOW - DAY },
+      ms: 40000, msN: 10,
+      ...(i % 3 === 0 ? { rseen: 6, rcorrect: 5, rfsrs: { S: 6, D: 5, last: NOW - 8 * DAY, due: NOW - DAY } } : {}),
+    };
+  }
+  const src = [{ deck: "vocab", caps: { type: true, listen: true }, items, stats }];
   const picks = withFormats(buildSession(src, { now: NOW, size: 24 }), {})
     .map((p) => ({ ...p, format: formatFor({ ...p, canType: true, canListen: true }) }));
   const kinds = new Set(picks.map((p) => p.format));
@@ -741,21 +748,34 @@ t("a repeat beats an empty session when there is nothing else", () => {
   gt(picks.length, 0, "a short session is fine; an empty one is not");
 });
 
-t("a card just answered WRONG comes straight back", () => {
-  /* The cooldown that stops padding must never suppress relearning. A miss puts a card
-     into short steps on purpose; holding it back for ninety minutes is a worse bug than
-     the repetition the cooldown exists to prevent. */
-  const justMissed = { seen: 5, correct: 2, level: 0, streak: 0, last: NOW - 4 * 60000,
+t("a missed card returns as soon as its relearning step is due", () => {
+  /* A miss puts a card into a short step deliberately. Under the retrievability rule it
+     comes back the moment that step is owed — no special case needed, which is the point
+     of replacing the cooldown's exemption list. Within the SAME session it returns sooner
+     still, via the miss requeue. */
+  const missed = (dueOffsetMin) => ({
+    seen: 5, correct: 2, level: 0, streak: 0, last: NOW - 12 * 60000,
     lastFailure: "meaning", recent: "10100",
-    fsrs: { S: 0.4, D: 8, last: NOW - 4 * 60000, due: NOW + 6 * 60000, relearning: true },
-    ms: 15000, msN: 5 };
-  const src = [{
+    fsrs: { S: 0.4, D: 8, last: NOW - 12 * 60000, due: NOW + dueOffsetMin * 60000, relearning: true },
+    ms: 15000, msN: 5,
+  });
+  const build = (st) => buildSession([{
     deck: "vocab", caps: {},
     items: [{ id: "missed" }, ...Array.from({ length: 30 }, (_, i) => ({ id: "n" + i, order: i }))],
-    stats: { missed: justMissed },
-  }];
-  const picks = buildSession(src, { now: NOW, size: 20 });
-  ok(picks.some((p) => p.item.id === "missed"), "a card missed four minutes ago must return");
+    stats: { missed: st },
+  }], { now: NOW, size: 20 });
+
+  ok(build(missed(-2)).some((p) => p.item.id === "missed"), "past its step, it must return");
+});
+t("a correct answer minutes ago is not pulled forward to pad", () => {
+  const fine = { seen: 5, correct: 5, level: 3, streak: 5, last: NOW - 4 * 60000, recent: "11111",
+    fsrs: { S: 4, D: 4, last: NOW - 4 * 60000, due: NOW + 3 * DAY }, ms: 15000, msN: 5 };
+  const picks = buildSession([{
+    deck: "vocab", caps: {},
+    items: [{ id: "fine" }, ...Array.from({ length: 30 }, (_, i) => ({ id: "n" + i, order: i }))],
+    stats: { fine },
+  }], { now: NOW, size: 20 });
+  eq(picks.some((p) => p.item.id === "fine"), false, "still well above the retention target");
 });
 t("a card answered CORRECTLY four minutes ago does not", () => {
   const justRight = { seen: 5, correct: 5, level: 3, streak: 5, last: NOW - 4 * 60000,

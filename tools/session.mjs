@@ -40,11 +40,16 @@ export const DEFAULTS = {
   strongShare: 0.3,     // ...and so does practising what you already half-know, see below
   vocabShare: 0.65,     // vocab-led: the rest of the decks share what's left
   maxLeeches: 3,        // stuck words that may appear at once, matching the vocab tab
-  /* An item answered within this window is not pulled back to pad a session. Review
-     slots used to be filled from whatever had been studied, due or not, so a learner
-     with a small studied pool saw the same handful in every consecutive session — the
-     scheduler was padding rather than reviewing. */
-  cooldownMinutes: 90,
+  /* Review eligibility is a property of the MEMORY, not of the clock. An item is worth
+     reviewing when predicted recall has fallen to the retention target, or when the
+     scheduler says it is due. Everything else is padding.
+
+     This replaces a ninety-minute cooldown with a list of boolean exemptions, which was
+     the crudest thing in this file: the exemptions existed because a temporal block keeps
+     catching cases the memory model already handles. A card answered ten minutes ago sits
+     at R ≈ 0.999 and disqualifies itself; a card just failed is due in ten minutes and
+     re-enters on its own. Neither needs a special case. */
+  retentionTarget: 0.90,
   urgencyFloor: 0.75,   // a deck below this need does not get a guaranteed variety slot
   jitterBand: 0.3,      // tie-break spread only — never wide enough to reorder priorities
   typeAtStability: 14,  // recognition strong enough to UNLOCK production
@@ -126,6 +131,34 @@ export function daysSince(st, now = Date.now()) {
   const last = st && (st.last || (st.fsrs && st.fsrs.last));
   if (!last) return Infinity;
   return (now - last) / DAY;
+}
+
+/* ── is this worth reviewing yet? ──
+   In a stability/retrievability scheduler this is not a judgement call: an item earns a
+   review when predicted recall has decayed to the retention target, or when the schedule
+   says it is due. Pulling forward an item still sitting above the target is padding — it
+   spends a slot on a memory that does not need it, which is exactly how the same handful
+   of cards ended up in eight consecutive lessons. */
+export function reviewable(st, now = Date.now(), opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  if (!st || !(st.seen > 0)) return true;                 // never studied: not our business
+  if (st.fsrs && st.fsrs.due && st.fsrs.due <= now) return true;
+
+  /* Eligibility is per ABILITY, not per card. A word can be rock solid to read and never
+     once have been produced — and that second memory is owed practice even though the
+     first is not. Testing the card as a single unit is what made a retrievability rule
+     starve the production reserve: every strong word looked satisfied. */
+  const rec = st.fsrs || seedFromHistory(st);
+  const recStrong = rec && rec.S >= o.typeAtStability;
+  if (recStrong) {
+    if (!(st.rseen > 0)) return true;                     // production unlocked, never tried
+    if (st.rfsrs && st.rfsrs.due && st.rfsrs.due <= now) return true;
+    if (st.rfsrs && st.rfsrs.S > 0
+        && retrievability(daysSince({ last: st.rfsrs.last }, now), st.rfsrs.S) <= o.retentionTarget) return true;
+  }
+
+  if (!rec || !(rec.S > 0)) return true;                  // no model, no opinion
+  return retrievability(daysSince(st, now), rec.S) <= o.retentionTarget;
 }
 
 /* ── what counts as stale ──
@@ -251,21 +284,11 @@ export function candidates(sources, opts = {}) {
         item,
         st,
         fresh,
-        /* Answered so recently that showing it again is repetition, not review. An item
-           the scheduler says is actually DUE is never cooling, however recently it was
-           answered — a missed card goes into short relearning steps on purpose, and its
-           decay score can still look mild while it is genuinely owed. */
-        cooling: !fresh
-          && daysSince(st, now) * 1440 < o.cooldownMinutes
-          && !(st && st.fsrs && st.fsrs.due && st.fsrs.due <= now)
-          /* A card just answered WRONG is the one case where coming straight back is the
-             whole point — it is in short relearning steps deliberately. Suppressing those
-             for ninety minutes broke relearning outright, which is a worse bug than the
-             padding this cooldown exists to stop. */
-          && !(st && st.fsrs && st.fsrs.relearning)
-          && !(st && st.lastFailure)
-          && !(st && st.seen > 0 && !(st.streak > 0))
-          && urgency < 4,
+        /* Not yet worth reviewing: the model still expects to recall it, and nothing has
+           come due. One test, no exemption list — a card answered minutes ago sits at
+           R ≈ 0.999 and rules itself out, while a card just failed is due in ten minutes
+           and rules itself back in. */
+        cooling: !fresh && !reviewable(st, now, o),
         stale: staleReason !== null,
         staleReason,
         caps: capsOf(s, item),

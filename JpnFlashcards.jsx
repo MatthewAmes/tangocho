@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor, AGAIN, HARD, GOOD, EASY } from "./tools/fsrs.mjs";
-import { buildSession, withFormats, describe as describeSession } from "./tools/session.mjs";
+import { buildSession, interventionFor, skillOf, describe as describeSession } from "./tools/session.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -2565,25 +2565,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
   // Capabilities now travel with the candidate from the source, so nothing is re-derived
   // here and the scheduler and the renderer cannot disagree about what an item can carry.
+  /* Only the ORDER is decided up front. The intervention for each card is chosen when the
+     card is actually SERVED, because a repeat later in the same session has to be able to
+     react to how the earlier showing went — baking the whole queue at the start froze the
+     adaptive loop shut. */
   const smartPool = useMemo(
-    () => withFormats(smartPicks, { allowListen })
-      /* Each card carries how much help it should come with and why it was chosen. The
-         cue level is what turns three fixed formats into one retrieval with a sliding
-         amount of support — か＿＿び before かよう＿＿ before nothing at all. */
-      /* The whole intervention travels with the card: which ability is being worked, in
-         which direction, and how much help it comes with. Cue is a first-class property of
-         every exercise now, not metadata attached to typing afterwards. */
-      .map((p) => ({
-        ...p.item,
-        _fmt: p.format,
-        _step: p.step,
-        _cue: p.cue,
-        _skill: p.skill,
-        _dir: p.direction,
-        _expected: p.expected,
-        _why: explainPick(p),
-      })),
-    [smartPicks, allowListen],
+    () => smartPicks.map((p) => ({ ...p.item, _step: p.step, _pick: p })),
+    [smartPicks],
   );
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
   /* Cards whose repeats are deliberate. A correct answer normally drops a card's later
@@ -2719,8 +2707,28 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Converting here rather than only in the builder means "I can't play audio" takes
      effect on the card in front of you and every one after it, without rebuilding the
      queue mid-session and losing your place. */
-  const rawFmt = card ? (card._fmt || (prodSet.has(card.id) ? "type" : "recall")) : "recall";
+  /* Decided HERE, for this card, right now — against the card's current state rather than
+     the snapshot taken when the session was built. A card failed two minutes ago arrives
+     at its repeat carrying that failure, so the plan and the cue reflect it. */
+  const live = card ? (cards.find((c) => c.id === card.id) || card) : null;
+  const intervention = useMemo(() => {
+    if (!card) return null;
+    const base = card._pick;
+    if (!base) return null;                       // came from a section drill, not Smart Review
+    return interventionFor(
+      { ...base, st: live, step: card._step || 0,
+        recognition: skillOf(live, "fsrs"), production: skillOf(live, "rfsrs"),
+        lastFailure: (live && live.lastFailure) || null },
+      { allowListen },
+    );
+  }, [card, live, allowListen]);
+
+  const rawFmt = card
+    ? ((intervention && intervention.format) || (prodSet.has(card.id) ? "type" : "recall"))
+    : "recall";
   const fmt = rawFmt === "listen" && noAudio ? "mc" : rawFmt;
+  const cueLevel = intervention ? intervention.cue : null;
+  const whyThis = intervention ? explainPick({ ...card._pick, ...intervention, st: live }) : null;
   const isProd = fmt === "type";
   const done = running && pos >= queue.length;
 
@@ -3145,7 +3153,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             {clozeEx.after}
           </div>
           <div className="tc-mcopts">
-            {clozeChoices(card, cards, 3, (card._step || 0) + String(card.id).length).map((c) => {
+            {clozeChoices(card, cards, 3, (card._step || 0) + String(card.id).length,
+                          confusion.get(card.id) || []).map((c) => {
               const chosen = verdict && verdict.chose === c.term;
               const isAnswer = c.id === card.id;
               const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
@@ -3239,8 +3248,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                       production is developing it drops to かよう＿＿; solid production gets
                       nothing at all. Support is handed back after a miss — the aim is
                       retrieval that is effortful and still succeeds. */}
-                  {card._cue != null && card._cue < CUE.FREE && card.reading && (
-                    <div className="tc-cuehint" aria-label="hint">{cueHint(card.reading, card._cue)}</div>
+                  {cueLevel != null && cueLevel < CUE.FREE && card.reading && (
+                    <div className="tc-cuehint" aria-label="hint">{cueHint(card.reading, cueLevel)}</div>
                   )}
                   <div className="tc-spellkana">{typed.trim() ? toKana(typed.trim()) : " "}</div>
                   <button type="button" className="tc-btn tc-btn-wide" onClick={checkSpelling} disabled={!typed.trim()}>Check</button>
@@ -3254,8 +3263,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 {/* Support is a property of every exercise, not only of typing. At a high
                     cue level the reading is simply shown; lower down it is masked, so the
                     same card can be made harder without changing what it is. */}
-                {card._cue != null && card._cue >= CUE.PARTIAL && card.reading !== card.term
-                  ? <div className="tc-reading-front tc-reading-masked">{cueHint(card.reading, card._cue)} <SpeakBtn text={card.reading || card.term} /></div>
+                {cueLevel != null && cueLevel >= CUE.PARTIAL && card.reading !== card.term
+                  ? <div className="tc-reading-front tc-reading-masked">{cueHint(card.reading, cueLevel)} <SpeakBtn text={card.reading || card.term} /></div>
                   : <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>}
                 {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
                 <span className="tc-flipcue">tap to flip</span>
@@ -3341,10 +3350,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {/* "Why am I seeing this?" — plain language, no scheduler vocabulary. It earns
           trust, and it makes the algorithm inspectable by the person using it rather
           than only by whoever wrote it. */}
-      {card._why && (
+      {whyThis && (
         <div className="tc-whywrap">
           {showWhy ? (
-            <p className="tc-whytext">{card._why}</p>
+            <p className="tc-whytext">{whyThis}</p>
           ) : (
             <button type="button" className="tc-whybtn" onClick={() => setShowWhy(true)}>
               Why this one?

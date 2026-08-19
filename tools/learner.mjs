@@ -147,10 +147,20 @@ export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, pr
    how learners end up told they are "72% fluent". */
 export const CONFIDENCE = { NONE: "no evidence", LOW: "still evaluating", OK: "likely", GOOD: "strong evidence" };
 
+/* Kept for callers that only have a count. Prefer confidenceFromPosterior: how much is
+   known is a property of the ESTIMATE, and thresholds on a raw count are the invented
+   numbers the posterior was introduced to remove. */
 export function confidenceFor(n) {
   if (n <= 0) return CONFIDENCE.NONE;
   if (n < 8) return CONFIDENCE.LOW;
   if (n < 25) return CONFIDENCE.OK;
+  return CONFIDENCE.GOOD;
+}
+
+export function confidenceFromPosterior(post) {
+  if (!post || !post.observations) return CONFIDENCE.NONE;
+  if (post.width > 0.40) return CONFIDENCE.LOW;
+  if (post.width > 0.20) return CONFIDENCE.OK;
   return CONFIDENCE.GOOD;
 }
 
@@ -303,10 +313,19 @@ export function predictSuccess(skill, cue) {
   const life = s.acc != null ? s.acc : 0.5;
   const rec = recentAcc(s.recent, 5);
   const base = rec ? (rec.rate * 0.65 + life * 0.35) : life;
-  // Each step up the demand ladder costs something; a strong memory pays less for it.
+
+  /* On the log-odds scale, not by subtraction. Taking a flat amount off a probability
+     assumes a cue level costs the same whether the learner is at 95% or 50%, and it runs
+     off the end of the scale near the boundaries — subtracting 0.13 four times from 0.4
+     lands below zero and has to be clamped, which is the model hitting a wall rather than
+     describing anything. A logistic shift is the standard item-response form and stays a
+     probability by construction. */
+  const b = Math.min(0.99, Math.max(0.01, base));
+  const logit = Math.log(b / (1 - b));
   const strength = Math.min(1, (s.S || 0) / 30);
-  const cost = 0.13 * (1 - strength * 0.6);
-  return Math.max(0.05, Math.min(0.98, base - cost * cue));
+  const perCue = 0.75 * (1 - strength * 0.55);   // a strong memory pays less per step
+  const z = logit - perCue * cue;
+  return Math.max(0.05, Math.min(0.98, 1 / (1 + Math.exp(-z))));
 }
 
 /* ── the intervention ──
@@ -318,6 +337,9 @@ export const TARGET_SUCCESS = 0.72;
 /* Where an ability with no evidence sits when choosing what to work on. */
 /* How much an unmeasured ability is worth sampling, relative to a known-weak one. */
 export const CURIOSITY = 0.35;
+/* Beyond this width the estimate says nothing more than "unknown"; extra uncertainty
+   should not keep buying attention. */
+export const WIDTH_CAP = 0.40;
 
 function formatFromSkillCue(skill, cue) {
   if (cue === CUE.SHOWN) return "learn";
@@ -417,10 +439,13 @@ export function chooseIntervention(pick, opts = {}) {
     : [CUE.CHOOSE, CUE.STRONG, CUE.PARTIAL, CUE.FREE, CUE.CONTEXT];
   let cue = ladder[0];
   for (const c of ladder) {
-    if (skill === "context" && c < CUE.CONTEXT) continue;
+    if (skill === "context" && c < CUE.CONTEXT) continue;   // context has one rung
     if (predictSuccess(states[skill], c) >= o.target) cue = c; else break;
   }
-  if (skill === "context") cue = CUE.CONTEXT;
+  /* The context ladder starts at CUE.CONTEXT rather than being forced to it. Assigning
+     it unconditionally threw away the target-success search that had just run, so a
+     contextual exercise was the one case where the model stopped checking whether the
+     learner could actually succeed. */
   /* The plan's cue wins when it asks for more support than the model would have chosen.
      It never makes the next attempt harder — a miss is not a reason to raise the demand. */
   if (plan && plan.skill === skill) cue = Math.min(cue, plan.cue);
@@ -505,25 +530,39 @@ export function stateOf(post, opts = {}) {
    real thing — the real thing needs outcome data that does not exist yet. */
 export function practiceValue(post, opts = {}) {
   const curiosity = opts.curiosity ?? CURIOSITY;
+  const cap = opts.widthCap ?? WIDTH_CAP;
   if (!post) return 0.5;
-  return (1 - post.mean) + curiosity * post.width;
+  /* The uncertainty term is CAPPED. Uncapped, a completely unmeasured ability (width
+     ~0.88) outscored an ability measured at 40% over fifteen trials — so the model would
+     keep sampling the unknown while something was actively failing, which is precisely
+     the requirement this is supposed to satisfy. Past a certain width the estimate is
+     simply "we do not know", and being even less sure than that buys no extra
+     information. */
+  return (1 - post.mean) + curiosity * Math.min(post.width, cap);
 }
 
 /* Build a posterior for one ability from a stat record, preferring recent evidence.
    Recent results are counted twice: the question is whether you can do it NOW. */
-export function abilityFrom(skill) {
+export function abilityFrom(skill, opts = {}) {
   const s = skill || {};
   const seen = s.seen || 0;
-  const ok = Math.round((s.acc ?? 0) * seen);
-  const rec = recentAcc(s.recent, 10);
-  let succ = ok, fail = Math.max(0, seen - ok);
-  if (rec) {
-    const rOk = Math.round(rec.rate * rec.n);
-    succ += rOk;
-    fail += rec.n - rOk;
+  if (!seen) {
+    const post = posterior(0, 0);
+    return { ...post, state: stateOf(post), tried: false };
   }
-  const post = posterior(succ, fail);
-  return { ...post, state: stateOf(post), tried: seen > 0 };
+  /* Recency is a WEIGHTING, not extra evidence. The first version added the recent window
+     on top of the lifetime counts, so ten answers became twenty observations — which
+     halved the posterior variance and manufactured confidence the data had not earned.
+     The trial count stays at what actually happened; only the success RATE is shifted
+     toward recent performance. */
+  const rec = recentAcc(s.recent, 10);
+  const life = s.acc ?? 0;
+  const rate = rec
+    ? (rec.rate * (opts.recentWeight ?? 0.65) + life * (1 - (opts.recentWeight ?? 0.65)))
+    : life;
+  const succ = Math.round(rate * seen);
+  const post = posterior(succ, Math.max(0, seen - succ));
+  return { ...post, state: stateOf(post), tried: true };
 }
 
 /* ── failure leads somewhere specific ──

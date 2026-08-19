@@ -82,12 +82,16 @@ export function clozeFor(index, card, opts = {}) {
 
 /* Distractors for a contextual multiple choice: same kind, similar length, never a word
    that would also be correct in the blank. */
-export function clozeChoices(card, cards, n = 3, seed = 0) {
+export function clozeChoices(card, cards, n = 3, seed = 0, confusedWith = []) {
   const pool = cards.filter((c) => c.id !== card.id && c.term && c.term !== card.term);
+  /* Words this learner has actually mixed up with this one come first. A distractor is
+     supposed to be plausible TO THIS PERSON and wrong in this context; matching on length
+     is only a stand-in used until there is confusion history to draw on. */
+  const known = (confusedWith || []).map((id) => pool.find((c) => c.id === id)).filter(Boolean);
   const near = pool.filter((c) => c.kind === card.kind && Math.abs(c.term.length - card.term.length) <= 1);
   const bag = near.length >= n * 3 ? near : pool;
-  const out = [];
-  const used = new Set();
+  const out = [...known.slice(0, Math.max(0, n - 1))];
+  const used = new Set(out.map((c) => c.id));
   for (let i = 0; i < bag.length && out.length < n; i++) {
     const c = bag[(seed * 7 + i * 13) % bag.length];
     if (!c || used.has(c.id)) continue;
