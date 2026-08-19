@@ -417,14 +417,23 @@ export function formatFor(pick, opts = {}) {
      missing does not need a harder question, it needs a fair one. */
   if (acc < 0.6 || S < 2) return (pick.step || 0) % 2 === 1 ? "recall" : "mc";
 
-  // Solid enough to produce. Audio only where there is something to say.
+  /* Listening is a REPEAT format, never a first showing, and it needs permission.
+     Audio is the one exercise that depends on where you are — headphones, a quiet room,
+     not being in class — so a session full of it is unusable half the time. Confining it
+     to learning-step repeats makes it naturally uncommon, since most picks are a first
+     showing, and allowLIsten switches it off entirely when the plan deprioritises it or
+     the learner says they cannot play sound. */
+  const step = pick.step || 0;
+  const canHear = !!pick.canListen && o.allowListen !== false;
+
+  // Solid enough to produce.
   if (S >= o.typeAtStability && pick.canType) {
-    return (pick.step || 0) % 2 === 1 ? "listen" : "type";
+    return step % 2 === 1 ? (canHear ? "listen" : "recall") : "type";
   }
-  if (S >= o.listenAtStability && pick.canListen) {
-    return (pick.step || 0) % 2 === 1 ? "recall" : "listen";
+  if (S >= o.listenAtStability) {
+    return step % 2 === 1 ? (canHear ? "listen" : "mc") : "recall";
   }
-  return (pick.step || 0) % 2 === 1 ? "mc" : "recall";
+  return step % 2 === 1 ? "mc" : "recall";
 }
 
 /* Attach a format to every pick. Kept separate from buildSession so the selection and the

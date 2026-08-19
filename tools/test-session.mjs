@@ -440,6 +440,31 @@ t("production is not demanded of a word that cannot be typed", () => {
   const solid = { seen: 20, correct: 19, fsrs: { S: 60, D: 3, last: NOW } };
   ok(formatFor(pick(solid, { canType: false })) !== "type");
 });
+t("listening never lands on a first showing, so it stays uncommon", () => {
+  // Audio depends on where you are. A session full of it is unusable half the time.
+  const mid = { seen: 10, correct: 9, fsrs: { S: 8, D: 4, last: NOW } };
+  const strong = { seen: 20, correct: 19, fsrs: { S: 60, D: 3, last: NOW } };
+  eq(formatFor(pick(mid, { step: 0, canListen: true })) === "listen", false);
+  eq(formatFor(pick(strong, { step: 0, canListen: true, canType: true })) === "listen", false);
+});
+t("listening can be switched off entirely", () => {
+  const mid = { seen: 10, correct: 9, fsrs: { S: 8, D: 4, last: NOW } };
+  const strong = { seen: 20, correct: 19, fsrs: { S: 60, D: 3, last: NOW } };
+  for (const st of [mid, strong]) {
+    for (const step of [0, 1, 2]) {
+      const f = formatFor(pick(st, { step, canListen: true, canType: true }), { allowListen: false });
+      ok(f !== "listen", `got ${f} at step ${step} with audio disabled`);
+    }
+  }
+});
+t("a whole session contains no audio when it is switched off", () => {
+  const src = [deck("v", 60, (i) => studied("v" + i, 8 + i, 6))];
+  const picks = withFormats(
+    buildSession(src, { now: NOW, size: 24 }).map((p) => ({ ...p, canType: true, canListen: true })),
+    { allowListen: false },
+  );
+  ok(!picks.some((p) => p.format === "listen"), "no listening exercises should survive");
+});
 t("repeats of the same item change format between showings", () => {
   const mid = { seen: 10, correct: 9, fsrs: { S: 8, D: 4, last: NOW } };
   const a = formatFor(pick(mid, { step: 0, canListen: true }));

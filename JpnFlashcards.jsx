@@ -1687,13 +1687,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Each queue entry carries the exercise it should be asked as. Repeats of the same item
      are separate objects with different formats, which is the point — three showings of
      one card teaches the card, three different questions teach the word. */
+  /* Audio is off when the plan deprioritises listening, or when you've said this session
+     you can't play sound. Same idea as the Kanji tab's no-audio path: being somewhere you
+     can't make noise shouldn't cost you the session. */
+  const [noAudio, setNoAudio] = useState(false);
+  const allowListen = !noAudio && (plan.priorities.listening || 1) >= 2;
+
   const smartPool = useMemo(() => withFormats(
     smartPicks.map((p) => ({
       ...p,
       canType: p.deck === "vocab" && !!p.item.reading,
       canListen: !!(p.item.reading || p.item.term),
     })),
-  ).map((p) => ({ ...p.item, _fmt: p.format, _step: p.step })), [smartPicks]);
+    { allowListen },
+  ).map((p) => ({ ...p.item, _fmt: p.format, _step: p.step })), [smartPicks, allowListen]);
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
   /* Cards whose repeats are deliberate. A correct answer normally drops a card's later
      copies from the queue — that rule exists for the miss-requeue, and it would silently
@@ -1824,7 +1831,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* The scheduler picks the exercise; prodSet is the older mechanism and still stands in
      when a card arrived from somewhere other than Smart Review (a section drill, Trouble
      words) and so carries no format of its own. */
-  const fmt = card ? (card._fmt || (prodSet.has(card.id) ? "type" : "recall")) : "recall";
+  /* Converting here rather than only in the builder means "I can't play audio" takes
+     effect on the card in front of you and every one after it, without rebuilding the
+     queue mid-session and losing your place. */
+  const rawFmt = card ? (card._fmt || (prodSet.has(card.id) ? "type" : "recall")) : "recall";
+  const fmt = rawFmt === "listen" && noAudio ? "mc" : rawFmt;
   const isProd = fmt === "type";
   const done = running && pos >= queue.length;
 
@@ -2160,6 +2171,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             <div className="tc-listenprompt">
               <SpeakBtn text={card.reading || card.term} />
               <p className="tc-learnnote">Tap to hear it again</p>
+              {!verdict && (
+                <button type="button" className="tc-noaudio" onClick={() => setNoAudio(true)}>
+                  Can't play audio — show it instead
+                </button>
+              )}
             </div>
           ) : (
             <div className="tc-mcprompt">
@@ -7949,6 +7965,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
   font-size:44px;line-height:1.15;font-weight:600;text-align:center;color:#fff;}
 .tc-listenprompt{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:6px;}
 .tc-listenprompt .tc-speakbtn{font-size:34px;padding:16px 20px;}
+.tc-noaudio{appearance:none;margin-top:4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);
+  color:rgba(255,255,255,.75);border-radius:99px;font:inherit;font-size:12px;padding:6px 13px;cursor:pointer;}
+.tc-noaudio:hover{background:rgba(255,255,255,.13);color:#fff;}
 .tc-listenreveal{margin-top:10px;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;font-size:22px;color:rgba(255,255,255,.8);}
 .tc-mcopts{display:flex;flex-direction:column;gap:9px;width:min(100%,380px);}
 .tc-mcopt{appearance:none;text-align:left;font:inherit;font-size:15.5px;line-height:1.4;color:#fff;
