@@ -673,6 +673,25 @@ t("one deck's timing data cannot speak for another", () => {
   gt(mixed, per.vocab, "a mixed session must not be priced at the fast deck's speed");
 });
 
+t("context is only asked once the word itself is secure", () => {
+  /* Knowing 取る means "take" says nothing about 写真を撮る — but asking for contextual
+     use before the word is solid is just a harder way to fail. */
+  const weak = { seen: 20, correct: 8, fsrs: { S: 1, D: 7, last: NOW } };
+  const solid = { seen: 20, correct: 20, fsrs: { S: 60, D: 3, last: NOW },
+    rseen: 10, rcorrect: 10, rfsrs: { S: 30, D: 3, last: NOW } };
+  const caps = { type: true, listen: true, context: true };
+  eq(formatFor({ deck: "vocab", item: { id: "x" }, st: weak, step: 0, caps }) === "cloze", false,
+    "a shaky word must not be asked for contextual use");
+  eq(formatFor({ deck: "vocab", item: { id: "x" }, st: solid, step: 0, caps }), "cloze");
+});
+t("no contextual material means no contextual exercise", () => {
+  const solid = { seen: 20, correct: 20, fsrs: { S: 60, D: 3, last: NOW },
+    rseen: 10, rcorrect: 10, rfsrs: { S: 30, D: 3, last: NOW } };
+  const f = formatFor({ deck: "vocab", item: { id: "x" }, st: solid, step: 0,
+    caps: { type: true, listen: true, context: false } });
+  ok(f !== "cloze", `got ${f} with no context available`);
+});
+
 console.log("\n=== describe ===");
 t("the summary counts unique items, not repeats", () => {
   const picks = buildSession(withNew(), { now: NOW, size: 24 });

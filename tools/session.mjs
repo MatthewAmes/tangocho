@@ -510,7 +510,7 @@ export function buildSession(sources, opts = {}) {
 
    Learning-step repeats deliberately change format between showings. Seeing the identical
    card three times teaches the card; being asked three different ways teaches the word. */
-export const FORMATS = ["learn", "mc", "recall", "listen", "type"];
+export const FORMATS = ["learn", "mc", "recall", "listen", "type", "cloze"];
 
 export function formatFor(pick, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -542,7 +542,10 @@ export function formatFor(pick, opts = {}) {
     if (!prod.tried || prod.acc < 0.6 || prod.S < o.prodWeakStability) {
       return step % 2 === 0 ? "type" : "recall";
     }
-    // Production is solid too; spread the load across the other abilities.
+    /* Production is solid too. This is the only point where contextual use is a fair
+       question: knowing 取る means "take" says nothing about 写真を撮る, and asking for
+       that before the word itself is secure is just a harder way to fail. */
+    if (caps.context) return step % 2 === 0 ? "cloze" : (canHear ? "listen" : "type");
     return step % 2 === 0 ? "type" : (canHear ? "listen" : "recall");
   }
 

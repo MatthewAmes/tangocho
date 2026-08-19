@@ -10,6 +10,7 @@ import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor } from "./tools/fsrs.mjs";
 import { buildSession, withFormats, describe as describeSession } from "./tools/session.mjs";
+import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueFor, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -1667,6 +1668,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* The other decks load once and join the pool. Until they arrive the session is simply
      vocabulary-only, which is also the correct behaviour on a machine that has never
      opened the Kana or Kanji tabs. */
+  /* Contextual material, mined from the scripted dialogue this app already ships. Real
+     Japanese, already levelled to the course, already carrying English — and free, which
+     a language model writing sentences on demand is not. Coverage is whatever the scripts
+     happen to contain, and a word they never use simply gets no context exercise. */
+  const clozeIndex = useMemo(() => buildClozeIndex(SCRIPT_SEED, cards), [cards]);
   const [foreign, setForeign] = useState([]);
   useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length]);
 
@@ -1686,7 +1692,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const source = [
       { deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])),
         weight: deckWeight(plan, "class"),
-        capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term) }) },
+        capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term), context: hasContext(clozeIndex, it.id) }) },
       ...foreign.map((s) => ({
         ...s,
         weight: deckWeight(plan, s.deck),
@@ -1697,7 +1703,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       })),
     ];
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace) });
-  }, [cards, foreign, plan]);
+  }, [cards, foreign, plan, clozeIndex]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -1868,6 +1874,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Multiple choice needs wrong answers that are actually tempting. Same kind and similar
      length beats random: picking "Tuesday" out of {Tuesday, to swim, expensive, library}
      tests nothing, because three options are obviously not days. */
+  const clozeEx = useMemo(
+    () => (card && fmt === "cloze" ? clozeFor(clozeIndex, card) : null),
+    [card, fmt, clozeIndex],
+  );
   const choices = useMemo(() => {
     if (!card || (fmt !== "mc" && fmt !== "listen")) return [];
     const pool = cards.filter((c) => c.id !== card.id && c.meaning);
@@ -2241,6 +2251,38 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           The first real retrieval, and the only format that works before free recall does.
           Listening hides the writing entirely: a word you only ever meet on a card is a
           word you will not catch in speech. */}
+      {/* ── context ──
+          A blank in a real sentence the learner has already studied, with the English
+          alongside so the task is "which word belongs here" rather than "guess the
+          sentence". This is the only exercise that tests usage rather than translation. */}
+      {fmt === "cloze" && clozeEx && (
+        <div className="tc-mcwrap">
+          <span className="tc-kindchip tc-clozechip">in context</span>
+          <p className="tc-clozeen">{clozeEx.en}</p>
+          <div className="tc-clozesent">
+            {clozeEx.before}
+            <span className={"tc-clozeblank" + (verdict ? (verdict.ok ? " is-right" : " is-wrong") : "")}>
+              {verdict ? clozeEx.term : clozeEx.blank}
+            </span>
+            {clozeEx.after}
+          </div>
+          <div className="tc-mcopts">
+            {clozeChoices(card, cards, 3, (card._step || 0) + String(card.id).length).map((c) => {
+              const chosen = verdict && verdict.chose === c.term;
+              const isAnswer = c.id === card.id;
+              const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
+              return (
+                <button key={c.id} type="button" className={"tc-mcopt" + cls} disabled={!!verdict}
+                        onClick={() => { if (!verdict) { setVerdict({ ok: c.id === card.id, chose: c.term }); setFlipped(true); } }}>
+                  {c.term}{c.reading && c.reading !== c.term ? ` · ${c.reading}` : ""}
+                </button>
+              );
+            })}
+          </div>
+          {verdict && <p className="tc-clozesrc">from your {clozeEx.source} script</p>}
+        </div>
+      )}
+
       {(fmt === "mc" || fmt === "listen") && (
         <div className="tc-mcwrap">
           <span className={"tc-kindchip " + (fmt === "listen" ? "tc-listenchip" : "tc-mcchip")}>
@@ -8163,6 +8205,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcopt:disabled{cursor:default;opacity:.55;}
 .tc-mcopt.is-answer{background:rgba(90,220,150,.2);border-color:rgba(90,220,150,.65);color:#d6ffe9;opacity:1;}
 .tc-mcopt.is-wrongpick{background:rgba(255,110,90,.18);border-color:rgba(255,110,90,.6);color:#ffd5cf;opacity:1;}
+.tc-clozechip{background:rgba(120,200,255,.2);color:#cfe9ff;}
+.tc-clozeen{margin:0 0 4px;font-size:15px;line-height:1.5;color:var(--mut-2);text-align:center;max-width:34ch;}
+.tc-clozesent{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
+  font-size:30px;line-height:1.5;text-align:center;color:#fff;margin-bottom:12px;max-width:22ch;}
+.tc-clozeblank{color:#8fd0ff;border-bottom:2px solid rgba(143,208,255,.5);padding:0 2px;}
+.tc-clozeblank.is-right{color:#b8f0d0;border-color:rgba(90,220,150,.7);}
+.tc-clozeblank.is-wrong{color:#ffc2bb;border-color:rgba(255,120,100,.7);}
+.tc-clozesrc{margin:10px 0 0;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:rgba(255,255,255,.4);}
 .tc-mchint{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.45);}
 /* ── cue, explanation, session summary ── */
 .tc-cuehint{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
