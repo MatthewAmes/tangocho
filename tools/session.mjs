@@ -271,6 +271,11 @@ export function candidates(sources, opts = {}) {
   for (const s of sources) {
     const stats = s.stats || {};
     for (const item of s.items || []) {
+      /* Held-out words are invisible to the scheduler. This is the one mechanism that makes
+         the benchmark worth running: a score you can raise by studying the words on the test
+         measures your revision, not your Japanese. The reserve is released and redrawn each
+         cycle, so nothing stays locked away. */
+      if (o.exclude && o.exclude.has && o.exclude.has(item.id)) continue;
       const st = stats[item.id] || null;
       const fresh = !st || !(st.seen > 0);
       const staleReason = staleReasonFor(st, now, o);

@@ -11,6 +11,8 @@ import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor, AGAIN, HARD, GOOD, EASY } from "./tools/fsrs.mjs";
 import { buildSession, interventionFor, skillOf, describe as describeSession } from "./tools/session.mjs";
 import { calibrationReport } from "./tools/calibration.mjs";
+import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
+         describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -2405,7 +2407,7 @@ export default function JpnFlashcards() {
              deleting it to make room would be throwing away the harder retrieval. */
           <Write cards={cards} onResult={recordResult} />
         ) : tab === "plan" ? (
-          <Plan />
+          <Plan cards={cards} />
         ) : tab === "kana" ? (
           <Kana />
         ) : tab === "scripts" ? (
@@ -2532,6 +2534,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     return subscribePlan(setPlan);
   }, []);
 
+  /* The words quarantined for the checkpoint this quarter. Derived from the deck and the
+     calendar rather than stored, so every device agrees without syncing and a wiped setting
+     cannot quietly let the test words back into study. */
+  const heldOut = useMemo(() => reserveFor(cards, cycleFor()), [cards]);
+
   const smartPicks = useMemo(() => {
     const items = cards.map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
     /* Sources declare what their items can be ASKED. This has to reach the scheduler, not
@@ -2550,8 +2557,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         capsFor: (it) => ({ type: s.deck !== "kanji" && !!it.reading, listen: !!(it.reading || it.term) }),
       })),
     ];
-    return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace) });
-  }, [cards, foreign, plan, clozeIndex]);
+    /* The benchmark hold-out is invisible here. Without this the checkpoint would measure
+       how well you revised the test rather than how much Japanese you have, and the whole
+       point of having a number you can trust would be gone. */
+    return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
+                                  exclude: heldOut });
+  }, [cards, foreign, plan, clozeIndex, heldOut]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -3388,7 +3399,157 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
    days you do not feel like it. The priorities, the pace and the coverage report are the
    mechanical half: they change what the Smart Review button gives you, and they say
    plainly which areas you have been neglecting. */
-function Plan() {
+/* ── Checkpoint ──
+   A test the app is not allowed to grade itself on. The words come from the quarantined
+   reserve that Smart Review cannot schedule, they are asked cold — English in, Japanese
+   out, no options and no hints — and nothing is marked until the end, so the test cannot
+   quietly turn into a lesson.
+
+   The design constraint that matters: it must be able to say "no change" and mean it.
+   Anyone can build a progress screen that always goes up. */
+function Checkpoint({ cards = [], heldOut }) {
+  const [runs, setRuns] = useState(null);
+  const [phase, setPhase] = useState("idle");     // idle | running | done
+  const [seed, setSeed] = useState(0);
+  const [at, setAt] = useState(0);
+  const [answers, setAnswers] = useState([]);
+  const [typed, setTyped] = useState("");
+  const [result, setResult] = useState(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => { loadRuns().then(setRuns); }, []);
+
+  const questions = useMemo(
+    () => (phase === "running" ? sampleFor(cards, heldOut, RUN_SIZE, seed) : []),
+    [phase, cards, heldOut, seed],
+  );
+
+  useEffect(() => { if (phase === "running" && inputRef.current) inputRef.current.focus(); }, [phase, at]);
+
+  const pooled = useMemo(() => poolRuns(runs || []), [runs]);
+  const last = runs && runs.length ? runs[runs.length - 1] : null;
+
+  const start = () => {
+    setSeed(Date.now());
+    setAnswers([]); setAt(0); setTyped(""); setResult(null);
+    setPhase("running");
+  };
+
+  const submit = () => {
+    const q = questions[at];
+    if (!q) return;
+    const next = [...answers, { id: q.id, got: typed }];
+    setAnswers(next);
+    setTyped("");
+    if (at + 1 >= questions.length) {
+      const r = scoreRun(questions, next);
+      /* Compared against everything that came before, pooled. A single run against a single
+         run cannot see any improvement short of a violent one. */
+      const cmp = compareRuns(pooled, r);
+      const est = estimateKnown(r, cards.length);
+      setResult({ run: r, est, cmp, text: describeRun(r, est, cmp) });
+      const saved = pushRun(runs || [], r);
+      setRuns(saved); saveRuns(saved);
+      setPhase("done");
+    } else setAt(at + 1);
+  };
+
+  if (runs === null) return null;
+
+  if (phase === "running") {
+    const q = questions[at];
+    if (!q) return <p className="tc-planhint">No held-out words available yet.</p>;
+    return (
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Checkpoint <span className="tc-planh-sub">{at + 1} of {questions.length}</span></h2>
+        <p className="tc-planhint" style={{ marginTop: 0 }}>
+          Write the Japanese. No hints, and nothing is marked until the end — guessing costs
+          you nothing, so answer even when you are unsure.
+        </p>
+        <div className="tc-checkq">{glossOf(q)}</div>
+        <input
+          ref={inputRef}
+          className="tc-checkin"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          /* Enter submits — unless the IME is still composing. Typing Japanese means the
+             first Enter COMMITS the candidate (たべもの out of ta-be-mo-no) and a handler that
+             cannot tell the two apart submits a half-finished answer on the keypress that
+             was meant to finish the word. keyCode 229 is the long-standing signal for "this
+             key belongs to the IME"; isComposing is the modern one. Both, because Safari. */
+          onKeyDown={(e) => {
+            if (e.nativeEvent && (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) return;
+            if (e.key === "Enter") { e.preventDefault(); submit(); }
+          }}
+          placeholder="かな or 漢字"
+          autoComplete="off" autoCorrect="off" spellCheck={false}
+        />
+        <div className="tc-checkrow">
+          <button className="tc-btn" onClick={submit}>{at + 1 >= questions.length ? "Finish" : "Next"}</button>
+          <button className="tc-btn tc-btn-quiet" onClick={() => { setTyped(""); submit(); }}>Skip</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === "done" && result) {
+    const missed = result.run.detail.filter((d) => !d.ok);
+    return (
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Checkpoint <span className="tc-planh-sub">{result.run.ok} of {result.run.n} cold</span></h2>
+        <p className="tc-planhint" style={{ marginTop: 0 }}>{result.text}</p>
+        {missed.length > 0 && (
+          <>
+            <p className="tc-planhint">These are the ones you did not have. They go back into normal study now:</p>
+            <div className="tc-checkmiss">
+              {missed.map((d) => (
+                <div key={d.id} className="tc-checkmissrow">
+                  <span className="tc-checkterm">{d.term}</span>
+                  {/* Kana-only words have the reading equal to the word; printing both just
+                      says the same thing twice. */}
+                  {d.reading && d.reading !== d.term && <span className="tc-checkread">{d.reading}</span>}
+                  <span className="tc-checken">{d.en}</span>
+                  {d.got ? <span className={"tc-checkgot" + (d.near ? " is-near" : "")}>you wrote {d.got}</span> : <span className="tc-checkgot">blank</span>}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="tc-checkrow"><button className="tc-btn" onClick={() => setPhase("idle")}>Done</button></div>
+      </section>
+    );
+  }
+
+  const available = cards.filter((c) => heldOut && heldOut.has(c.id) && askable(c)).length;
+  return (
+    <section className="tc-plansec">
+      <h2 className="tc-planh">Where you actually are <span className="tc-planh-sub">a test this app cannot flatter</span></h2>
+      <p className="tc-planhint" style={{ marginTop: 0 }}>
+        Every other number here comes from questions the app chose to ask you, in a format it
+        thought you would pass. This one does not. {available} words are held back from Smart
+        Review entirely, and {RUN_SIZE} of them are asked cold — English in, Japanese out, no
+        options, no hints. It takes about six minutes and it can tell you that nothing has
+        changed.
+      </p>
+      {last ? (
+        <p className="tc-planhint">
+          Last check: <b>{last.ok} of {last.n}</b> on {new Date(last.at).toLocaleDateString()}.
+          {pooled && pooled.runs > 1 ? ` Across ${pooled.runs} checks: ${pooled.ok} of ${pooled.n}.` : ""}
+        </p>
+      ) : (
+        <p className="tc-planhint">You have not taken one yet, so there is no honest number for how much Japanese you have. This is how you get one.</p>
+      )}
+      <div className="tc-checkrow">
+        <button className="tc-btn" onClick={start} disabled={available < 5}>
+          {last ? "Take another checkpoint" : "Take the first checkpoint"}
+        </button>
+      </div>
+      {available < 5 && <p className="tc-planhint">Not enough words in the deck yet for a meaningful sample.</p>}
+    </section>
+  );
+}
+
+function Plan({ cards = [] }) {
   const [plan, setPlan] = useState(PLAN_DEFAULT);
   const [days, setDays] = useState(null);
   const [draft, setDraft] = useState("");
@@ -3405,6 +3566,9 @@ function Plan() {
      window because calibration moves slowly and there is no point asking the question of
      three sessions. */
   const cal = useMemo(() => calibrationReport(evidence, { days: 365 }), [evidence]);
+  /* The identical reserve the scheduler is excluding. Computed the same way from the same
+     deck, so the test cannot drift out of step with what study is avoiding. */
+  const heldOut = useMemo(() => reserveFor(cards, cycleFor()), [cards]);
   const busiest = Math.max(1, ...Object.values(cover));
   const totalReviews = Object.values(cover).reduce((a, b) => a + b, 0);
 
@@ -3558,6 +3722,8 @@ function Plan() {
           }).join(" · ")}
         </p>
       </section>
+
+      <Checkpoint cards={cards} heldOut={heldOut} />
 
       <section className="tc-plansec">
         <h2 className="tc-planh">Is the app right about you? <span className="tc-planh-sub">its predictions vs what happened</span></h2>
@@ -3782,6 +3948,16 @@ const FAILURE_NAME = {
   orthography: "wrong characters", context: "wrong in context",
   blank: "drew a blank", unclassified: "unclassified",
 };
+
+/* ── the checkpoint ──
+   Runs are tiny and they are the only record of whether the app is working, so they are
+   kept forever rather than capped at a working-set size. */
+const BENCH_KEY = "jpn101:benchmark";
+async function loadRuns() {
+  try { const r = await sGet(BENCH_KEY); const v = r ? JSON.parse(r) : []; return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+async function saveRuns(list) { await sSet(BENCH_KEY, JSON.stringify(list)); }
 
 const EVIDENCE_KEY = "jpn101:evidence";
 const EVIDENCE_CAP = 4000;
@@ -9343,6 +9519,22 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-planh{margin:0;font-size:19px;font-weight:650;color:#fff;display:flex;align-items:baseline;gap:9px;}
 .tc-planh-sub{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut-2);font-weight:400;}
 .tc-planhint{margin:0;font-size:13.5px;line-height:1.6;color:var(--mut-2);max-width:62ch;}
+
+.tc-checkq{font-size:28px;font-weight:600;text-align:center;margin:18px 0 14px;line-height:1.3}
+.tc-checkin{display:block;width:100%;box-sizing:border-box;font-size:26px;text-align:center;
+  padding:12px 14px;border-radius:12px;border:2px solid rgba(255,255,255,.18);
+  background:rgba(255,255,255,.06);color:inherit;font-family:inherit}
+.tc-checkin:focus{outline:none;border-color:rgba(255,255,255,.45)}
+.tc-checkrow{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.tc-btn-quiet{opacity:.6}
+.tc-checkmiss{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.tc-checkmissrow{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+  padding:7px 10px;border-radius:9px;background:rgba(255,255,255,.05)}
+.tc-checkterm{font-size:19px;font-weight:600}
+.tc-checkread{opacity:.75}
+.tc-checken{opacity:.6;flex:1 1 120px}
+.tc-checkgot{opacity:.5;font-size:13px}
+.tc-checkgot.is-near{opacity:.85}
 .tc-planfield{display:flex;flex-direction:column;gap:5px;}
 .tc-planfield span{font-size:13px;color:rgba(255,255,255,.75);}
 .tc-planfield textarea{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:14.5px;line-height:1.5;
