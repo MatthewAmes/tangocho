@@ -12,6 +12,7 @@ import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency
 import { buildSession, interventionFor, skillOf, describe as describeSession } from "./tools/session.mjs";
 import { calibrationReport } from "./tools/calibration.mjs";
 import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./tools/mining.mjs";
+import { inContext, splitAround, contextCoverage } from "./tools/kanjicontext.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
@@ -2577,7 +2578,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         /* Kanji is deliberately not typeable. Producing a word from its meaning is a
            different ability from writing a character, and the app has no handwriting
            input — asking for one while measuring the other would be dishonest. */
-        capsFor: (it) => ({ type: s.deck !== "kanji" && !!it.reading, listen: !!(it.reading || it.term) }),
+        /* A kanji asked through a word CAN be typed — there is a word reading to produce.
+           An isolated kanji card still cannot: the app has no handwriting input, and asking
+           someone to type a character from its meaning measures something else entirely. */
+        capsFor: (it) => ({
+          type: (s.deck !== "kanji" || it.inContext) && !!it.reading,
+          listen: !!(it.reading || it.term),
+        }),
       })),
     ];
     /* The benchmark hold-out is invisible here. Without this the checkpoint would measure
@@ -3313,7 +3320,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 {/* Support is a property of every exercise, not only of typing. At a high
                     cue level the reading is simply shown; lower down it is masked, so the
                     same card can be made harder without changing what it is. */}
-                {cueLevel != null && cueLevel >= CUE.PARTIAL && card.reading !== card.term
+                {/* The character being tested, pointed at inside the word, plus what it means
+                    on its own — so the card teaches the connection rather than leaving it
+                    to be inferred. */}
+                {card.inContext && (
+                  <div className="tc-kctx">
+                    <span className="tc-kctxk">{card.kanji}</span>
+                    <span className="tc-kctxm">{card.kanjiMeaning}</span>
+                  </div>
+                )}
+                                {cueLevel != null && cueLevel >= CUE.PARTIAL && card.reading !== card.term
                   ? <div className="tc-reading-front tc-reading-masked">{cueHint(card.reading, cueLevel)} <SpeakBtn text={card.reading || card.term} /></div>
                   : <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>}
                 {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
@@ -4258,8 +4274,17 @@ async function loadForeignDecks(cards) {
        and write jpn101:kanji keyed by the bare character, a kanji first met here shows up
        on the Kanji page as met, counts toward its mastered total, and moves its frontier.
        The two tabs are one progress record seen from two places. */
-    const all = kanjiOrdered((d && d.kanji) || [], deckKanjiIndex(cards || []));
-    const items = kanjiUnlocked(all, stats).map((k, i) => ({ ...foreignCard("kanji", k), order: i }));
+    const index = deckKanjiIndex(cards || []);
+    const all = kanjiOrdered((d && d.kanji) || [], index);
+    /* Asked through a word from the deck wherever one exists. 68 kanji answers came back
+       99% correct, which is not mastery — it is a question that asks nothing. Recognising
+       "eat" beside 食 is not the skill; reading 食べる as たべる is, and the reading a kanji
+       takes depends on the word it sits in. Identity is unchanged, so every stored answer
+       stays attached to its character. */
+    const items = inContext(
+      kanjiUnlocked(all, stats).map((k, i) => ({ ...foreignCard("kanji", k), order: i })),
+      index,
+    );
     out.push({ deck: "kanji", items, stats: remapStats(stats, "kanji") });
   } catch (e) {}
   try {
@@ -9646,6 +9671,10 @@ body{min-height:100%;overscroll-behavior-y:none;}
   padding:12px 14px;border-radius:12px;border:2px solid rgba(255,255,255,.18);
   background:rgba(255,255,255,.06);color:inherit;font-family:inherit}
 .tc-checkin:focus{outline:none;border-color:rgba(255,255,255,.45)}
+.tc-kctx{display:flex;gap:10px;align-items:baseline;justify-content:center;margin-bottom:6px;opacity:.8}
+.tc-kctxk{font-size:26px;font-weight:700}
+.tc-kctxm{font-size:13px;opacity:.75}
+.tc-kchit{color:#8fd0ff}
 .tc-mine{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)}
 .tc-minelist{display:flex;flex-direction:column;gap:5px;margin:10px 0}
 .tc-minerow{display:grid;grid-template-columns:auto auto auto 1fr auto;gap:8px;align-items:baseline;
