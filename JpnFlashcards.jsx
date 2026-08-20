@@ -13,6 +13,8 @@ import { buildSession, interventionFor, skillOf, describe as describeSession } f
 import { calibrationReport } from "./tools/calibration.mjs";
 import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./tools/mining.mjs";
 import { inContext, splitAround, contextCoverage } from "./tools/kanjicontext.mjs";
+import { drillSet, gradeDrill } from "./tools/production.mjs";
+import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
@@ -2602,6 +2604,26 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Audio is off when the plan deprioritises listening, or when you've said this session
      you can't play sound. Same idea as the Kanji tab's no-audio path: being somewhere you
      can't make noise shouldn't cost you the session. */
+  const [prodOpen, setProdOpen] = useState(false);
+  /* Built from sentences this learner has actually met: the scripted dialogue, and the
+     sentences that arrived attached to mined words. Nothing invented. */
+  const prodDrills = useMemo(() => {
+    const known = cards.filter((c) => (c.seen || 0) > 0).map((c) => c.term);
+    const sources = [];
+    for (const c of cards) if (c.mined && c.source) sources.push({ text: c.source, en: c.meaning || "" });
+    for (const sc of SCRIPT_SEED) {
+      for (const line of (sc.lines || [])) {
+        /* The tokens ARE the word boundaries — the scripts store them so readings can sit
+           above individual words — so the drill uses them rather than guessing from the
+           joined string. */
+        const parts = (line.tokens || []).map((t) => t.t || "").filter(Boolean);
+        const text = parts.join("");
+        if (text && line.en) sources.push({ text, en: line.en, chunks: parts });
+      }
+    }
+    return drillSet(sources, 5, { known, seed: Math.floor(Date.now() / 86400000) });
+  }, [cards]);
+
   const [noAudio, setNoAudio] = useState(false);
   const allowListen = !noAudio && (plan.priorities.listening || 1) >= 2;
 
@@ -3092,6 +3114,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {poolSize} cards</p>
         {bestCombo >= 2 && (
           <p className="tc-donecombo">best run: <b>{bestCombo}</b> instant recalls back to back</p>
+        )}
+
+        {/* The second block of the session. Reviewing is recognition; this is the part that
+            asks you to put a sentence together, which is the ability the numbers say is
+            missing. Offered rather than forced — a five-minute day should still be able to
+            end after the reviews. */}
+        {prodDrills.length > 0 && (
+          prodOpen
+            ? <ProductionBlock drills={prodDrills} onDone={() => setProdOpen(false)} />
+            : (
+              <button className="tc-btn tc-btn-sm tc-btn-primary" style={{ marginTop: 12 }}
+                onClick={() => setProdOpen(true)}>
+                Build {prodDrills.length} sentences · ~5 min
+              </button>
+            )
         )}
         {debrief && debrief.busy && <p className="tc-debrief tc-debrief-busy">✨ Coach is looking at what you missed…</p>}
         {debrief && debrief.text && <p className="tc-debrief">✨ {debrief.text}</p>}
@@ -3597,6 +3634,97 @@ function Checkpoint({ cards = [], heldOut }) {
       </div>
       {available < 5 && <p className="tc-planhint">Not enough words in the deck yet for a meaningful sample.</p>}
     </section>
+  );
+}
+
+/* ── building sentences, not recognising them ──
+   Of 588 words studied, 76 have ever been produced once, and typed answers run 26 points
+   below recognition. The app has been a recognition trainer.
+
+   The real fix is a conversation partner, which needs a paid API key. This is the honest
+   free version: assembly rather than recognition, using sentences the learner has actually
+   met — the scripted dialogue and the sentences mined words arrived with — rather than
+   sentences invented by a model that might be wrong.
+
+   It cannot judge whether a different sentence is also correct, so it does not pretend to:
+   it accepts the sentence that was written and shows the difference when they diverge. */
+function ProductionBlock({ drills, onDone }) {
+  const [at, setAt] = useState(0);
+  const [built, setBuilt] = useState([]);
+  const [typed, setTyped] = useState("");
+  const [result, setResult] = useState(null);
+
+  const d = drills[at];
+  if (!d) return null;
+
+  const check = () => {
+    const given = d.type === "fill" ? typed : built;
+    setResult(gradeDrill(d, given));
+  };
+  const next = () => {
+    setResult(null); setBuilt([]); setTyped("");
+    if (at + 1 >= drills.length) onDone(); else setAt(at + 1);
+  };
+
+  const remaining = d.tiles ? d.tiles.filter((tile, i) => !built.includes(tile + "\u0000" + i)) : [];
+
+  return (
+    <div className="tc-prod">
+      <p className="tc-eyebrow">build it yourself · {at + 1} of {drills.length}</p>
+      {d.prompt ? <p className="tc-prodprompt">{d.prompt}</p> : null}
+
+      {d.type === "fill" ? (
+        <>
+          <div className="tc-prodsent">{d.before}<span className="tc-prodblank">＿</span>{d.after}</div>
+          <div className="tc-prodtiles">
+            {d.choices.map((c) => (
+              <button key={c} className={"tc-fchip" + (typed === c ? " is-on" : "")}
+                onClick={() => setTyped(c)} disabled={!!result}>{c}</button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="tc-prodsent">
+            {built.length
+              ? built.map((b) => b.split("\u0000")[0]).join("")
+              : <span className="tc-prodblank">tap the pieces in order</span>}
+          </div>
+          <div className="tc-prodtiles">
+            {d.tiles.map((tile, i) => {
+              const key = tile + "\u0000" + i;
+              const used = built.includes(key);
+              return (
+                <button key={key} className={"tc-fchip" + (used ? " is-used" : "")} disabled={used || !!result}
+                  onClick={() => setBuilt([...built, key])}>{tile}</button>
+              );
+            })}
+          </div>
+          {built.length > 0 && !result && (
+            <button className="tc-btn tc-btn-sm" onClick={() => setBuilt(built.slice(0, -1))}>undo</button>
+          )}
+          {d.hasDistractors ? <p className="tc-smarthint">Not every piece belongs.</p> : null}
+        </>
+      )}
+
+      {result ? (
+        <div className="tc-prodresult">
+          <p className={result.ok ? "tc-prodok" : "tc-prodbad"}>
+            {result.ok ? "That is it." : "Not quite."}
+          </p>
+          {!result.ok && <p className="tc-prodsent">{result.expected}</p>}
+          <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={next}>
+            {at + 1 >= drills.length ? "Done" : "Next"}
+          </button>
+        </div>
+      ) : (
+        <div className="tc-rehnav">
+          <button className="tc-btn tc-btn-sm tc-btn-primary"
+            disabled={d.type === "fill" ? !typed : !built.length} onClick={check}>Check</button>
+          <button className="tc-btn tc-btn-sm" onClick={next}>Skip</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -7153,11 +7281,11 @@ function Input({ cards, onAdd, onPark }) {
                   <p className="tc-incover">{coverage.unknown.map((u) => u.w).join("　")}</p>
                 </>
               )}
-              <p className="tc-smarthint">
-                {coverage.pct >= 90 ? "Comfortable — good for reading at speed."
-                  : coverage.pct >= 75 ? "About right: enough support to guess the rest."
-                  : "Below your comfortable range. Fine to skim, hard to actually learn from."}
-              </p>
+              {/* One definition of "is this worth reading", shared with anything else that
+                  needs to ask. The thresholds are a stated position rather than a
+                  measurement, and they live in comprehensible.mjs where they can be argued
+                  with. */}
+              <p className="tc-smarthint">{describeBand(coverage.pct)}</p>
 
               {/* Keeping what you read. Words arrive with the sentence they appeared in,
                   which is the difference between learning 持ってくる as a gloss and learning
@@ -9671,6 +9799,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
   padding:12px 14px;border-radius:12px;border:2px solid rgba(255,255,255,.18);
   background:rgba(255,255,255,.06);color:inherit;font-family:inherit}
 .tc-checkin:focus{outline:none;border-color:rgba(255,255,255,.45)}
+.tc-prod{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12);text-align:center}
+.tc-prodprompt{font-size:17px;opacity:.85;margin:6px 0 12px}
+.tc-prodsent{font-size:24px;line-height:1.6;margin:10px 0;min-height:36px}
+.tc-prodblank{opacity:.4;font-size:16px}
+.tc-prodtiles{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:12px 0}
+.tc-fchip.is-used{opacity:.25}
+.tc-prodresult{margin-top:12px}
+.tc-prodok{color:#7fd88f;font-weight:600}
+.tc-prodbad{color:#ffb3a7;font-weight:600}
 .tc-kctx{display:flex;gap:10px;align-items:baseline;justify-content:center;margin-bottom:6px;opacity:.8}
 .tc-kctxk{font-size:26px;font-weight:700}
 .tc-kctxm{font-size:13px;opacity:.75}
