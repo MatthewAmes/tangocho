@@ -73,6 +73,14 @@ export function toKana(input) {
       if (!next || (!VOWEL.test(next) && next !== "y")) { out += "ん"; i++; continue; }
     }
 
+    /* Hepburn writes ん as "m" before b, p and m — tempura, sempai, kombu — which is how
+       the romanisation appears on menus and in most textbooks, so it is what gets typed.
+       Without this "tempura" came out てmぷら and a right answer was marked wrong.
+
+       Guarded on the following letter: "mama" and "mimi" must stay ま and み. Only an m
+       standing immediately before another labial is the syllabic n. */
+    if (ch === "m" && /[bpm]/.test(s[i + 1] || "")) { out += "ん"; i++; continue; }
+
     // a doubled consonant is the small っ: "ippun" -> いっぷん
     if (ch === s[i + 1] && !VOWEL.test(ch) && ch !== "n") { out += "っ"; i++; continue; }
 

@@ -26,6 +26,7 @@
 import { hashSeed } from "./session.mjs";
 import { wilson } from "./calibration.mjs";
 import { editDistance } from "./learner.mjs";
+import { normalizeKana } from "./romaji.mjs";
 
 /* How much of the deck is quarantined at a time. Every reserved word is one Smart Review
    cannot teach you, so this buys measurement with study time and the price should stay
@@ -84,12 +85,16 @@ export function sampleFor(items = [], reserved, n = RUN_SIZE, seed = 0) {
     .map((x) => x.it);
 }
 
-/* Normalise before comparing: trim, drop the punctuation the IME leaves behind, and treat
-   full-width and half-width spaces alike. Deliberately NOT normalising kana to romaji or
-   stripping okurigana — those are the parts being tested. */
+/* Put an answer and a card into the same shape before comparing them. */
 export function normalise(s) {
-  return String(s == null ? "" : s)
-    .trim()
+  /* Katakana folds to hiragana before comparing. Answers arrive as rōmaji converted to
+     hiragana, so ミルク would never match みるく on a raw compare and every loanword in the
+     deck — a large slice of it — would score wrong. The app's spelling check already treats
+     the two scripts as one for grading; this is the same rule.
+
+     Long marks and づ/ぢ fold too. Okurigana is deliberately NOT touched: that is part of
+     the word being tested. */
+  return normalizeKana(String(s == null ? "" : s).trim())
     .replace(/[\s　]+/g, "")
     .replace(/[。、．，!！?？]/g, "");
 }

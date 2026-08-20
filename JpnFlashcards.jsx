@@ -3407,6 +3407,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
    The design constraint that matters: it must be able to say "no change" and mean it.
    Anyone can build a progress screen that always goes up. */
+/* Rōmaji in, kana out. Left as its own function so the input preview and the grader can
+   never disagree about what an answer became. */
+const kanaOf = (v) => { try { return toKana(String(v || "").trim()); } catch (e) { return String(v || "").trim(); } };
+
 function Checkpoint({ cards = [], heldOut }) {
   const [runs, setRuns] = useState(null);
   const [phase, setPhase] = useState("idle");     // idle | running | done
@@ -3438,7 +3442,12 @@ function Checkpoint({ cards = [], heldOut }) {
   const submit = () => {
     const q = questions[at];
     if (!q) return;
-    const next = [...answers, { id: q.id, got: typed }];
+    /* Graded as kana, not as keystrokes. There is no Japanese keyboard on this machine, and
+       requiring one would put cold production — the whole point of the checkpoint — behind
+       an OS setting. Rōmaji goes in, the same converter the Dates and spelling screens
+       already use turns it into kana, and that is what gets marked. What was typed is kept
+       alongside so the review list can show it back. */
+    const next = [...answers, { id: q.id, got: kanaOf(typed), typed }];
     setAnswers(next);
     setTyped("");
     if (at + 1 >= questions.length) {
@@ -3463,8 +3472,8 @@ function Checkpoint({ cards = [], heldOut }) {
       <section className="tc-plansec">
         <h2 className="tc-planh">Checkpoint <span className="tc-planh-sub">{at + 1} of {questions.length}</span></h2>
         <p className="tc-planhint" style={{ marginTop: 0 }}>
-          Write the Japanese. No hints, and nothing is marked until the end — guessing costs
-          you nothing, so answer even when you are unsure.
+          Type it in rōmaji and it becomes kana as you go — no Japanese keyboard needed.
+          No hints, and nothing is marked until the end, so answer even when you are unsure.
         </p>
         <div className="tc-checkq">{glossOf(q)}</div>
         <input
@@ -3481,9 +3490,12 @@ function Checkpoint({ cards = [], heldOut }) {
             if (e.nativeEvent && (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) return;
             if (e.key === "Enter") { e.preventDefault(); submit(); }
           }}
-          placeholder="かな or 漢字"
+          placeholder="type in rōmaji — tempura, yasumi, kyuuka"
           autoComplete="off" autoCorrect="off" spellCheck={false}
         />
+        {/* What the app is actually going to mark. Without it you are typing blind into a
+            converter and cannot tell a wrong answer from a mistyped one. */}
+        <div className="tc-checkkana">{typed.trim() ? kanaOf(typed) : "　"}</div>
         <div className="tc-checkrow">
           <button className="tc-btn" onClick={submit}>{at + 1 >= questions.length ? "Finish" : "Next"}</button>
           <button className="tc-btn tc-btn-quiet" onClick={() => { setTyped(""); submit(); }}>Skip</button>
@@ -9525,6 +9537,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   padding:12px 14px;border-radius:12px;border:2px solid rgba(255,255,255,.18);
   background:rgba(255,255,255,.06);color:inherit;font-family:inherit}
 .tc-checkin:focus{outline:none;border-color:rgba(255,255,255,.45)}
+.tc-checkkana{text-align:center;font-size:26px;min-height:34px;margin-top:10px;opacity:.85;letter-spacing:.02em}
 .tc-checkrow{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
 .tc-btn-quiet{opacity:.6}
 .tc-checkmiss{display:flex;flex-direction:column;gap:6px;margin-top:10px}

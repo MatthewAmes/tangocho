@@ -56,5 +56,21 @@ eq(kanaEqual("しがつ", "しがつ"), true, "identical");
 eq(kanaEqual("しがつ", "よんがつ"), false, "genuinely different readings still differ");
 eq(kanaEqual("ようか", "よっか"), false, "8th and 4th are not confused");
 
+/* Hepburn m before a labial. Not a nicety: the checkpoint asks for production with no IME,
+   so what gets typed is whatever romanisation the textbook printed — and "tempura" came out
+   てmぷら, a right answer marked wrong on the very first question of the very first run. */
+eq(toKana("tempura"), "てんぷら", "m before p is ん");
+eq(toKana("sempai"), "せんぱい", "m before p is ん");
+eq(toKana("kombu"), "こんぶ", "m before b is ん");
+eq(toKana("sammai"), "さんまい", "m before m is ん");
+eq(toKana("tenpura"), "てんぷら", "the n spelling still works");
+/* And the guard, which is the part that could quietly break every ま-row word: an m before
+   a vowel is just ま行. */
+eq(toKana("mama"), "まま", "mama is not んま");
+eq(toKana("mimi"), "みみ");
+eq(toKana("umi"), "うみ");
+eq(toKana("samui"), "さむい");
+eq(toKana("yomimasu"), "よみます");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

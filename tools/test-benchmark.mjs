@@ -9,6 +9,7 @@ import {
   RESERVE_FRACTION, CYCLE_DAYS, RUN_SIZE, HISTORY_CAP, poolRuns, glossOf, askable, acceptedForms,
 } from "./benchmark.mjs";
 import { candidates } from "./session.mjs";
+import { toKana } from "./romaji.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
@@ -157,6 +158,28 @@ t("accepting more forms does not accept wrong answers", () => {
 });
 t("a completely different word is not a near miss", () => {
   eq(gradeAnswer({ term: "火曜日", reading: "かようび" }, "たべもの").near, false);
+});
+t("a romaji answer grades against the card", () => {
+  /* The checkpoint asks for cold production on a machine with no Japanese keyboard. If
+     romaji did not grade, the feature was simply unusable — which is exactly how it
+     shipped the first time. */
+  const R = (card, romaji) => gradeAnswer(card, toKana(romaji)).ok;
+  eq(R({ term: "天ぷら", reading: "てんぷら" }, "tempura"), true, "the Hepburn m spelling");
+  eq(R({ term: "天ぷら", reading: "てんぷら" }, "tenpura"), true, "and the n spelling");
+  eq(R({ term: "休暇", reading: "きゅうか" }, "kyuuka"), true);
+  eq(R({ term: "二つ", reading: "ふたつ" }, "hutatsu"), true, "kunrei spellings count");
+  eq(R({ term: "妻↓", reading: "つま" }, "tuma"), true);
+});
+t("loanwords written in katakana accept a hiragana answer", () => {
+  /* Romaji converts to hiragana, so without folding, every katakana word in the deck —
+     and there are a lot — would be marked wrong however well it was known. */
+  eq(gradeAnswer({ term: "ミルク", reading: "ミルク" }, toKana("miruku")).ok, true);
+  eq(gradeAnswer({ term: "ヘアスタイル", reading: "ヘアスタイル" }, toKana("heasutairu")).ok, true);
+  eq(normalise("ミルク"), normalise("みるく"));
+});
+t("folding scripts does not start accepting wrong answers", () => {
+  eq(gradeAnswer({ term: "ミルク", reading: "ミルク" }, toKana("tabemono")).ok, false);
+  eq(gradeAnswer({ term: "休暇", reading: "きゅうか" }, toKana("")).blank, true);
 });
 t("short words do not get near-miss credit", () => {
   // At two characters, one edit away is a different word, not a slip.
