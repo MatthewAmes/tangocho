@@ -49,6 +49,27 @@ export function buildClozeIndex(scripts = [], cards = []) {
   return byTerm;
 }
 
+/* A mined word arrives with the sentence it was found in, which is better contextual
+   material than anything the scripts can offer: it is real Japanese, it is about something
+   the learner chose to read, and it is the exact context in which they failed to understand
+   the word. Folded into the same index so the rest of the app cannot tell the difference
+   between a scripted line and a mined one. */
+export function addMinedSources(index, cards = []) {
+  const out = index instanceof Map ? index : new Map();
+  for (const c of cards) {
+    if (!c || !c.mined || !c.source || !c.term) continue;
+    const at = c.source.indexOf(c.term);
+    if (at < 0) continue;
+    // A "sentence" that is only the word teaches nothing about using it.
+    if (c.source.replace(/[。、！？s]/g, "") === c.term) continue;
+    const list = out.get(c.id) || [];
+    if (list.some((h) => h.text === c.source)) continue;
+    list.push({ text: c.source, at, en: c.meaning || "", romaji: "", script: c.sourceLabel || "what you read" });
+    out.set(c.id, list);
+  }
+  return out;
+}
+
 /* Does this item have any contextual material at all? Drives the `context` capability, so
    the scheduler never reserves a context slot it cannot fill. */
 export function hasContext(index, id) {

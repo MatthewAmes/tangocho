@@ -11,9 +11,10 @@ import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor, AGAIN, HARD, GOOD, EASY } from "./tools/fsrs.mjs";
 import { buildSession, interventionFor, skillOf, describe as describeSession } from "./tools/session.mjs";
 import { calibrationReport } from "./tools/calibration.mjs";
+import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./tools/mining.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
-import { buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./tools/cloze.mjs";
+import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -2281,6 +2282,20 @@ export default function JpnFlashcards() {
     });
   }, []);
 
+  /* Parking, not deleting. A displaced word keeps every field it had — only untouched
+     words are ever eligible — and comes back when the active set has room. Reversible by
+     design: permanently retiring someone's vocabulary to make space for a manga chapter
+     would be a bad trade to make silently. */
+  const parkCards = useCallback((ids) => {
+    if (!ids || !ids.length) return;
+    const set = new Set(ids);
+    setCards((prev) => {
+      const next = prev.map((c) => (set.has(c.id) ? { ...c, parked: true } : c));
+      sSet(STORE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const removeCard = useCallback((id) => {
     setCards((prev) => { const next = prev.filter((c) => c.id !== id); sSet(STORE_KEY, JSON.stringify(next)); return next; });
   }, []);
@@ -2391,7 +2406,7 @@ export default function JpnFlashcards() {
         ) : tab === "drill" ? (
           <ConjDrill />
         ) : tab === "input" ? (
-          <Input cards={cards} />
+          <Input cards={cards} onAdd={addCards} onPark={parkCards} />
         ) : tab === "oral" ? (
           /* Oral keeps its render branch and its components, same as Write. The chip is
              gone for now, not the feature — the mock final and Culture Talk rehearsals are
@@ -2511,7 +2526,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      Japanese, already levelled to the course, already carrying English — and free, which
      a language model writing sentences on demand is not. Coverage is whatever the scripts
      happen to contain, and a word they never use simply gets no context exercise. */
-  const clozeIndex = useMemo(() => buildClozeIndex(SCRIPT_SEED, cards), [cards]);
+  const clozeIndex = useMemo(
+    () => addMinedSources(buildClozeIndex(SCRIPT_SEED, cards), cards),
+    [cards],
+  );
   /* The evidence log, read here for the two things it now feeds back into the session:
      which words this learner confuses, and how fast they normally answer each KIND of
      question. Both are learner-specific and neither can be guessed. */
@@ -2540,7 +2558,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const heldOut = useMemo(() => reserveFor(cards, cycleFor()), [cards]);
 
   const smartPicks = useMemo(() => {
-    const items = cards.map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
+    /* Parked words are out of circulation, not deleted. Every mined word displaced one, so
+       the number of things competing for attention stays fixed — which is the only reason
+       mining makes this deck better rather than longer. */
+    const items = cards
+      .filter((c) => !c.parked)
+      .map((c) => (c.order === undefined ? { ...c, order: c.lesson || 0 } : c));
     /* Sources declare what their items can be ASKED. This has to reach the scheduler, not
        just the renderer: reserving a production slot and only discovering downstream that
        the item has no reading spends the slot on a recognition question. */
@@ -6683,7 +6706,7 @@ function blankInput(cards) {
            items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [] };
 }
 
-function Input({ cards }) {
+function Input({ cards, onAdd, onPark }) {
   const [st, setSt] = useState(null);
   const [plan, setPlan] = useState("listen");
   const [minutes, setMinutes] = useState(15);
@@ -6695,6 +6718,13 @@ function Input({ cards }) {
   const [linkUrl, setLinkUrl] = useState("");
   const [linkTitle, setLinkTitle] = useState("");
   const [coverText, setCoverText] = useState("");
+  const [lexicon, setLexicon] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [mineMsg, setMineMsg] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("");
+  /* The frequency list doubles as the dictionary. It already ships with the app, so mining
+     costs no network call and no API key — the whole feature works offline. */
+  useEffect(() => { loadFreqLexicon().then(setLexicon).catch(() => setLexicon(new Map())); }, []);
   const [note, setNote] = useState("");
 
   useEffect(() => { (async () => {
@@ -6873,6 +6903,30 @@ function Input({ cards }) {
   };
 
   const coverage = useMemo(() => (coverText.trim() ? coverageAgainstDeck(coverText, cards) : null), [coverText, cards]);
+
+  /* What is worth keeping out of this text. Runs the app's own coverage scanner sentence by
+     sentence, so every candidate arrives with the sentence it appeared in. */
+  const mined = useMemo(() => {
+    if (!coverText.trim() || !lexicon) return null;
+    const known = new Set(cards.map((c) => c.term));
+    return mine(coverText, {
+      lexicon,
+      known,
+      unknownOf: (sentence) => coverageAgainstDeck(sentence, cards).unknown.map((u) => u.w),
+    });
+  }, [coverText, cards, lexicon]);
+
+  /* Named for what it is, because Input already has a "plan" — the study plan. */
+  const parkPlan = useMemo(() => displacementPlan(cards, picked.size), [cards, picked.size]);
+
+  const keepPicked = useCallback(() => {
+    if (!mined || !picked.size) return;
+    const chosen = mined.candidates.filter((c) => picked.has(c.term));
+    onAdd(chosen.map((c) => cardFor(c, { label: sourceLabel.trim() })));
+    onPark(parkPlan.park);
+    setMineMsg(describePlan(chosen.length, parkPlan));
+    setPicked(new Set());
+  }, [mined, picked, parkPlan, onAdd, onPark, sourceLabel]);
 
   const week = useMemo(() => {
     if (!st) return { mins: 0, byDay: [], items: [] };
@@ -7079,6 +7133,49 @@ function Input({ cards }) {
                   : coverage.pct >= 75 ? "About right: enough support to guess the rest."
                   : "Below your comfortable range. Fine to skim, hard to actually learn from."}
               </p>
+
+              {/* Keeping what you read. Words arrive with the sentence they appeared in,
+                  which is the difference between learning 持ってくる as a gloss and learning
+                  it as something someone actually said. */}
+              {mined && mined.candidates.length > 0 && (
+                <div className="tc-mine">
+                  <p className="tc-eyebrow">keep the words you did not have</p>
+                  <p className="tc-smarthint" style={{ marginTop: 0 }}>
+                    Each one arrives with the sentence you met it in, so it can be practised in
+                    context instead of as a dictionary entry.
+                  </p>
+                  <input className="tc-sentinput" value={sourceLabel}
+                    onChange={(e) => setSourceLabel(e.target.value)}
+                    placeholder="where is this from? (optional)" />
+                  <div className="tc-minelist">
+                    {mined.candidates.slice(0, 20).map((c) => (
+                      <label key={c.term} className={"tc-minerow" + (picked.has(c.term) ? " is-on" : "")}>
+                        <input type="checkbox" checked={picked.has(c.term)}
+                          onChange={() => setPicked((prev) => {
+                            const n = new Set(prev);
+                            if (n.has(c.term)) n.delete(c.term); else n.add(c.term);
+                            return n;
+                          })} />
+                        <span className="tc-mineterm">{c.term}</span>
+                        <span className="tc-mineread">{c.reading !== c.term ? c.reading : ""}</span>
+                        <span className="tc-minemean">{c.meaning}</span>
+                        <span className="tc-minecount">{c.count > 1 ? "×" + c.count : ""}</span>
+                        <span className="tc-minesent">{c.sentence}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="tc-smarthint">{describePlan(picked.size, parkPlan)}</p>
+                  <div className="tc-rehnav">
+                    <button className="tc-btn tc-btn-sm tc-btn-primary" disabled={!picked.size} onClick={keepPicked}>
+                      Keep {picked.size || ""} {picked.size === 1 ? "word" : "words"}
+                    </button>
+                    <button className="tc-btn tc-btn-sm" onClick={() => setPicked(new Set(mined.candidates.slice(0, 10).map((c) => c.term)))}>
+                      Select top 10
+                    </button>
+                  </div>
+                  {mineMsg ? <p className="tc-smarthint">{mineMsg}</p> : null}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -7897,6 +7994,18 @@ function Dates() {
 const KANJI_KEY = "jpn101:kanji";
 
 const KANJI_URL = "/kanji.json";
+/* The shipped frequency list, read once and turned into a term -> reading/meaning lookup.
+   This is what lets a mined word arrive with a reading and a gloss without a dictionary
+   API, and it is what keeps the whole feature free. */
+let _lexicon = null;
+async function loadFreqLexicon() {
+  if (_lexicon) return _lexicon;
+  const r = await fetch("freq.json");
+  const d = await r.json();
+  _lexicon = makeLexicon((d && d.words) || []);
+  return _lexicon;
+}
+
 const KANJI_CACHE = "jpn101:kanjiData";
 const KANJI_BATCH = 12;              // how many new characters unlock at a time
 
@@ -9537,6 +9646,16 @@ body{min-height:100%;overscroll-behavior-y:none;}
   padding:12px 14px;border-radius:12px;border:2px solid rgba(255,255,255,.18);
   background:rgba(255,255,255,.06);color:inherit;font-family:inherit}
 .tc-checkin:focus{outline:none;border-color:rgba(255,255,255,.45)}
+.tc-mine{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)}
+.tc-minelist{display:flex;flex-direction:column;gap:5px;margin:10px 0}
+.tc-minerow{display:grid;grid-template-columns:auto auto auto 1fr auto;gap:8px;align-items:baseline;
+  padding:7px 9px;border-radius:9px;background:rgba(255,255,255,.05);cursor:pointer}
+.tc-minerow.is-on{background:rgba(120,200,255,.14)}
+.tc-mineterm{font-size:18px;font-weight:600}
+.tc-mineread{opacity:.7;font-size:13px}
+.tc-minemean{opacity:.75;font-size:13px}
+.tc-minecount{opacity:.55;font-size:12px}
+.tc-minesent{grid-column:1/-1;opacity:.55;font-size:12px;line-height:1.5}
 .tc-checkkana{text-align:center;font-size:26px;min-height:34px;margin-top:10px;opacity:.85;letter-spacing:.02em}
 .tc-checkrow{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
 .tc-btn-quiet{opacity:.6}
