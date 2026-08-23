@@ -24,5 +24,9 @@ binding = "TTS"
 id = "65cb9739891549aeb8ac804b87b8b799"
 
 # Secrets are NOT here — they go in via `wrangler secret put`, so they never land in git.
-# Required: SESSION_SECRET (must match the existing one or every device is signed out),
-# GOOGLE_TTS_API_KEY, ADMIN_WARM_TOKEN.
+# Required: SESSION_SECRET, GOOGLE_TTS_API_KEY, ADMIN_WARM_TOKEN.
+#   SESSION_SECRET: any 32+ random bytes, e.g.
+#     node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))'
+#   Rotating it signs every device out once; the app shows the sign-in button again and
+#   re-pushes local progress after sign-in (see pullAndMergeCloud/pushCloudNow 401 handling).
+#   Rotate immediately if the value ever appears in a commit, log, or screenshot.
