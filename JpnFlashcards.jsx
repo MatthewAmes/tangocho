@@ -1752,36 +1752,24 @@ async function sSet(key, value) {
   return ok;
 }
 
-// ── cross-device sync (Netlify Blobs via /.netlify/functions/sync) ──
-// Every device has a short "sync code". Any device using the same code reads
-// and writes the same cloud snapshot, so progress made on one device shows up
-// on the others. Merging is per-record (not whole-file last-write-wins) so
-// studying on two devices before either has synced never loses progress.
-const SYNC_KEY = "jpn101:syncCode";
+// ── cross-device sync (Cloudflare Worker KV via /api/sync, Google-session only) ──
+// Sync requires a signed-in Google session (see below); signed-out devices stay local-only —
+// no anonymous sync-code fallback (that path used to accept any guessable code as a free,
+// unauthenticated KV write bucket; removed). Merging is per-record (not whole-file
+// last-write-wins) so studying on two devices before either has synced never loses progress.
 const SYNC_ENDPOINT = "/.netlify/functions/sync";
 const SYNC_PREFIX = "jpn101:";
 /* Caches of files the app already ships are excluded: kanjiData and freqData are ~1.1MB of
    static content that would otherwise be uploaded to the cloud on every save and counted
    against the sync payload for no benefit at all. */
-const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncCode", "jpn101:syncLastPulled", "jpn101:snapshot",
-  "jpn101:kanjiData", "jpn101:freqData"]);
+// Keys that live on THIS device only. Anything else under jpn101: is study data and syncs.
+// A key listed here must never be written to the cloud and must be ignored if an old cloud
+// record still carries it (e.g. jpn101:session — syncing a bearer token across devices via
+// an unauthenticated snapshot merge would let one device silently sign another one in).
+const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncLastPulled", "jpn101:snapshot",
+  "jpn101:kanjiData", "jpn101:freqData",
+  "jpn101:session", "jpn101:userEmail", "jpn101:syncPending", "jpn101:lastBackup", "jpn101:videoIndex"]);
 
-function genSyncCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous-looking chars
-  let s = "";
-  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
-}
-function getSyncCode() {
-  try {
-    let c = window.localStorage.getItem(SYNC_KEY);
-    if (!c) { c = genSyncCode(); window.localStorage.setItem(SYNC_KEY, c); }
-    return c;
-  } catch (e) { return null; }
-}
-function setSyncCode(code) {
-  try { window.localStorage.setItem(SYNC_KEY, code); } catch (e) {}
-}
 function collectLocalSnapshot() {
   const snap = {};
   try {
@@ -1910,6 +1898,7 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
   const out = { ...localSnap };
   const keys = new Set([...Object.keys(localSnap), ...Object.keys(cloudSnap)]);
   keys.forEach((k) => {
+    if (SYNC_SKIP_KEYS.has(k)) { delete out[k]; return; }   // device-local keys never come from the cloud
     if (k === "jpn101:deck") { out[k] = mergeDeck(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:days") { out[k] = mergeDays(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
@@ -1927,8 +1916,8 @@ function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
 // session token (~2 years), stored in localStorage. Every later visit just reads
 // that token straight from storage — no re-running Google's sign-in flow, no
 // dependency on browser silent-reauth (which is unreliable and was causing
-// "asks me to log in again every time"). Falls back to the manual sync code
-// only if the user has never signed in with Google at all.
+// "asks me to log in again every time"). Signed-out devices stay local-only —
+// there is no anonymous fallback (see SYNC_ENDPOINT comment above).
 const GOOGLE_CLIENT_ID = "249268364314-fkmn7ol1jtkv12sme6fjp70fj2cpr6l3.apps.googleusercontent.com";
 const SESSION_KEY = "jpn101:session";
 const USER_EMAIL_KEY = "jpn101:userEmail";
@@ -1941,16 +1930,41 @@ function saveSession(session, email) {
     if (email) window.localStorage.setItem(USER_EMAIL_KEY, email);
   } catch (e) {}
 }
-function signOutGoogle() {
+function clearSessionStorage() {
   try { window.localStorage.removeItem(SESSION_KEY); window.localStorage.removeItem(USER_EMAIL_KEY); } catch (e) {}
   _googleEmail = null;
 }
+function signOutGoogle() {
+  clearSessionStorage();
+  setSyncState("idle");           // stop showing "Saving…"/"Not saved yet" once there's nowhere to save to
+  setAuthState("signed-out");
+}
 let _googleEmail = (() => { try { return window.localStorage.getItem(USER_EMAIL_KEY); } catch (e) { return null; } })();
+
+// auth mini-store: lets any component (Browse, the root loader) react to sign-in,
+// sign-out, and — the case nothing used to handle — a session going bad mid-session.
+let _authState = loadSession() ? "signed-in" : "signed-out";   // signed-in | signed-out | expired
+const _authWatchers = new Set();
+function setAuthState(s) { _authState = s; _authWatchers.forEach((fn) => { try { fn(s); } catch (e) {} }); }
+function watchAuthState(fn) { _authWatchers.add(fn); return () => _authWatchers.delete(fn); }
+function authStateNow() { return _authState; }
+function handleAuthFailure() {     // a 401 from /api/sync: the token is dead (expired or SESSION_SECRET rotated)
+  const had = !!loadSession();
+  clearSessionStorage();
+  setSyncState("idle");
+  setAuthState(had ? "expired" : "signed-out");
+}
+
 let _gisReadyPromise = null;
 function gisReady() {
   if (_gisReadyPromise) return _gisReadyPromise;
-  _gisReadyPromise = new Promise((resolve) => {
-    (function check() { if (window.google?.accounts?.id) resolve(); else setTimeout(check, 150); })();
+  _gisReadyPromise = new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function check() {
+      if (window.google?.accounts?.id) resolve();
+      else if (Date.now() - t0 > 20000) { _gisReadyPromise = null; reject(new Error("gsi not loaded")); }   // offline/blocked — stop polling forever
+      else setTimeout(check, 150);
+    })();
   });
   return _gisReadyPromise;
 }
@@ -1966,6 +1980,7 @@ async function exchangeForSession(idToken) {
     if (!session) return false;
     saveSession(session, email);
     _googleEmail = email;
+    setAuthState("signed-in");
     return true;
   } catch (e) { return false; /* offline — try again next click */ }
 }
@@ -1973,7 +1988,8 @@ let _googleInitDone = false;
 let _googleTokenListeners = [];   // every caller's callback fires — initialize() itself only ever runs once
 function initGoogleAuth(onToken) {
   if (onToken) _googleTokenListeners.push(onToken);
-  if (loadSession()) return;   // already have a persistent session — no need to touch Google's flow at all
+  const unsubscribe = () => { _googleTokenListeners = _googleTokenListeners.filter((fn) => fn !== onToken); };
+  if (loadSession()) return unsubscribe;   // already have a persistent session — no need to touch Google's flow at all
   gisReady().then(() => {
     if (!_googleInitDone) {
       window.google.accounts.id.initialize({
@@ -1985,22 +2001,20 @@ function initGoogleAuth(onToken) {
       });
       _googleInitDone = true;
     }
-  });
+  }).catch(() => {});
+  return unsubscribe;
 }
 function renderGoogleButton(el) {
   if (!el || loadSession()) return;
   gisReady().then(() => {
     try { window.google.accounts.id.renderButton(el, { theme: "outline", size: "medium", text: "signin_with" }); } catch (e) {}
-  });
+  }).catch(() => {});
 }
 function syncRequestOptions(extra) {
-  const opts = { ...extra, cache: "no-store", headers: { ...((extra && extra.headers) || {}) } };
   const session = loadSession();
-  if (session) {
-    opts.headers.authorization = "Bearer " + session;
-    return { url: SYNC_ENDPOINT, opts };
-  }
-  return { url: SYNC_ENDPOINT + "?code=" + encodeURIComponent(getSyncCode()), opts };
+  if (!session) return null;   // signed out: local-only, no network
+  const opts = { ...extra, cache: "no-store", headers: { ...((extra && extra.headers) || {}), authorization: "Bearer " + session } };
+  return { url: SYNC_ENDPOINT, opts };
 }
 
 // ── saving progress to the cloud ──
@@ -2027,15 +2041,17 @@ function hasSyncPending() { try { return !!window.localStorage.getItem(SYNC_PEND
 let _retryTimer = null;
 async function pushCloudNow({ attempt = 0, keepalive = false } = {}) {
   if (_cloudPushTimer) { clearTimeout(_cloudPushTimer); _cloudPushTimer = null; }
+  const req = syncRequestOptions({
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
+    keepalive,                        // lets the request outlive the page on pagehide
+  });
+  if (!req) { setSyncState("idle"); return false; }   // signed out: nothing to push anywhere
   setSyncState("saving");
   try {
-    const { url, opts } = syncRequestOptions({
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
-      keepalive,                        // lets the request outlive the page on pagehide
-    });
-    const res = await fetch(url, opts);
+    const res = await fetch(req.url, req.opts);
+    if (res.status === 401) { handleAuthFailure(); markSyncPending(); setSyncState("pending"); return false; }   // keep the flag; do NOT retry an auth failure
     if (!res.ok) throw new Error("save rejected: HTTP " + res.status);
     clearSyncPending();
     setSyncState("saved");
@@ -2070,8 +2086,10 @@ if (typeof window !== "undefined") {
 }
 async function pullAndMergeCloud() {
   try {
-    const { url, opts } = syncRequestOptions({});
-    const res = await fetch(url, opts);
+    const req = syncRequestOptions({});
+    if (!req) return false;   // signed out: nothing to pull
+    const res = await fetch(req.url, req.opts);
+    if (res.status === 401) { handleAuthFailure(); return false; }
     if (!res.ok) return false;
     const { data } = await res.json();
     if (!data || !data.snapshot) return false;
@@ -2101,7 +2119,7 @@ try {
 } catch (e) {}
 function setRetention(r) {
   retentionTarget = Math.min(0.97, Math.max(0.7, r));
-  try { window.localStorage.setItem(RETENTION_KEY, String(retentionTarget)); } catch (e) {}
+  sSet(RETENTION_KEY, String(retentionTarget));   // async, fire-and-forget; schedules a push like any other setting
 }
 
 const DAYS_KEY = "jpn101:days";
@@ -2225,6 +2243,7 @@ export default function JpnFlashcards() {
   // MUST complete and be written to local storage before any push happens). Now it's one
   // serial chain: pull+merge cloud -> seed-merge -> push the final result once.
   const loadCardsAndSync = useCallback(async () => {
+    try { window.localStorage.removeItem("jpn101:syncCode"); } catch (e) {}   // one-time cleanup: the anonymous sync-code path is gone
     try { await pullAndMergeCloud(); } catch (e) { /* offline — proceed with whatever's local */ }
     const rawCards = await sGet(STORE_KEY);
     const rawVer = await sGet(SEED_KEY);
@@ -2262,9 +2281,7 @@ export default function JpnFlashcards() {
   // Not signed in yet on this device? Re-run the exact same pull->merge->push chain
   // once sign-in completes, so a fresh device pulls real cloud progress before anything
   // could push a blank/local-only deck over it.
-  useEffect(() => {
-    if (!loadSession()) initGoogleAuth(loadCardsAndSync);
-  }, [loadCardsAndSync]);
+  useEffect(() => initGoogleAuth(loadCardsAndSync), [loadCardsAndSync]);
 
   const persist = useCallback((next) => {
     setCards(next);
@@ -2843,6 +2860,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   }, [queue, pos, verdict]);
 
   useEffect(() => {                                   // auto-debrief when a session ends with misses
+    if (!AI_ENABLED) return;
     if (!running || queue.length === 0 || pos < queue.length || debrief !== null) return;
     const missed = queue.filter((c, i) => queue.findIndex((x) => x.id === c.id) === i && missRef.current[c.id]);
     if (missed.length === 0) return;
@@ -3132,7 +3150,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         )}
         {debrief && debrief.busy && <p className="tc-debrief tc-debrief-busy">✨ Coach is looking at what you missed…</p>}
         {debrief && debrief.text && <p className="tc-debrief">✨ {debrief.text}</p>}
-        {debrief && debrief.err && missedCards.length > 0 && (
+        {(!AI_ENABLED || (debrief && debrief.err)) && missedCards.length > 0 && (
           <p className="tc-debrief tc-debrief-busy">Missed: {missedCards.slice(0, 6).map((c) => c.term).join("、")} — hit "Review" below and they'll come right back.</p>
         )}
         {/* What actually happened, per ability. Deliberately phrased as counts the app
@@ -3411,7 +3429,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 while adding a row of clutter to the one screen that should be quiet. It
                 still exists for stuck words, where a keyword mnemonic genuinely is the
                 technique that shifts them — but it is not on the face of every review. */}
-            {isLeech(card) && (hook && hook.term === card.term ? (
+            {AI_ENABLED && isLeech(card) && (hook && hook.term === card.term ? (
               <p className="tc-hooktext" onClick={(e) => e.stopPropagation()}>
                 {hook.busy ? "✨ thinking…" : hook.err ? "Couldn't reach the AI — try again later." : "✨ " + hook.text}
               </p>
@@ -4489,23 +4507,24 @@ function sectionRank(s) {
 
 
 /* ───────────────────────────── SENTENCES (AI) ───────────────────────────── */
+/* Transport for every AI feature (hook, debrief, script annotation, sentences). The browser
+   must never call api.anthropic.com directly: there is no safe place for a key in a client
+   bundle, and this repo already had one key-in-source incident. A session-gated Worker route
+   (/api/ai, key held as a Worker secret) is the only allowed path; until it exists this stays
+   off — every call site checks AI_ENABLED and shows honest copy instead of a fake failure. */
+const AI_ENABLED = false;                 // flip to true when /api/ai ships
+const AI_ENDPOINT = "/api/ai";
 async function callClaude(prompt) {
+  if (!AI_ENABLED) throw new Error("AI helper not available");
+  const req = syncRequestOptions({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
+  if (!req) throw new Error("sign in to use AI helpers");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: prompt }],
-      }),
-      signal: ctrl.signal,
-    });
+    const res = await fetch(AI_ENDPOINT, { ...req.opts, signal: ctrl.signal });
     if (!res.ok) throw new Error("server " + res.status);
     const data = await res.json();
-    const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+    const text = typeof data.text === "string" ? data.text : "";
     if (!text.trim()) throw new Error("empty reply");
     return text;
   } catch (e) {
@@ -5870,14 +5889,19 @@ function Scripts() {
   const build = async () => {
     if (!raw.trim()) return;
     setBuilding(true); setError("");
-    let lines = null, annotated = true, why = "";
-    try { lines = await annotateRaw(raw); }
-    catch (e) { annotated = false; why = e.message || ""; lines = localBuild(raw); }   // API failed → build it locally instead
+    let lines = null, annotated = false, why = "";
+    if (AI_ENABLED) {
+      try { lines = await annotateRaw(raw); annotated = true; }
+      catch (e) { why = e.message || ""; }   // API failed → build it locally instead
+    }
+    if (!lines) lines = localBuild(raw);
     if (lines && lines.length) {
       const script = { id: Math.random().toString(36).slice(2, 10), name: name.trim() || `Script ${scripts.length + 1}`, lines, raw, plain: !annotated };
       persist([...scripts, script]);
       setName(""); setRaw(""); setView("list");
-      if (!annotated) setSaveWarn("⚠️ Saved without furigana — annotation failed (" + why + "). Tap ＋ふりがな to retry; if it keeps failing, tell Claude the exact message in these parentheses.");
+      if (!annotated) setSaveWarn(AI_ENABLED
+        ? "⚠️ Saved without furigana — annotation failed (" + why + "). Tap ＋ふりがな to retry."
+        : "Saved as plain lines — furigana/rōmaji annotation isn't available in this build. You can still rehearse with voice.");
     } else {
       setError("Couldn't read any lines — try one line per speaker, like 「孝：スマホ。」");
     }
@@ -5885,13 +5909,13 @@ function Scripts() {
   };
 
   const reannotate = async (s) => {   // add furigana/romaji/translation to a script that saved without them
-    if (!s.raw || building) return;
+    if (!AI_ENABLED || !s.raw || building) return;
     setBuilding(true); setSaveWarn("");
     try {
       const lines = await annotateRaw(s.raw);
       persist(scripts.map((x) => (x.id === s.id ? { ...x, lines, plain: false } : x)));
     } catch (e) {
-      setSaveWarn("⚠️ Annotation failed (" + (e.message || "unknown") + ") — the script is safe, just plain. Tell Claude the message in these parentheses.");
+      setSaveWarn("⚠️ Annotation failed (" + (e.message || "unknown") + ") — the script is safe, just plain.");
     }
     setBuilding(false);
   };
@@ -5918,7 +5942,9 @@ function Scripts() {
         <div className="tc-sentbtns">
           <button className="tc-btn tc-btn-primary" onClick={build} disabled={!raw.trim() || building}>{building ? "Building…" : "Build rehearsal"}</button>
         </div>
-        <p className="tc-addnote">Claude adds furigana, rōmaji, and a translation to each line so you can read and check yourself. Your scripts are saved here for next time.</p>
+        <p className="tc-addnote">{AI_ENABLED
+          ? "Claude adds furigana, rōmaji, and a translation to each line so you can read and check yourself. Your scripts are saved here for next time."
+          : "Lines are saved as plain text and rehearsed with voice — furigana/rōmaji annotation isn't available in this build. Your scripts are saved here for next time."}</p>
       </div>
     );
   }
@@ -6011,7 +6037,7 @@ function Scripts() {
                 <span className="tc-scriptname">{s.name}</span>
                 <span className="tc-scriptmeta">{s.lines.length} lines{s.plain ? " · no furigana yet" : ""}</span>
               </button>
-              {s.plain && s.raw && (
+              {AI_ENABLED && s.plain && s.raw && (
                 <button className="tc-btn tc-btn-sm" disabled={building} onClick={() => reannotate(s)}>{building ? "…" : "＋ふりがな"}</button>
               )}
               <button className="tc-del" aria-label={"Delete " + s.name} onClick={() => persist(scripts.filter((x) => x.id !== s.id))}>✕</button>
@@ -6238,10 +6264,12 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
   const [sortWeak, setSortWeak] = useState(true);
 
   const [googleEmail, setGoogleEmail] = useState(() => _googleEmail);
+  const [authState, setAuthStateUi] = useState(authStateNow);
+  useEffect(() => watchAuthState((s) => { setAuthStateUi(s); setGoogleEmail(_googleEmail); }), []);
   const googleBtnRef = useRef(null);
   useEffect(() => {
     if (!googleEmail) renderGoogleButton(googleBtnRef.current);
-    initGoogleAuth(() => setGoogleEmail(_googleEmail));
+    return initGoogleAuth(() => setGoogleEmail(_googleEmail));   // returns unsubscribe — effect cleanup
   }, [googleEmail]);
 
   const summary = useMemo(() => {
@@ -6293,9 +6321,15 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
             {syncState === "pending" && (
               <button className="tc-btn tc-btn-sm" style={{ marginTop: 8 }} onClick={() => pushCloudNow()}>Retry now</button>
             )}
+            <button className="tc-btn tc-btn-sm" style={{ marginTop: 8, marginLeft: 8 }} onClick={() => { signOutGoogle(); }}>Sign out</button>
           </>
         ) : (
           <>
+            {authState === "expired" && (
+              <p className="tc-conjnote" style={{ marginTop: 0 }}>
+                ⚠ Your sign-in expired — sign in again to keep syncing. Nothing on this device is lost{hasSyncPending() ? ", and unsaved progress will upload as soon as you do" : ""}.
+              </p>
+            )}
             <p style={{ margin: "0 0 8px", fontSize: 12.5, opacity: .7 }}>Sign in once per device to keep your progress synced everywhere.</p>
             <div ref={googleBtnRef} style={{ marginBottom: 4 }} />
           </>

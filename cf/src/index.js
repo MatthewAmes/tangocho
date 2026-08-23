@@ -119,17 +119,11 @@ async function handleSync(req, env) {
     }
   }
 
-  let storageKey = null;
   const auth = req.headers.get("authorization") || "";
-  if (auth.startsWith("Bearer ")) {
-    const session = await verifySession(secret, auth.slice(7));
-    if (!session) return json({ error: "invalid or expired session" }, 401);
-    storageKey = "g:" + session.sub;
-  } else {
-    const code = (url.searchParams.get("code") || "").trim();
-    if (/^[A-Za-z0-9]{4,32}$/.test(code)) storageKey = "code:" + code;
-  }
-  if (!storageKey) return json({ error: "no valid auth (session or sync code)" }, 400);
+  if (!auth.startsWith("Bearer ")) return json({ error: "sign-in required" }, 401);
+  const session = await verifySession(secret, auth.slice(7));
+  if (!session) return json({ error: "invalid or expired session" }, 401);
+  const storageKey = "g:" + session.sub;
 
   if (req.method === "GET") {
     const data = await env.SYNC.get(storageKey, { type: "json" });

@@ -57,6 +57,17 @@ for (const [what, re] of must) {
   }
 }
 
+// The browser must never call api.anthropic.com directly — no safe place for a key in a
+// client bundle, and this repo already had one key-in-source incident. AI features route
+// through the session-gated Worker endpoint (/api/ai) or stay off (AI_ENABLED = false).
+const mustNot = [["a direct Anthropic API call (use the Worker /api/ai route)", /api\.anthropic\.com/]];
+for (const [what, re] of mustNot) {
+  if (re.test(code)) {
+    console.error(`BUILD ABORTED — bundle contains ${what}.`);
+    process.exit(1);
+  }
+}
+
 // The feed source list is split across the app and the Worker for good reasons (see
 // check-feeds.mjs); a mismatch fails quietly at runtime, so catch it at build time.
 await import("./check-feeds.mjs");
