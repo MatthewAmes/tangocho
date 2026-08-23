@@ -6813,6 +6813,14 @@ function coverageAgainstDeck(text, cards) {
     const ch = text[i];
     if (!isJa(ch)) { i++; afterToken = false; continue; }   // punctuation, latin, digits
     const hit = longest(i);
+    // A one-character deck term can shadow the front of a longer grammar phrase it happens
+    // to start — beginner decks often teach は/が/で/を as their own flashcard, and です
+    // starts with で. Greedily taking that 1-char hit would strand the rest of the phrase
+    // (す) as a fake "unknown word": です correctly recognised, then a stray す gap right
+    // next to it. The longer grammar reading wins whenever it beats the deck hit; either
+    // way it's not vocabulary, so — unlike a real hit — it never adds to `covered`.
+    const gram = !isKanji(ch) ? longestIn(COVERAGE_SAFE_SET, text, i) : 0;
+    if (gram > hit) { i += gram; afterToken = true; continue; }
     if (hit) { covered++; total++; i += hit; afterToken = true; continue; }
 
     if (!isKanji(ch)) {                                // unmatched kana run

@@ -309,6 +309,15 @@ t("a kana word right at the start of the text is still a gap", () => {
 t("い-adjective past tense (面白かった) is recognised via the expanded stem, not mistaken for the か particle", () => {
   eq(coverageAgainstDeck("面白かったです", [{ term: "面白い" }]).pct, 100);
 });
+t("a deck that teaches particles as their own flashcards doesn't strand a stray す next to です", () => {
+  // Found against the real deck: with は/が/で each present as their own 1-character card,
+  // で greedily matched as vocabulary before です could be recognised as one grammar unit,
+  // leaving す behind as a fake unknown gap. これ/ペン/猫/好き/は/が/で all known -> 100%.
+  const cards = ["これ", "ペン", "猫", "好き", "は", "が", "で"].map((t) => ({ term: t }));
+  const c = coverageAgainstDeck("これはペンです。猫が好きです。", cards);
+  eq(c.pct, 100);
+  eq(c.unknown.length, 0, "unknown: " + JSON.stringify(c.unknown));
+});
 
 // ── recommender: feed-backed sources must win the slots ──
 const RECO = await (async () => {
