@@ -2200,7 +2200,7 @@ export default function JpnFlashcards() {
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
         const grade = gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
-          dir === "prod" ? "type" : "recall", latencyNormsRef.current);
+          dir === "prod" ? "type" : "recall", latencyNormsRef.current, c.streak || 0);
         /* Recognition and production are tracked separately. Being able to read 火曜日 says
            very little about being able to produce it from "Tuesday", so one shared
            stability would over-schedule one direction and under-schedule the other. */
@@ -2458,7 +2458,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        point of having a number you can trust would be gone. */
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
                                   exclude: heldOut });
-  }, [cards, foreign, plan, clozeIndex, heldOut]);
+    // retentionTarget: not a dep in the usual sense (it's a module `let`, not props/state) but
+    // isLeech/dueness read it live, and the retention chip's onClick bumps `retention` state
+    // right alongside it — so this recomputes on the same render that value changes.
+  }, [cards, foreign, plan, clozeIndex, heldOut, retentionTarget]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -2515,7 +2518,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const dueCount = useMemo(() => {
     const now = Date.now();
     return cards.filter((c) => (c.seen || 0) > 0 && dueness(c, now) >= 1).length;
-  }, [cards]);
+  }, [cards, retentionTarget]);
   const masteredPct = useMemo(() => {
     if (!cards.length) return 0;
     return Math.round(cards.filter((c) => (c.level || 0) >= 4).length / cards.length * 100);
@@ -2539,13 +2542,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       if (!((c.seen || 0) > 0)) continue;
       const r = recallChance(c, now);
       if (r == null) continue;
-      if (r < 0.9) fading++;
-      if (r >= 0.9) solid++;
+      if (r < retentionTarget) fading++;
+      if (r >= retentionTarget) solid++;
       const st = c.fsrs || seedFromHistory(c);
       if (st && st.due && st.due - now < 7 * 86400000) week++;
     }
     return { fading, solid, week };
-  }, [cards]);
+  }, [cards, retentionTarget]);
   const buddy = useMemo(() => {
     const state = mascotState({ studiedToday: todayRev > 0, dueCount, streak });
     // One honest sentence, matched to the state. No fake enthusiasm when the numbers
@@ -3912,15 +3915,22 @@ function isLeech(c) {                 // stuck word: keeps failing despite reps
   return totalMisses(c) >= 6 && acc < 0.6;
 }
 /* >= 1 means due. Under FSRS this is "has recall probability fallen to the target yet",
-   which is a real question about your memory rather than a position on a fixed ladder. */
+   which is a real question about your memory rather than a position on a fixed ladder.
+   Contract: due is the scheduler's truth — dueness(c, now) >= 1 iff now >= c.fsrs.due. review()
+   already writes a due that honours the retention target and the 10-minute relearning step;
+   this used to ignore it and recompute from S with a hard-coded 0.9 target, so a lapsed card
+   (due in 10 minutes) wasn't offered again for days, and the retention chip didn't actually
+   change when anything was due. Seeded/legacy states with no stored due fall back to
+   recomputing from S with the CURRENT target. */
 function dueness(c, now) {
   const seen = c.seen || 0;
   if (seen === 0) return 0;
   const st = c.fsrs || seedFromHistory(c);
   if (st && st.S > 0) {
-    const elapsed = (now - (st.last || 0)) / 86400000;
-    const target = intervalFor(st.S, 0.9);
-    return target > 0 ? elapsed / target : 0;
+    const last = st.last || 0;
+    const due = st.due > last ? st.due : last + Math.max(1, intervalFor(st.S, retentionTarget)) * 86400000;
+    const span = Math.max(60000, due - last);   // never divide by ~0 (relearning = 10 min)
+    return (now - last) / span;
   }
   const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1);   // pre-FSRS fallback
   return (now - (c.last || 0)) / interval;
@@ -3934,7 +3944,7 @@ function dueness(c, now) {
    an `fsrs` field is simply added alongside. */
 function statReview(st, ok, ms, now = Date.now()) {
   const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
-  return fsrsReview(prior, gradeFromLatency(ok, ms), now, retentionTarget);
+  return fsrsReview(prior, gradeFromLatency(ok, ms, { streak: st && st.streak }), now, retentionTarget);
 }
 /** Higher = drill this sooner. Driven by how far recall has decayed below the target. */
 function statNeed(st, now = Date.now()) {
@@ -4035,7 +4045,7 @@ async function logEvidence(rec) {
 }
 
 /* ── grading against this learner, not against a constant ──
-   gradeFromLatency() uses three universal thresholds: under 3s is Easy, over 6s is Hard.
+   gradeFromLatency() uses universal thresholds (fast+streaked is Easy, slow is Hard).
    Those cannot mean the same thing for picking one of four options and for typing out
    かようび — the second is slower for everyone, so a fixed cutoff quietly marks every
    typed answer as difficult and drags its schedule in.
@@ -4044,10 +4054,10 @@ async function logEvidence(rec) {
    grade comes from where this answer sits in THIS learner's own distribution for THAT
    kind of question. Below that, the old thresholds still apply — a norm built from three
    samples would be worse than the constant it replaced. */
-function gradeAgainstNorm(ok, ms, skill, format, norms) {
+function gradeAgainstNorm(ok, ms, skill, format, norms, streak) {
   if (!ok) return AGAIN;
   const verdict = latencyVerdict(ms, skill, format, norms);
-  if (!verdict) return gradeFromLatency(ok, ms);      // no norm yet: fall back
+  if (!verdict) return gradeFromLatency(ok, ms, { streak });      // no norm yet: fall back
   return verdict === "fast" ? EASY : verdict === "slow" ? HARD : GOOD;
 }
 /* ── outcome feedback ──
@@ -5897,9 +5907,29 @@ function Scripts() {
   );
 }
 
+// Handwriting is slower than recognising or even typing a word — a correct 12s handwrite
+// is roughly as confident as a correct 4.8s flip. Scaling think time before grading keeps
+// Write from landing HARD on nearly everything just because forming characters takes time.
+const WRITE_LATENCY_SCALE = 2.5;
 function Write({ cards, onResult }) {
-  const order = useMemo(() => cards.slice().sort((a, b) => masteryScore(a) - masteryScore(b)), [cards]);
+  /* Order by production need, not raw weakness: cards owed a production review (prodDue)
+     first, then recognition-unlocked-but-weak cards, then everything else. Without this
+     Write asked for production of words never even recognised, and reused the same
+     weakest-first list every visit regardless of what had just been produced.
+     `cards` is replaced by a new array on every grade (recordResult maps the deck), so this
+     is built once per pass (mount / "Go again") rather than as a useMemo on [cards] — otherwise
+     the list would reshuffle under the learner's feet mid-pass. */
+  const buildOrder = useCallback(() => {
+    const now = Date.now();
+    const owed = cards.filter((c) => prodDue(c, now)).sort((a, b) => (a.rfsrs?.due || 0) - (b.rfsrs?.due || 0));
+    const unlocked = cards.filter((c) => !prodDue(c, now) && recallUnlocked(c))
+      .sort((a, b) => (a.rlevel || 0) - (b.rlevel || 0));
+    const rest = cards.filter((c) => !recallUnlocked(c)).sort((a, b) => masteryScore(a) - masteryScore(b));
+    return [...owed, ...unlocked, ...rest].slice(0, 20);
+  }, [cards]);
+  const [order, setOrder] = useState(buildOrder);
   const [pos, setPos] = useState(0);
+  const goAgain = () => { setOrder(buildOrder()); setPos(0); };
   /* Writing was feeding the scheduler without ever timing the answer, so every card here
      landed as a middling grade no matter how long it took. Production recall is the
      harder direction and the more valuable signal — it deserves the same fast/slow
@@ -5955,7 +5985,12 @@ function Write({ cards, onResult }) {
 
   useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos]);
   const next = (got) => {
-    if (card) onResult(card.id, got, undefined, thinkRef.current || undefined);
+    // dir "prod": this is EN->JP production, and must land in rfsrs/rseen/rlevel, not the
+    // recognition fsrs/seen/level — those track being able to READ the word, which writing
+    // it from its meaning never tested. area "writing" buckets its latency norm together with
+    // Study's typed-production answers (both are "produce this word", just different input).
+    // Scale think time for the slower handwriting motion.
+    if (card) onResult(card.id, got, "prod", thinkRef.current ? thinkRef.current / WRITE_LATENCY_SCALE : undefined, "writing");
     setRevealed(false); setGuide(false); setPos((p) => p + 1);
   };
 
@@ -5963,7 +5998,7 @@ function Write({ cards, onResult }) {
   if (!card) return (
     <div className="tc-done">
       <p className="tc-eyebrow">Writing set complete ✍️</p>
-      <div className="tc-donebtns"><button className="tc-btn tc-btn-primary" onClick={() => setPos(0)}>Go again</button></div>
+      <div className="tc-donebtns"><button className="tc-btn tc-btn-primary" onClick={goAgain}>Go again</button></div>
     </div>
   );
 
@@ -5971,7 +6006,7 @@ function Write({ cards, onResult }) {
 
   return (
     <div className="tc-write">
-      <p className="tc-eyebrow">Write it from memory · {pos + 1}/{order.length}</p>
+      <p className="tc-eyebrow">Write it from memory · production · {pos + 1}/{order.length}</p>
       <div className="tc-card2">
         <p className="tc-sentgoal">{card.meaning}</p>
         <div className="tc-canvaswrap">

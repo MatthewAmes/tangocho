@@ -177,18 +177,40 @@ t("wrong is always Again, however fast", () => {
   if (gradeFromLatency(false, 500) !== AGAIN) throw new Error("fast wrong should be Again");
   if (gradeFromLatency(false, 60000) !== AGAIN) throw new Error("slow wrong should be Again");
 });
-t("the 3s and 6s thresholds match this deck's own accuracy split", () => {
-  if (gradeFromLatency(true, 1500) !== EASY) throw new Error("1.5s should be Easy");
+t("Easy requires both speed and a run — not speed alone", () => {
+  if (gradeFromLatency(true, 1200) !== GOOD) throw new Error("fast with no streak should be Good, not Easy");
+  if (gradeFromLatency(true, 1200, { streak: 2 }) !== EASY) throw new Error("fast with a run should be Easy");
+  if (gradeFromLatency(true, 1200, { streak: 1 }) !== GOOD) throw new Error("streak below the gate should still be Good");
+});
+t("thresholds: under 9s correct is Good, 9s+ is Hard", () => {
   if (gradeFromLatency(true, 4500) !== GOOD) throw new Error("4.5s should be Good");
-  if (gradeFromLatency(true, 9000) !== HARD) throw new Error("9s should be Hard");
+  if (gradeFromLatency(true, 7000) !== GOOD) throw new Error("7s should be Good");
+  if (gradeFromLatency(true, 9500) !== HARD) throw new Error("9.5s should be Hard");
 });
 t("a missing timing falls back to Good rather than punishing the card", () => {
   if (gradeFromLatency(true, 0) !== GOOD) throw new Error("no timing should be Good");
 });
-t("faster answers schedule further out than slow ones", () => {
-  const fast = review(null, gradeFromLatency(true, 1200), 0);
-  const slow = review(null, gradeFromLatency(true, 9000), 0);
+t("a walked-away answer (implausibly long) falls back to Good, not Hard", () => {
+  if (gradeFromLatency(true, 200000) !== GOOD) throw new Error("200s should not be graded Hard");
+});
+t("an explicit force overrides latency but not a wrong answer", () => {
+  if (gradeFromLatency(true, 5000, { force: HARD }) !== HARD) throw new Error("force should win over latency");
+  if (gradeFromLatency(false, 500, { force: EASY, streak: 9 }) !== AGAIN) throw new Error("wrong is always Again even with force");
+});
+t("faster+streaked answers schedule further out than slow ones", () => {
+  const fast = review(null, gradeFromLatency(true, 1200, { streak: 2 }), 0);
+  const slow = review(null, gradeFromLatency(true, 9500), 0);
   gt(fast.ivl, slow.ivl);
+});
+t("a run of fast answers does not schedule a year out after three reviews", () => {
+  // three sub-1.5s correct answers from a fresh card: streak goes 0 -> 1 -> 2, so the
+  // mapping yields Good, Good, Easy — not Easy, Easy, Easy (the old flat-3s bug).
+  let card = null, streak = 0;
+  for (let i = 0; i < 3; i++) {
+    card = review(card, gradeFromLatency(true, 1000, { streak }), i * 86400000);
+    streak++;
+  }
+  lt(card.ivl, 120, "third interval should be well under a year, not ~315 days");
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} FSRS tests passed`);
