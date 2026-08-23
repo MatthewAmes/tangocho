@@ -2326,11 +2326,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     if (cached) { setHook({ term: card.term, text: cached }); return; }
     setHook({ term: card.term, text: "", busy: true });
     try {
-      const text = (await callClaude(hookPrompt(card))).trim();
+      const { result } = await callAI("hook", { term: card.term, reading: card.reading, romaji: card.romaji, meaning: card.meaning });
+      const text = (result.hook || "").trim();
+      if (!text) throw new AIError(502, aiMessage(502));
       hooksRef.current[card.term] = text;
       sSet("jpn101:hooks", JSON.stringify(hooksRef.current));
       setHook({ term: card.term, text });
-    } catch (e) { setHook({ term: card.term, err: true }); }
+    } catch (e) { setHook({ term: card.term, err: e.message || aiMessage(0) }); }
   }, []);
   const [flipped, setFlipped] = useState(false);
   const [typed, setTyped] = useState("");        // rōmaji the learner types on a production card
@@ -2710,13 +2712,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   }, [queue, pos, verdict]);
 
   useEffect(() => {                                   // auto-debrief when a session ends with misses
-    if (!AI_ENABLED) return;
+    if (!AI_ENABLED || !loadSession()) return;         // not signed in: skip silently, keep the "Missed: …" fallback line
     if (!running || queue.length === 0 || pos < queue.length || debrief !== null) return;
     const missed = queue.filter((c, i) => queue.findIndex((x) => x.id === c.id) === i && missRef.current[c.id]);
     if (missed.length === 0) return;
     setDebrief({ busy: true });
-    callClaude(debriefPrompt(missed))
-      .then((t) => setDebrief({ text: t.trim() }))
+    callAI("debrief", { missed: missed.slice(0, 5).map((c) => ({ term: c.term, romaji: c.romaji, meaning: c.meaning })) })
+      .then(({ result }) => setDebrief({ text: (result.text || "").trim() }))
       .catch(() => setDebrief({ err: true }));
   }, [running, pos, queue, debrief]);
 
@@ -3281,7 +3283,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 technique that shifts them — but it is not on the face of every review. */}
             {AI_ENABLED && isLeech(card) && (hook && hook.term === card.term ? (
               <p className="tc-hooktext" onClick={(e) => e.stopPropagation()}>
-                {hook.busy ? "✨ thinking…" : hook.err ? "Couldn't reach the AI — try again later." : "✨ " + hook.text}
+                {hook.busy ? "✨ thinking…" : hook.err ? hook.err : "✨ " + hook.text}
               </p>
             ) : (
               <button className="tc-hookbtn" onClick={(e) => { e.stopPropagation(); getHook(card); }}>✨ hook</button>
@@ -4368,10 +4370,44 @@ function sectionRank(s) {
 /* Transport for every AI feature (hook, debrief, script annotation, sentences). The browser
    must never call api.anthropic.com directly: there is no safe place for a key in a client
    bundle, and this repo already had one key-in-source incident. A session-gated Worker route
-   (/api/ai, key held as a Worker secret) is the only allowed path; until it exists this stays
-   off — every call site checks AI_ENABLED and shows honest copy instead of a fake failure. */
-const AI_ENABLED = false;                 // flip to true when /api/ai ships
+   (/api/ai, key held as a Worker secret) is the only allowed path. */
+const AI_ENABLED = true;
 const AI_ENDPOINT = "/api/ai";
+/* callAI: the live transport, used by hook/debrief/Scripts annotation. Sends a fixed TASK
+   name plus structured data only — never a free-form prompt string. The Worker owns every
+   prompt (cf/src/ai.js); this is the whole abuse guard, so no call site here should ever
+   build prompt TEXT and hand it to the network. */
+class AIError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+function aiMessage(status) {
+  return status === 401 ? "Sign in (Browse tab) to use the AI helpers."
+    : status === 429 ? "Daily AI limit reached — try again tomorrow."
+    : status === 503 ? "The AI helper isn't set up on this server yet."
+    : status === 504 ? "The AI took too long — try again."
+    : "Couldn't reach the AI — try again later.";
+}
+async function callAI(task, input) {
+  const session = loadSession();
+  if (!session) throw new AIError(401, aiMessage(401));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 35000);
+  try {
+    const res = await fetch(AI_ENDPOINT, {
+      method: "POST", cache: "no-store", signal: ctrl.signal,
+      headers: { "content-type": "application/json", authorization: "Bearer " + session },
+      body: JSON.stringify({ task, input, v: 1 }),
+    });
+    if (!res.ok) throw new AIError(res.status, aiMessage(res.status));
+    const data = await res.json();
+    if (!data || !data.result) throw new AIError(502, aiMessage(502));
+    return data;   // { result, cached }
+  } catch (e) {
+    if (e instanceof AIError) throw e;
+    if (e.name === "AbortError") throw new AIError(504, aiMessage(504));
+    throw new AIError(0, aiMessage(0));
+  } finally { clearTimeout(timer); }
+}
+// callClaude: legacy free-prompt transport, kept only for the unmounted Sentences component
+// (see TODO-127 — not wired to a tab). Do not add new call sites; use callAI instead.
 async function callClaude(prompt) {
   if (!AI_ENABLED) throw new Error("AI helper not available");
   const req = syncRequestOptions({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
@@ -5123,16 +5159,7 @@ function Kana() {
 }
 
 /* ───────────────────────────── BROWSE ───────────────────────────── */
-function scriptPrompt(raw) {
-  return `You are a Japanese tutor. Parse the following beginner Japanese dialogue into lines. For each line: identify the speaker label (use the label shown, e.g. A/B or a name; if none is shown, alternate A and B). Give the Japanese as furigana tokens — each token {"t":"<text>","r":"<kana>"} with "r" ONLY for kanji tokens — plus romaji and a natural English translation.
-
-Dialogue:
-${raw}
-
-Reply with ONLY a JSON object, no markdown:
-{"lines":[{"speaker":"<label>","tokens":[ <tokens> ],"romaji":"<romaji>","en":"<English translation>"}]}`;
-}
-
+// scriptPrompt lived here; the annotate prompt now lives in cf/src/ai.js (Worker-owned).
 const SCRIPT_SEED = [
   {
     id: "seed-2-1", name: "2-1",
@@ -5645,14 +5672,7 @@ function SpeakBtn({ text, slow }) {
 function lineText(tokens) { return (tokens || []).map((t) => t.t || "").join(""); }
 
 /* ── active AI helpers ── */
-function hookPrompt(card) {
-  return "You are helping a JPN101 beginner (NihonGO NOW! textbook) remember one Japanese word. Word: " + card.term + " (" + card.reading + ", " + card.romaji + ") = " + card.meaning + ". Reply with ONE vivid memory hook in at most 2 short sentences, plain text, no headers, no romaji lessons — just the hook. If the word has a common confusable sibling at this level, contrast them in a few words.";
-}
-function debriefPrompt(missed) {
-  const list = missed.slice(0, 5).map((c) => c.term + " (" + c.romaji + ") = " + c.meaning).join("; ");
-  return "A JPN101 beginner just finished a flashcard session and missed these words: " + list + ". In at most 80 words, plain text, no headers or bullets: point out any confusable pairs among them, give one concrete memory hook for the hardest-looking one, and end with one specific tip for the next session. Be direct and warm, not generic.";
-}
-
+// hookPrompt/debriefPrompt lived here; those prompts now live in cf/src/ai.js (Worker-owned).
 function Scripts() {
   const [scripts, setScripts] = useState([]);
   const [ready, setReady] = useState(false);
@@ -5724,24 +5744,10 @@ function Scripts() {
     return out;
   };
 
-  const annotateRaw = async (rawText) => {   // annotate in 3-line chunks: full dialogues overflow the reply limit and truncate the JSON
-    const srcLines = rawText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-    const out = [];
-    for (let i = 0; i < srcLines.length; i += 3) {
-      const chunk = srcLines.slice(i, i + 3).join("\n");
-      let ok = false, lastErr = null;
-      for (let attempt = 0; attempt < 2 && !ok; attempt++) {
-        try {
-          const text = await callClaude(scriptPrompt(chunk));
-          const parsed = parseJSON(text);
-          if (!parsed.lines || !parsed.lines.length) throw new Error("no lines in reply");
-          out.push(...parsed.lines);
-          ok = true;
-        } catch (e) { lastErr = e; }
-      }
-      if (!ok) throw new Error(lastErr && lastErr.message ? lastErr.message : "unknown");
-    }
-    return out;
+  const annotateRaw = async (rawText) => {   // one call for the whole dialogue — the Worker's annotate task allows 4000 tokens, enough for a 30-line dialogue
+    const { result } = await callAI("annotate", { raw: rawText });
+    if (!result.lines || !result.lines.length) throw new Error("no lines in reply");
+    return result.lines;
   };
 
   const build = async () => {

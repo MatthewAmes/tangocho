@@ -434,10 +434,11 @@ export default {
     if (pathname === "/api/sync" || pathname === "/.netlify/functions/sync") return withSecurityHeaders(await handleSync(req, env), { csp: false });
     if (pathname === "/api/tts" || pathname === "/.netlify/functions/tts") return withSecurityHeaders(await handleTts(req, env), { csp: false });
     if (pathname === "/api/feed" || pathname === "/.netlify/functions/feed") return withSecurityHeaders(await handleFeed(req, env), { csp: false });
+    if (pathname === "/api/ai") { const { handleAi } = await import("./ai.js"); return withSecurityHeaders(await handleAi(req, env), { csp: false }); }
     const asset = await env.ASSETS.fetch(req);
     const isHtml = (asset.headers.get("content-type") || "").includes("text/html");
     return withSecurityHeaders(asset, { csp: isHtml });
   },
 };
 
-export { iso8601ToSeconds, parseFeed, unent, validateSnapshotBody, signSession, verifySession, withSecurityHeaders, bumpQuota };
+export { iso8601ToSeconds, parseFeed, unent, validateSnapshotBody, signSession, verifySession, withSecurityHeaders, bumpQuota, sha256Hex, json };
