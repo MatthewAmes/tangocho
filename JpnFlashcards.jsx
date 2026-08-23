@@ -6581,13 +6581,26 @@ const INPUT_VERDICTS = {
 const clamp100 = (n) => Math.max(0, Math.min(100, n));
 // weak evidence below ~4 min, full weight by ~20 min
 function evidenceWeight(minutes) { return Math.max(0.25, Math.min(1, (minutes || 0) / 20)); }
-// early ratings move a lot, later ones barely — keeps the level from oscillating forever
-function learningRate(ratingCount) { return 1 / (1 + (ratingCount || 0) / 12); }
+// Early ratings move a lot, later ones barely — keeps the level from oscillating forever.
+// Floors at 0.25 rather than decaying to nothing (a learner's level is not stationary
+// forever just because they've rated a lot of things), and re-opens toward 0.5 when the
+// last few verdicts are one-sided — a real, sustained shift (not just one outlier) deserves
+// to move the level faster than the fully-decayed rate would allow.
+function learningRate(ratingCount, recent) {
+  const base = Math.max(0.25, 1 / (1 + (ratingCount || 0) / 12));
+  if (recent && recent.length >= 5) {
+    const r = recent.slice(0, 5);
+    const easy = r.filter((v) => v === "too_easy").length;
+    const hard = r.filter((v) => v === "too_hard" || v === "lost").length;
+    if (easy >= 4 || hard >= 4) return Math.max(base, 0.5);
+  }
+  return base;
+}
 
-function applyRating({ level, ratingCount, itemDifficulty, itemConfidence, verdict, minutes }) {
+function applyRating({ level, ratingCount, itemDifficulty, itemConfidence, verdict, minutes, recent }) {
   const v = INPUT_VERDICTS[verdict];
   if (!v) return { level, itemDifficulty, itemConfidence, ratingCount };
-  const w = evidenceWeight(minutes) * learningRate(ratingCount);
+  const w = evidenceWeight(minutes) * learningRate(ratingCount, recent);
   const nextLevel = clamp100(level + v.user * w);
   // item difficulty moves less the more confident we already are about it
   const conf = itemConfidence == null ? 0.3 : itemConfidence;
@@ -6614,6 +6627,25 @@ function seedLevelsFromDeck(cards) {
   return { listening: clamp100(5 + known / 40), reading: clamp100(8 + known / 30), updatedAt: Date.now() };
 }
 
+// The deck is a rising floor: every word learned since the last rating still counts, even
+// though any one rating only ever touches ONE of listening/reading. Without this, a learner
+// who added 400 more words over a semester but rarely rates content stays recommended
+// material for the learner they were on day one — the old code only re-seeded from the deck
+// while ratingCount was still zero for BOTH mediums, so the very first rating permanently
+// switched the level onto a track the deck could no longer influence.
+// `levels.rated` is the pure rating walk (what applyRating actually moves); the floor sits
+// 4 points below the deck estimate specifically so a sustained run of "too hard" ratings can
+// still pull the effective level under it — a single too_easy afterward restores the floor.
+function fuseLevels(levels, cards) {
+  const seed = seedLevelsFromDeck(cards);
+  const rated = levels.rated || { listening: levels.listening, reading: levels.reading };
+  return {
+    ...levels, rated,
+    listening: clamp100(Math.max(rated.listening, seed.listening - 4)),
+    reading: clamp100(Math.max(rated.reading, seed.reading - 4)),
+  };
+}
+
 // deterministic shuffle so the same open doesn't reshuffle on every render
 function seededShuffle(arr, seed) {
   const a = arr.slice();
@@ -6626,7 +6658,12 @@ function seededShuffle(arr, seed) {
   return a;
 }
 
-function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay, preferred }) {
+// Indexed videos carry `audience` from their channel's own data; hand-curated catalog rows
+// (INPUT_CATALOG) have no such field and mark themselves via a "kids" tag instead — check
+// both so a preference applies uniformly to whichever kind of row it's looking at.
+function isKidsContent(it) { return it.audience === "kids" || (it.tags || []).includes("kids"); }
+
+function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay, preferred, avoidKids }) {
   const now = Date.now();
   const recent = new Set((history || []).filter((h) => now - h.at < 14 * 86400000).map((h) => h.itemId));
   let pool = catalog.filter((it) => {
@@ -6636,6 +6673,13 @@ function recommend({ catalog, level, mode, medium, minutes, history, tagScores, 
     return true;
   });
   if (!pool.length) pool = catalog.filter((it) => (medium === "reading" ? it.medium === "reading" : it.medium !== "reading"));
+  // "avoid" (not "never" — that's a hard filter applied earlier, in the catalog itself):
+  // drop kids rows from THIS pick only when there's enough left in-band without them, so a
+  // learner just starting out with an empty deck still gets something rather than nothing.
+  if (avoidKids) {
+    const nonKids = pool.filter((it) => !isKidsContent(it));
+    if (nonKids.filter((it) => it.difficulty >= level - 3 && it.difficulty <= level + 6).length >= 6) pool = nonKids;
+  }
 
   const pick = (from) => {
     const band = (lo, hi) => from.filter((it) => it.difficulty >= level + lo && it.difficulty <= level + hi);
@@ -6683,15 +6727,52 @@ function recommend({ catalog, level, mode, medium, minutes, history, tagScores, 
    single-file build. Longest-match against the actual deck is also a closer match to the
    question being asked — "how many of these words do I already have" — than morphological
    tokenisation would be. */
+// Grammar, not vocabulary: a kana run made of only these doesn't count as a coverage gap.
+// Deliberately NOT a broad particle stoplist matched greedily character-by-character —
+// も, と, し, で, に and friends are ALSO the first character of ordinary content words
+// (とても, もう, しかし…), so chaining single-character matches from the front of a run
+// eats straight through a real word one "particle-sized bite" at a time (an earlier version
+// of this list did exactly that: これはとても against a deck holding only これ scored とても
+// away to nothing, split into unknown "て" plus silently-dropped grammar). The only single
+// characters here are は/が/を/で — the four that open nearly every clause and are safe
+// because MATCH_FRONT tries the full COVERAGE_SAFE_SUFFIXES list (longest first) before
+// ever falling back to one of these four, and never loops: at most one bite is taken from
+// the front of any run, so an ambiguous character deeper in a real word is never touched.
+// "か" isn't in here at all — it's the question particle AND the first character of every
+// い-adjective's past tense (面白い -> 面白かった); that conjugation is instead handled by
+// addStem adding the -かった form directly to the term set, matched by longest() up front.
+const COVERAGE_LEADING_PARTICLES = new Set(["は", "が", "を", "で"]);
+// Unambiguous multi-character grammar endings — safe to match anywhere (front OR trailing)
+// because nothing in this beginner vocabulary starts or ends with one of these by accident.
+// Ordered longest-first (by hand, not .sort() — this list is spliced verbatim into
+// tools/test-input-engine.mjs's synthetic module, whose extractor can't follow a method
+// chain past the array literal) so a whole matching span (います) wins over a shorter
+// partial match that would wrongly leave a fragment (い) behind.
+const COVERAGE_SAFE_SUFFIXES = [
+  "ませんでした",
+  "しています",
+  "じゃない", "している", "しました", "いました", "なかった",
+  "でした", "います", "だった", "します", "ました", "ません",
+  "です", "ます", "いる",
+];
+const COVERAGE_SAFE_SET = new Set(COVERAGE_SAFE_SUFFIXES);
+
 function coverageAgainstDeck(text, cards) {
   if (!text) return null;
   const terms = new Set();
   // Deck terms are dictionary forms, but real text is inflected — 面白い appears as
-  // 面白かったです. Index the stem too so knowing the word counts wherever it shows up.
-  // Guarded so short kana words (いい → い) can't start matching stray characters.
+  // 面白かったです. Index the stem (and, for い-adjectives, the common conjugated forms
+  // directly — the past tense in particular can't be recovered by the grammar stoplist
+  // below, since -かった shares its first character with the か question particle) so
+  // knowing the word counts wherever it shows up. Guarded so short kana words (いい → い)
+  // can't start matching stray characters.
   const addStem = (t) => {
     if (/する$/.test(t) && t.length >= 4) terms.add(t.slice(0, -2));
-    else if (/[いるうくぐすつぬぶむ]$/.test(t) && t.length >= 3) terms.add(t.slice(0, -1));
+    else if (/い$/.test(t) && t.length >= 3) {
+      const stem = t.slice(0, -1);
+      terms.add(stem); terms.add(stem + "かった"); terms.add(stem + "くない"); terms.add(stem + "く");
+    }
+    else if (/[るうくぐすつぬぶむ]$/.test(t) && t.length >= 3) terms.add(t.slice(0, -1));
   };
   cards.forEach((c) => {
     if (c.term) { terms.add(c.term); addStem(c.term); }
@@ -6704,29 +6785,48 @@ function coverageAgainstDeck(text, cards) {
     for (let L = Math.min(maxLen, text.length - i); L >= 1; L--) if (terms.has(text.slice(i, i + L))) return L;
     return 0;
   };
+  const longestIn = (set, s, i) => {
+    for (let L = Math.min(8, s.length - i); L >= 1; L--) if (set.has(s.slice(i, i + L))) return L;
+    return 0;
+  };
+  const stripTrailing = (w) => {
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const suf of COVERAGE_SAFE_SUFFIXES) if (w.endsWith(suf)) { w = w.slice(0, -suf.length); changed = true; break; }
+    }
+    return w;
+  };
 
   // Counted in tokens, not characters, and with two rules that keep the number honest:
-  //   1. a kana run straight after a word you know is its okurigana/particle/copula
-  //      (勉強 + しました), so it doesn't count against you — it isn't separate vocabulary;
+  //   1. an unmatched kana run is stripped of any leading/trailing grammar it carries
+  //      (勉強 + しました -> nothing left, not a gap; ペン + です -> just ペン is the gap) —
+  //      leading stripping only applies directly after a matched word (afterToken);
   //   2. a kanji word you don't know absorbs its own trailing kana, so 難しかったですが is
   //      one gap rather than two.
   // Without these, ordinary inflection alone drags a sentence he mostly understands down
-  // into the 50s, which would push him toward material that's too easy.
-  let covered = 0, total = 0, afterMatch = false;
+  // into the 50s, which would push him toward material that's too easy — but counting
+  // every trailing kana run as automatically "covered" (the old rule) went too far the
+  // other way: これはペンです against a deck holding only これ scored 100%.
+  let covered = 0, total = 0, afterToken = false;
   const unknown = new Map();
   for (let i = 0; i < text.length;) {
     const ch = text[i];
-    if (!isJa(ch)) { i++; continue; }                 // punctuation, latin, digits
+    if (!isJa(ch)) { i++; afterToken = false; continue; }   // punctuation, latin, digits
     const hit = longest(i);
-    if (hit) { covered++; total++; i += hit; afterMatch = true; continue; }
+    if (hit) { covered++; total++; i += hit; afterToken = true; continue; }
 
     if (!isKanji(ch)) {                                // unmatched kana run
       let j = i; while (j < text.length && isJa(text[j]) && !isKanji(text[j]) && !longest(j)) j++;
       if (j === i) j = i + 1;
-      total++;
-      if (afterMatch) covered++;                       // inflection of a word you know
-      else unknown.set(text.slice(i, j), (unknown.get(text.slice(i, j)) || 0) + 1);
-      i = j; afterMatch = false; continue;
+      let word = text.slice(i, j);
+      if (afterToken) {                                  // single bite only — see COVERAGE_LEADING_PARTICLES above
+        const f = longestIn(COVERAGE_SAFE_SET, word, 0);
+        if (f) word = word.slice(f);
+        else if (COVERAGE_LEADING_PARTICLES.has(word[0])) word = word.slice(1);
+      }
+      word = stripTrailing(word);
+      if (word) { total++; unknown.set(word, (unknown.get(word) || 0) + 1); }
+      i = j; afterToken = false; continue;
     }
 
     // unmatched kanji: extend while the next char is also kanji and starts no known word
@@ -6735,7 +6835,7 @@ function coverageAgainstDeck(text, cards) {
     const word = text.slice(i, j);
     while (j < text.length && isJa(text[j]) && !isKanji(text[j]) && !longest(j)) j++;   // absorb okurigana
     unknown.set(word, (unknown.get(word) || 0) + 1);
-    total++; i = j; afterMatch = false;
+    total++; i = j; afterToken = false;
   }
   return {
     pct: total ? Math.round((covered / total) * 100) : null,
@@ -6780,7 +6880,8 @@ function agoLabel(at) {
 }
 function blankInput(cards) {
   return { v: 1, levels: seedLevelsFromDeck(cards), counts: { listening: 0, reading: 0 },
-           items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [] };
+           items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [],
+           prefs: { kids: "avoid" } };
 }
 
 function Input({ cards, onAdd, onPark }) {
@@ -6808,10 +6909,11 @@ function Input({ cards, onAdd, onPark }) {
     let o = null;
     try { const r = await sGet(INPUT_KEY); if (r) o = JSON.parse(r); } catch (e) {}
     if (!o || !o.levels) o = blankInput(cards);
-    else if (!(o.counts?.listening || 0) && !(o.counts?.reading || 0)) o.levels = seedLevelsFromDeck(cards);
+    else o.levels = fuseLevels(o.levels, cards);
     o.pending = o.pending || []; o.history = o.history || []; o.custom = o.custom || [];
     o.items = o.items || {}; o.tagScores = o.tagScores || {}; o.hidden = o.hidden || [];
     o.counts = o.counts || { listening: 0, reading: 0 };
+    o.prefs = o.prefs || { kids: "avoid" };
     stRef.current = o;
     setSt(o);
   })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -6827,6 +6929,17 @@ function Input({ cards, onAdd, onPark }) {
     setSt(value);
     sSet(INPUT_KEY, JSON.stringify(value));
   }, []);
+  // Catches deck growth that happens WHILE this tab is open (cards can still be arriving
+  // from a cloud pull on first load) — the load effect above only fuses once, at mount.
+  // Guarded to only write when a level actually moved, so this can't loop against itself.
+  useEffect(() => {
+    if (!stRef.current || !cards.length) return;
+    const fused = fuseLevels(stRef.current.levels, cards);
+    if (Math.abs(fused.listening - stRef.current.levels.listening) >= 0.05
+     || Math.abs(fused.reading - stRef.current.levels.reading) >= 0.05) {
+      save((s0) => ({ ...s0, levels: fused }));
+    }
+  }, [cards.length]);   // eslint-disable-line react-hooks/exhaustive-deps
   const flash = (m) => { setNote(m); setTimeout(() => setNote((v) => (v === m ? "" : v)), 2600); };
 
   const cfg = INPUT_PLANS.find((p) => p.id === plan);
@@ -6838,6 +6951,10 @@ function Input({ cards, onAdd, onPark }) {
     if (!st) return [];
     return [...INPUT_CATALOG, ...videos, ...st.custom]
       .filter((it) => !st.hidden.includes(it.id))
+      // "never": excluded outright, everywhere, no matter how thin the band gets — the
+      // softer "avoid" default is handled inside recommend(), which can still fall back to
+      // kids rows for a learner with nothing else in range.
+      .filter((it) => st.prefs.kids !== "never" || !isKidsContent(it))
       .map((it) => {
         const o = st.items[it.id];
         return o ? { ...it, difficulty: o.difficulty, difficultyConfidence: o.confidence } : it;
@@ -6858,6 +6975,7 @@ function Input({ cards, onAdd, onPark }) {
     const sources = recommend({
       catalog, level, mode: cfg.mode, medium: cfg.medium, minutes,
       history: st.history, tagScores: st.tagScores, seed, preferred: FEED_SOURCES,
+      avoidKids: st.prefs.kids === "avoid",
     });
     // An indexed video already IS one specific thing — there's nothing to look up, so it
     // resolves immediately and never shows the "finding an episode…" state.
@@ -6923,21 +7041,29 @@ function Input({ cards, onAdd, onPark }) {
   const rate = (entry, verdict) => {
     const med = entry.medium;
     const it = catalog.find((x) => x.id === entry.itemId);
+    let before = 0, after = 0;
     save((s0) => {
+      before = s0.levels[med];
       const cur = s0.items[entry.itemId] || { difficulty: it ? it.difficulty : s0.levels[med], confidence: it ? (it.difficultyConfidence || 0.3) : 0.2, ratings: 0 };
+      // `rated` is the pure rating walk (see fuseLevels); ratings move it directly, never
+      // the fused/floored level, or a rising deck floor would double-count on top of itself.
+      const rated0 = s0.levels.rated || { listening: s0.levels.listening, reading: s0.levels.reading };
+      const recent = s0.history.filter((h) => h.medium === med).map((h) => h.verdict);
       const r = applyRating({
-        level: s0.levels[med], ratingCount: s0.counts[med] || 0,
+        level: rated0[med], ratingCount: s0.counts[med] || 0,
         itemDifficulty: cur.difficulty, itemConfidence: cur.confidence,
-        verdict, minutes: entry.minutes,
+        verdict, minutes: entry.minutes, recent,
       });
       const tagScores = { ...s0.tagScores };
       if (it && verdict !== "lost") {
         const bump = verdict === "just_right" ? 1 : verdict === "too_easy" ? 0.2 : -0.3;
         (it.tags || []).forEach((t) => { tagScores[t] = Math.round(((tagScores[t] || 0) + bump) * 10) / 10; });
       }
+      const levels = fuseLevels({ ...s0.levels, rated: { ...rated0, [med]: r.level }, updatedAt: Date.now() }, cards);
+      after = levels[med];
       return {
         ...s0,
-        levels: { ...s0.levels, [med]: r.level, updatedAt: Date.now() },
+        levels,
         counts: { ...s0.counts, [med]: r.ratingCount },
         items: { ...s0.items, [entry.itemId]: { difficulty: r.itemDifficulty, confidence: r.itemConfidence, ratings: (cur.ratings || 0) + 1 } },
         history: [{ ...entry, verdict, ratedAt: Date.now() }, ...s0.history].slice(0, 400),
@@ -6945,6 +7071,7 @@ function Input({ cards, onAdd, onPark }) {
         tagScores,
       };
     });
+    flash(`${med === "reading" ? "Reading" : "Listening"} ${Math.round(before)} → ${Math.round(after)}`);
   };
   const dismiss = (entry) => save((s0) => ({ ...s0, pending: s0.pending.filter((p) => !(p.itemId === entry.itemId && p.at === entry.at)) }));
 
@@ -6954,10 +7081,13 @@ function Input({ cards, onAdd, onPark }) {
     const entry = { itemId: "offline:" + title.slice(0, 40), at: Date.now(), medium: cfg.medium,
                     mode: cfg.mode, minutes: logMin, title, offline: true };
     save((s0) => {
-      const r = applyRating({ level: s0.levels[cfg.medium], ratingCount: s0.counts[cfg.medium] || 0,
-                              itemDifficulty: s0.levels[cfg.medium], itemConfidence: 0, verdict, minutes: logMin });
+      const rated0 = s0.levels.rated || { listening: s0.levels.listening, reading: s0.levels.reading };
+      const recent = s0.history.filter((h) => h.medium === cfg.medium).map((h) => h.verdict);
+      const r = applyRating({ level: rated0[cfg.medium], ratingCount: s0.counts[cfg.medium] || 0,
+                              itemDifficulty: rated0[cfg.medium], itemConfidence: 0, verdict, minutes: logMin, recent });
+      const levels = fuseLevels({ ...s0.levels, rated: { ...rated0, [cfg.medium]: r.level }, updatedAt: Date.now() }, cards);
       return { ...s0,
-        levels: { ...s0.levels, [cfg.medium]: r.level, updatedAt: Date.now() },
+        levels,
         counts: { ...s0.counts, [cfg.medium]: r.ratingCount },
         history: [{ ...entry, verdict, ratedAt: Date.now() }, ...s0.history].slice(0, 400),
       };
@@ -7081,6 +7211,13 @@ function Input({ cards, onAdd, onPark }) {
         <span className="tc-kanalenlabel">Time</span>
         {INPUT_TIMES.map((n) => (
           <button key={n} className={"tc-fchip" + (minutes === n ? " is-on" : "")} onClick={() => setMinutes(n)}>{n === 60 ? "60+" : n} min</button>
+        ))}
+      </div>
+      <div className="tc-kanaseg tc-kanalen">
+        <span className="tc-kanalenlabel">Kids shows</span>
+        {[["allow", "Allow", "許可"], ["avoid", "Avoid", "避ける"], ["never", "Never", "なし"]].map(([k, en, ja]) => (
+          <button key={k} className={"tc-fchip" + (st.prefs.kids === k ? " is-on" : "")}
+            onClick={() => save((s0) => ({ ...s0, prefs: { ...s0.prefs, kids: k } }))}><Bi en={en} ja={ja} /></button>
         ))}
       </div>
 
