@@ -72,6 +72,10 @@ for (const [what, re] of mustNot) {
 // check-feeds.mjs); a mismatch fails quietly at runtime, so catch it at build time.
 await import("./check-feeds.mjs");
 
+// A SEED key collision silently collapses two distinct cards into one on the next
+// seed-merge (see applySeed in tools/merge.mjs) — catch it before it ships.
+await import("./check-seed.mjs");
+
 // The Oral tab is rehearsed out loud by someone who cannot read kanji yet, so a stray
 // character there is not a cosmetic problem — it is a line he cannot practise.
 await import("./check-oral-kana.mjs");

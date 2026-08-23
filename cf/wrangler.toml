@@ -4,10 +4,15 @@ compatibility_date = "2026-07-30"
 
 # The built index.html is copied here by tools/build.mjs. Anything that isn't an API
 # route falls through to this.
+# run_worker_first: by default, static-asset requests (e.g. "/") are served straight from
+# Cloudflare's edge cache without ever invoking fetch() below — which means withSecurityHeaders
+# never runs and the page ships with no CSP/nosniff/frame-ancestors at all. This routes every
+# request through the Worker first so the security headers actually land on the HTML response.
 [assets]
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+run_worker_first = true
 
 # Sync payloads: small JSON, written rarely.
 [[kv_namespaces]]
@@ -22,6 +27,10 @@ id = "ba175d82f8fb41e4b60d5dad6d2d4543"
 [[kv_namespaces]]
 binding = "TTS"
 id = "65cb9739891549aeb8ac804b87b8b799"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
 
 # Secrets are NOT here — they go in via `wrangler secret put`, so they never land in git.
 # Required: SESSION_SECRET, GOOGLE_TTS_API_KEY, ADMIN_WARM_TOKEN.

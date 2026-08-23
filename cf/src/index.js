@@ -130,15 +130,50 @@ async function handleSync(req, env) {
     return json({ data: data || null });
   }
   if (req.method === "POST") {
+    const MAX_BODY = 1024 * 1024;   // 1 MiB; real snapshots are ~300 KB
+    const len = Number(req.headers.get("content-length") || 0);
+    if (len > MAX_BODY) return json({ error: "payload too large" }, 413);
+    const raw = await req.text();
+    if (raw.length > MAX_BODY) return json({ error: "payload too large" }, 413);
     let body;
-    try { body = await req.json(); } catch (e) { return json({ error: "invalid JSON body" }, 400); }
+    try { body = JSON.parse(raw); } catch (e) { return json({ error: "invalid JSON body" }, 400); }
+    const bad = validateSnapshotBody(body);
+    if (bad) return json({ error: bad }, 400);
     await env.SYNC.put(storageKey, JSON.stringify(body));
     return json({ ok: true });
   }
   return new Response("Method not allowed", { status: 405 });
 }
+const SNAPSHOT_PREFIX = "jpn101:";
+const MAX_SNAPSHOT_KEYS = 64;
+function validateSnapshotBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "bad shape";
+  const snap = body.snapshot;
+  if (!snap || typeof snap !== "object" || Array.isArray(snap)) return "missing snapshot";
+  const keys = Object.keys(snap);
+  if (keys.length > MAX_SNAPSHOT_KEYS) return "too many keys";
+  for (const k of keys) {
+    if (!k.startsWith(SNAPSHOT_PREFIX) || !SAFE_KEY(k)) return "bad key " + k;
+    if (typeof snap[k] !== "string") return "value for " + k + " must be a string";
+  }
+  return null;
+}
+const SAFE_KEY = (k) => k !== "__proto__" && k !== "constructor" && k !== "prototype";
 
 /* ── tts ── */
+// A cache miss is a real billable Google call. 400/day per user keeps the free-tier KV
+// write quota (1,000/day) safe even under abuse; a real learner never gets near it (roughly
+// one clip per genuinely new word/line). Counters are best-effort (KV isn't atomic) — fine
+// for abuse control, not for billing-exact accounting.
+const TTS_DAILY_PER_USER = 400, TTS_DAILY_GLOBAL = 1500;
+const dayKeyUTC = () => new Date().toISOString().slice(0, 10);
+async function bumpQuota(env, key, limit) {
+  const k = "ttsq:" + key + ":" + dayKeyUTC();
+  const n = Number((await env.TTS.get(k)) || 0) + 1;
+  if (n > limit) return false;
+  await env.TTS.put(k, String(n), { expirationTtl: 2 * 86400 });
+  return true;
+}
 async function sha256Hex(s) {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(s)));
   return Array.from(d).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -163,11 +198,20 @@ async function handleTts(req, env) {
 
   // Cache miss = a real billable Google call, so it needs a signed-in session (or the
   // admin token used once to pre-warm the whole library).
+  if (!env.SESSION_SECRET) return json({ error: "server not configured" }, 503);
   const auth = req.headers.get("authorization") || "";
   const session = auth.startsWith("Bearer ") ? await verifySession(env.SESSION_SECRET, auth.slice(7)) : null;
   const isAdmin = env.ADMIN_WARM_TOKEN && req.headers.get("x-admin-token") === env.ADMIN_WARM_TOKEN;
   if (!session && !isAdmin) return json({ error: "sign-in required to generate new audio" }, 401);
   if (!env.GOOGLE_TTS_API_KEY) return json({ error: "TTS not configured yet" }, 503);
+
+  if (!isAdmin) {
+    if (!(await bumpQuota(env, "u:" + session.sub, TTS_DAILY_PER_USER))
+     || !(await bumpQuota(env, "all", TTS_DAILY_GLOBAL))) {
+      console.warn(JSON.stringify({ ev: "tts_quota", sub: session.sub.slice(0, 6) }));
+      return json({ error: "daily audio limit reached — try again tomorrow" }, 429, { "retry-after": "3600" });
+    }
+  }
 
   const g = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize?key=" + env.GOOGLE_TTS_API_KEY, {
     method: "POST",
@@ -178,7 +222,11 @@ async function handleTts(req, env) {
       audioConfig: { audioEncoding: "MP3", speakingRate: rate, pitch: 0 },
     }),
   });
-  if (!g.ok) return json({ error: "Google TTS request failed: " + (await g.text().catch(() => "")).slice(0, 300) }, 502);
+  if (!g.ok) {
+    console.warn(JSON.stringify({ ev: "tts_google_fail", status: g.status }));
+    return json({ error: "Google TTS request failed: " + (await g.text().catch(() => "")).slice(0, 300) }, 502);
+  }
+  console.log(JSON.stringify({ ev: "tts_gen", chars: text.length, voice: voiceName }));
 
   const { audioContent } = await g.json();
   const bytes = b64ToBytes(audioContent);
@@ -276,7 +324,7 @@ function parseFeed(xml, limit) {
    enabled — the moment that project setting is switched on, durations start appearing
    with no redeploy. When there's no duration the UI says nothing rather than guessing. */
 function iso8601ToSeconds(d) {
-  const m = /^P(?:(d+)D)?T(?:(d+)H)?(?:(d+)M)?(?:(d+)S)?$/.exec(d || "");
+  const m = /^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(d || "");
   if (!m) return 0;
   return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0);
 }
@@ -352,13 +400,44 @@ async function handleFeed(req, env) {
   return json({ feeds: out });
 }
 
+// GIS requirements per https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy
+// (verify against that page when editing — Google occasionally changes the paths).
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client",   // the app is one inline <script>
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",     // React's <style>{CSS}</style> + head <style> + GIS button styles
+  "img-src 'self' data:",                                                       // mascot GIF data URIs, SVG-noise background
+  "media-src 'self' blob:",                                                     // TTS: same-origin clips + object URLs
+  "connect-src 'self' https://accounts.google.com/gsi/",
+  "frame-src https://accounts.google.com/gsi/",
+  "font-src 'self'",
+  "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
+].join("; ");
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "x-frame-options": "DENY",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+};
+function withSecurityHeaders(res, { csp = true } = {}) {
+  const h = new Headers(res.headers);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) h.set(k, v);
+  if (csp) h.set("content-security-policy", CSP);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 export default {
   async fetch(req, env) {
     const { pathname } = new URL(req.url);
     // both path shapes so one build of index.html runs on Netlify and here
-    if (pathname === "/api/sync" || pathname === "/.netlify/functions/sync") return handleSync(req, env);
-    if (pathname === "/api/tts" || pathname === "/.netlify/functions/tts") return handleTts(req, env);
-    if (pathname === "/api/feed" || pathname === "/.netlify/functions/feed") return handleFeed(req, env);
-    return env.ASSETS.fetch(req);
+    if (pathname === "/api/sync" || pathname === "/.netlify/functions/sync") return withSecurityHeaders(await handleSync(req, env), { csp: false });
+    if (pathname === "/api/tts" || pathname === "/.netlify/functions/tts") return withSecurityHeaders(await handleTts(req, env), { csp: false });
+    if (pathname === "/api/feed" || pathname === "/.netlify/functions/feed") return withSecurityHeaders(await handleFeed(req, env), { csp: false });
+    const asset = await env.ASSETS.fetch(req);
+    const isHtml = (asset.headers.get("content-type") || "").includes("text/html");
+    return withSecurityHeaders(asset, { csp: isHtml });
   },
 };
+
+export { iso8601ToSeconds, parseFeed, unent, validateSnapshotBody, signSession, verifySession, withSecurityHeaders, bumpQuota };

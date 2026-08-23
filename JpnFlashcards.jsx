@@ -9,6 +9,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { MASCOT_GIFS } from "./data/mascot.js";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
 import { review as fsrsReview, retrievability, seedFromHistory, gradeFromLatency, intervalFor, AGAIN, HARD, GOOD, EASY } from "./tools/fsrs.mjs";
+import { cardMergeKey, applySeed, mergeSnapshots } from "./tools/merge.mjs";
+import { localDayKey, streakFrom } from "./tools/days.mjs";
 import { buildSession, interventionFor, skillOf, describe as describeSession } from "./tools/session.mjs";
 import { calibrationReport } from "./tools/calibration.mjs";
 import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./tools/mining.mjs";
@@ -33,7 +35,7 @@ import { toKana, kanaEqual } from "./tools/romaji.mjs";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
-const SEED_VERSION = 33; // bump this each time I add/update words
+const SEED_VERSION = 34; // bump this each time I add/update words
 
 // Matthew's JPN 101 vocabulary. New batches get appended here with the version bumped.
 const SEED = [
@@ -741,7 +743,7 @@ const SEED = [
   { term: "入り口", reading: "いりぐち", romaji: "iriguchi", meaning: "entrance", kind: "kanji", emoji: "🚪", lesson: 43, sec: "6-3" },
   { term: "窓", reading: "まど", romaji: "mado", meaning: "window", kind: "kanji", emoji: "🪟", lesson: 43, sec: "6-3" },
   { term: "人", reading: "ひと", romaji: "hito", meaning: "person", kind: "kanji", emoji: "🧑", lesson: 43, sec: "6-3" },
-  { term: "方", reading: "かた", romaji: "kata", meaning: "person (honorific)", kind: "kanji", emoji: "🙇", lesson: 43, sec: "6-3" },
+  { term: "方", reading: "かた", romaji: "kata", meaning: "person (honorific)", kind: "kanji", emoji: "🙇", lesson: 43, sec: "6-3#2" },
   { term: "女の人", reading: "おんなのひと", romaji: "onna no hito", meaning: "woman", kind: "kanji", emoji: "👩", lesson: 43, sec: "6-3" },
   { term: "男の人", reading: "おとこのひと", romaji: "otoko no hito", meaning: "man", kind: "kanji", emoji: "👨", lesson: 43, sec: "6-3" },
   { term: "チーズ", reading: "チーズ", romaji: "chīzu", meaning: "cheese", kind: "katakana", emoji: "🧀", lesson: 43, sec: "6-3" },
@@ -1780,137 +1782,7 @@ function collectLocalSnapshot() {
   } catch (e) {}
   return snap;
 }
-function cardMergeKey(c) { return c.term + "|" + (c.lesson || "") + "|" + (c.sec || ""); }   // term alone collapses legit duplicate words that appear in two different lessons (e.g. なるほど in both 3-1 and 3-3)
-function mergeDeck(localRaw, cloudRaw) {   // per-card: keep whichever side studied that card more/most recently
-  let local = [], cloud = [];
-  try { local = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
-  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : []; } catch (e) {}
-  if (!cloud.length) return localRaw;
-  if (!local.length) return cloudRaw;
-  const byKey = new Map(local.map((c) => [cardMergeKey(c), c]));
-  cloud.forEach((c) => {
-    const key = cardMergeKey(c);
-    const ex = byKey.get(key);
-    if (!ex) { byKey.set(key, c); return; }
-    const exScore = (ex.seen || 0) * 1e6 + (ex.last || 0);
-    const cScore = (c.seen || 0) * 1e6 + (c.last || 0);
-    if (cScore > exScore) byKey.set(key, c);
-  });
-  return JSON.stringify(Array.from(byKey.values()));
-}
-function mergeDays(localRaw, cloudRaw) {   // per-day: keep whichever side logged more reviews that day
-  let local = {}, cloud = {};
-  try { local = localRaw ? JSON.parse(localRaw) : {}; } catch (e) {}
-  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : {}; } catch (e) {}
-  const out = { ...local };
-  Object.keys(cloud).forEach((day) => {
-    const c = cloud[day], l = out[day];
-    if (!l || (c.rev || 0) > (l.rev || 0)) out[day] = c;
-  });
-  return JSON.stringify(out);
-}
-function mergeScripts(localRaw, cloudRaw) {   // union by id, preferring the fully-annotated copy
-  let local = [], cloud = [];
-  try { local = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
-  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : []; } catch (e) {}
-  if (!cloud.length) return localRaw;
-  const byId = new Map(local.map((s) => [s.id, s]));
-  cloud.forEach((s) => {
-    const ex = byId.get(s.id);
-    if (!ex || (ex.plain && !s.plain)) byId.set(s.id, s);
-  });
-  return JSON.stringify(Array.from(byId.values()));
-}
-// 入力 state: the immersion history is an append-only log, so the generic
-// "newest whole snapshot wins" rule would silently drop a session rated on the other
-// device. Union the log instead and keep the higher rating count per side.
-function mergeInput(localRaw, cloudRaw) {
-  let local = null, cloud = null;
-  try { local = localRaw ? JSON.parse(localRaw) : null; } catch (e) {}
-  try { cloud = cloudRaw ? JSON.parse(cloudRaw) : null; } catch (e) {}
-  if (!cloud) return localRaw;
-  if (!local) return cloudRaw;
-  const seen = new Set();
-  const history = [...(local.history || []), ...(cloud.history || [])]
-    .filter((h) => { const k = h.itemId + "|" + h.at; if (seen.has(k)) return false; seen.add(k); return true; })
-    .sort((a, b) => b.at - a.at).slice(0, 400);
-  const newer = (cloud.levels?.updatedAt || 0) > (local.levels?.updatedAt || 0) ? cloud : local;
-  const items = { ...(local.items || {}) };
-  Object.entries(cloud.items || {}).forEach(([id, v]) => {
-    const ex = items[id];
-    if (!ex || (v.ratings || 0) > (ex.ratings || 0)) items[id] = v;   // more ratings = better informed
-  });
-  const byUrl = new Map([...(local.custom || []), ...(cloud.custom || [])].map((c) => [c.url, c]));
-  return JSON.stringify({
-    ...local, ...newer, levels: newer.levels, history, items,
-    counts: { listening: Math.max(local.counts?.listening || 0, cloud.counts?.listening || 0),
-              reading: Math.max(local.counts?.reading || 0, cloud.counts?.reading || 0) },
-    custom: Array.from(byUrl.values()),
-    hidden: Array.from(new Set([...(local.hidden || []), ...(cloud.hidden || [])])),
-    pending: (local.pending || []).concat(cloud.pending || []).filter((p) => {
-      const k = "p" + p.itemId + p.at; if (seen.has(k)) return false; seen.add(k); return true;
-    }).slice(0, 6),
-  });
-}
-/* Two per-item stat blobs keyed by item id. Whichever side has drilled an item more times
-   knows more about it, so that record wins; items only one side has are kept outright.
-   Losing a study session because the other device synced later is the exact failure this
-   avoids. */
-function mergeStats(localRaw, cloudRaw) {
-  let a = {}, b = {};
-  try { a = JSON.parse(localRaw || "{}") || {}; } catch (e) {}
-  try { b = JSON.parse(cloudRaw || "{}") || {}; } catch (e) {}
-  const out = { ...a };
-  for (const [id, v] of Object.entries(b)) {
-    const ex = out[id];
-    if (!ex || (v.seen || 0) > (ex.seen || 0)) out[id] = v;
-  }
-  return JSON.stringify(out);
-}
-/* ── evidence across devices ──
-   Evidence was already being synced, but under the default rule — whichever whole snapshot
-   is newer wins — which meant studying on a second machine silently discarded the first
-   machine's log. The learner profile is supposed to describe the LEARNER, not the learner
-   on this browser, so the two logs are unioned instead.
-
-   Records are identified by timestamp + item + format. Two answers to the same card in the
-   same millisecond do not happen, and if they somehow did, losing one is harmless. */
-function mergeEvidence(localRaw, cloudRaw) {
-  let a = [], b = [];
-  try { a = JSON.parse(localRaw || "[]"); } catch (e) {}
-  try { b = JSON.parse(cloudRaw || "[]"); } catch (e) {}
-  if (!Array.isArray(a)) a = [];
-  if (!Array.isArray(b)) b = [];
-  const seen = new Set();
-  const all = [];
-  for (const e of [...a, ...b]) {
-    if (!e || !e.at) continue;
-    const k = e.at + "|" + e.id + "|" + e.format;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    all.push(e);
-  }
-  all.sort((x, y) => (x.at || 0) - (y.at || 0));
-  return JSON.stringify(all.slice(-4000));            // same ring-buffer cap as local
-}
-
-function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPulled) {
-  const out = { ...localSnap };
-  const keys = new Set([...Object.keys(localSnap), ...Object.keys(cloudSnap)]);
-  keys.forEach((k) => {
-    if (SYNC_SKIP_KEYS.has(k)) { delete out[k]; return; }   // device-local keys never come from the cloud
-    if (k === "jpn101:deck") { out[k] = mergeDeck(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:days") { out[k] = mergeDays(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:input") { out[k] = mergeInput(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:kanji" || k === "jpn101:dates") { out[k] = mergeStats(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:evidence") { out[k] = mergeEvidence(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:deckVersion") { out[k] = String(Math.max(Number(localSnap[k] || 0), Number(cloudSnap[k] || 0))); return; }
-    if (!(k in localSnap)) { out[k] = cloudSnap[k]; return; }   // new key we don't have locally yet
-    if (k in cloudSnap && cloudUpdatedAt && cloudUpdatedAt > (localLastPulled || 0)) out[k] = cloudSnap[k];   // secondary keys: newer whole snapshot wins
-  });
-  return out;
-}
+// Merge rules live in tools/merge.mjs (pure, testable — see tools/test-merge.mjs).
 // ── Google Sign-In with a real persistent session ──
 // One explicit click exchanges a Google ID token for OUR OWN long-lived signed
 // session token (~2 years), stored in localStorage. Every later visit just reads
@@ -2096,7 +1968,7 @@ async function pullAndMergeCloud() {
     const localSnap = collectLocalSnapshot();
     let lastPulled = 0;
     try { lastPulled = Number(window.localStorage.getItem("jpn101:syncLastPulled") || 0); } catch (e) {}
-    const merged = mergeSnapshots(localSnap, data.snapshot, data.updatedAt, lastPulled);
+    const merged = mergeSnapshots(localSnap, data.snapshot, data.updatedAt, lastPulled, SYNC_SKIP_KEYS);
     Object.keys(merged).forEach((k) => { try { window.localStorage.setItem(k, merged[k]); } catch (e) {} });
     try { window.localStorage.setItem("jpn101:syncLastPulled", String(Date.now())); } catch (e) {}
     return true;
@@ -2130,7 +2002,7 @@ async function loadDays() {
 }
 async function logDay({ ok, ms, deck, fnew, area }) {
   await loadDays();
-  const k = new Date().toISOString().slice(0, 10);
+  const k = localDayKey();
   const d = _days[k] || (_days[k] = { rev: 0, ok: 0, ms: 0, frev: 0, fnew: 0 });
   d.rev += 1; if (ok) d.ok += 1; if (ms) d.ms += ms;
   if (deck === "freq") { d.frev += 1; if (fnew) d.fnew += 1; }
@@ -2140,22 +2012,6 @@ async function logDay({ ok, ms, deck, fnew, area }) {
   const a = area || (deck ? areaForDeck(deck) : null);
   if (a) { (d.by || (d.by = {}))[a] = (d.by[a] || 0) + 1; }
   sSet(DAYS_KEY, JSON.stringify(_days));
-}
-
-/* ── streak ──
-   Counts back from today, and from yesterday if today hasn't been studied yet — so the
-   streak doesn't read as broken at 9am before you've started. A day counts if anything
-   was reviewed at all; the point is showing up, not hitting a number. */
-function streakFrom(days) {
-  if (!days) return 0;
-  const key = (d) => new Date(d).toISOString().slice(0, 10);
-  const has = (d) => { const v = days[key(d)]; return !!(v && (v.rev || 0) > 0); };
-  const today = new Date(); today.setHours(12, 0, 0, 0);
-  let cursor = new Date(today);
-  if (!has(cursor)) cursor.setDate(cursor.getDate() - 1);   // grace: today isn't over
-  let n = 0;
-  while (has(cursor) && n < 3650) { n++; cursor.setDate(cursor.getDate() - 1); }
-  return n;
 }
 
 /* ── the mascot ──
@@ -2211,7 +2067,7 @@ export default function JpnFlashcards() {
     try {
       const url = URL.createObjectURL(new Blob([blob], { type: "application/json" }));
       const a = document.createElement("a");
-      a.href = url; a.download = "tangocho-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+      a.href = url; a.download = "tangocho-backup-" + localDayKey() + ".json";
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {}
@@ -2258,16 +2114,7 @@ export default function JpnFlashcards() {
     } else if (ver < SEED_VERSION) {
       // safety net: snapshot the pre-merge deck in backup format before touching anything
       try { await sSet("jpn101:snapshot", JSON.stringify({ app: "tangocho", v: 2, date: new Date().toISOString(), note: "auto-snapshot before v" + SEED_VERSION + " merge", deck: list })); } catch (e) {}
-      const byTerm = new Map(list.map((c) => [c.term, c]));
-      SEED.forEach((s) => {
-        const ex = byTerm.get(s.term);
-        // `sec` is only copied when the seed actually sets one, never cleared: re-sectioning a
-        // word by editing SEED has to work (without it the card keeps its old section forever
-        // and the edit looks like it did nothing), but a blank seed field must not wipe a
-        // section a card already has.
-        if (ex) Object.assign(ex, { reading: s.reading, romaji: s.romaji, meaning: s.meaning, kind: s.kind, emoji: s.emoji, pitch: s.pitch, lesson: s.lesson }, s.sec ? { sec: s.sec } : {});
-        else { const nc = { id: uid(), seen: 0, correct: 0, ...s }; list.push(nc); byTerm.set(s.term, nc); }
-      });
+      list = applySeed(list, SEED, uid);
       await sSet(STORE_KEY, JSON.stringify(list));
       await sSet(SEED_KEY, String(SEED_VERSION));
     }
@@ -2290,12 +2137,12 @@ export default function JpnFlashcards() {
 
   const addCards = useCallback((newOnes) => {
     setCards((prev) => {
-      const have = new Set(prev.map((c) => c.term));
-      const fresh = newOnes
-        .filter((c) => c.term && !have.has(c.term))
-        .map((c) => ({ id: uid(), seen: 0, correct: 0, sample: false, kind: c.kind || detectKind(c.term), ...c }));
+      const have = new Set(prev.map(cardMergeKey));
       const nextLesson = prev.reduce((m, c) => Math.max(m, c.lesson || 1), 0) + 1;
-      fresh.forEach((c) => { if (c.lesson == null) c.lesson = nextLesson; });
+      const fresh = newOnes
+        .filter((c) => c.term)
+        .map((c) => ({ id: uid(), seen: 0, correct: 0, sample: false, kind: c.kind || detectKind(c.term), lesson: nextLesson, ...c }))
+        .filter((c) => !have.has(cardMergeKey(c)));
       const next = [...prev, ...fresh];
       sSet(STORE_KEY, JSON.stringify(next));
       return next;
@@ -2678,7 +2525,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [days, setDays] = useState(null);
   useEffect(() => { loadDays().then((d) => setDays({ ...d })); }, [running]);
   const streak = useMemo(() => streakFrom(days), [days]);
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = localDayKey();
   const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
   const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
   const [retention, setRetentionState] = useState(retentionTarget);
@@ -4471,7 +4318,8 @@ function needScore(c, now) {          // higher = needs review more (seen cards 
 const SECTION_MAP = {"それ":"2-1", "これ":"2-1", "あれ":"2-1", "どれ":"2-1", "大丈夫":"2-1", "大丈夫です":"2-1", "平気":"2-1", "わかります":"2-1", "わかりますか":"2-1", "できます":"2-1", "します":"2-1", "来ます":"2-1", "頑張ります":"2-1", "すごい":"2-1", "すごいですね":"2-1", "いい":"2-1", "よろしい":"2-1", "よろしく":"2-1", "いえいえ":"2-1", "はい":"2-1", "か":"2-1", "ね":"2-1", "よ":"2-1", "今":"2-2", "今日":"2-2", "明日":"2-2", "これから":"2-2", "電話":"2-2", "ケータイ":"2-2", "勉強":"2-2", "お仕事":"2-2", "宿題":"2-2", "テスト":"2-2", "レポート":"2-2", "教科書":"2-2", "行きます":"2-2", "います":"2-2", "書きます":"2-2", "書く":"2-2", "始めます":"2-2", "終わります":"2-2", "あのう":"2-2", "ええと":"2-2", "ちょっと":"2-2", "あとで":"2-2", "すみません":"2-2", "好き":"2-3", "大好き":"2-3", "何":"2-3", "クッキー":"2-3", "ケーキ":"2-3", "ご飯":"2-3", "朝ご飯":"2-3", "昼ご飯":"2-3", "晩ご飯":"2-3", "お弁当":"2-3", "お寿司":"2-3", "焼き鳥":"2-3", "うどん":"2-3", "そば":"2-3", "カレーライス":"2-3", "ラーメン":"2-3", "お茶":"2-3", "お水":"2-3", "ビール":"2-3", "ウーロン茶":"2-3", "紅茶":"2-3", "コーヒー":"2-3", "ミルク":"2-3", "ジュース":"2-3", "食べ物":"2-3", "飲み物":"2-3", "薬":"2-3", "おいしそう":"2-3", "きれい":"2-3", "食べます":"2-3", "飲みます":"2-3", "いただきます":"2-3", "読みます":"2-3", "おいしい":"2-3", "おもしろい":"2-3", "ねえ":"2-3", "わあ":"2-3", "え":"2-3", "よかったら":"2-3", "よろしかったら":"2-3", "こちら":"2-4", "そちら":"2-4", "あちら":"2-4", "どちら":"2-4", "忙しい":"2-4", "けど":"2-4", "いや":"2-4", "わかりました":"2-4", "が":"2-4", "けれども":"2-4", "会社":"2-5", "学校":"2-5", "うち":"2-5", "家":"2-5", "お宅":"2-5", "寮":"2-5", "アパート":"2-5", "コンビニ":"2-5", "駅":"2-5", "トイレ":"2-5", "そう":"2-5", "どなた":"2-6", "だれ":"2-6", "ここ":"2-7", "そこ":"2-7", "あそこ":"2-7", "どこ":"2-7", "どう":"2-7", "こっち":"2-7", "そっち":"2-7", "あっち":"2-7", "どっち":"2-7", "高い":"2-7", "安い":"2-7", "大きい":"2-7", "小さい":"2-7", "遠い":"2-7", "近い":"2-7", "難しい":"2-7", "易しい":"2-7", "つまらない":"2-7", "とても":"2-7", "すること":"2-8", "あります":"2-8", "何か":"2-8", "別に":"2-8", "じゃあ":"2-8"};
 
 function sectionOf(c) {
-  return c.sec || SECTION_MAP[c.term] || ((c.lesson || 0) <= 6 ? "Act 1" : "Class notes");
+  const sec = c.sec ? String(c.sec).replace(/#\d+$/, "") : "";   // "#n" only disambiguates same-scene duplicate seed rows (see cardMergeKey/applySeed)
+  return sec || SECTION_MAP[c.term] || ((c.lesson || 0) <= 6 ? "Act 1" : "Class notes");
 }
 const SECTION_HUES = [258, 214, 186, 152, 96, 42, 22, 350, 320, 282];
 const DB_SECTION = /^DB (\d+)(?:[–-]\d+)?$/;   // "DB 8–9" — manga pages, en dash or hyphen
@@ -6189,7 +6037,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
     try {
       const url = URL.createObjectURL(new Blob([blob], { type: "application/json" }));
       const a = document.createElement("a");
-      a.href = url; a.download = "tangocho-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+      a.href = url; a.download = "tangocho-backup-" + localDayKey() + ".json";
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {}
@@ -6246,10 +6094,11 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       }
       // keep any seed words the backup predates (e.g. scenes added after the backup was taken)
       const merged = [...o.deck];
-      const haveTerms = new Set(merged.map((c) => c.term));
+      const haveKeys = new Set(merged.map(cardMergeKey));
       let addedFromSeed = 0;
       SEED.forEach((s) => {
-        if (!haveTerms.has(s.term)) { merged.push({ id: uid(), seen: 0, correct: 0, ...s }); haveTerms.add(s.term); addedFromSeed++; }
+        const k = cardMergeKey(s);
+        if (!haveKeys.has(k)) { merged.push({ id: uid(), seen: 0, correct: 0, ...s }); haveKeys.add(k); addedFromSeed++; }
       });
       await onRestore(merged);
       setRestoreMsg("Restored ✓ — " + o.deck.length + " words with their stats" + (o.kana ? ", kana progress" : "") + (o.scripts ? ", scripts" : "") + (addedFromSeed ? ", plus " + addedFromSeed + " newer course words kept" : "") + ". (Backup from " + (o.date || "?").slice(0, 10) + ")");
@@ -7120,7 +6969,7 @@ function Input({ cards, onAdd, onPark }) {
     const cut = Date.now() - 7 * 86400000;
     const rows = st.history.filter((h) => h.at >= cut);
     const byDay = {};
-    rows.forEach((h) => { const d = new Date(h.at).toISOString().slice(0, 10); byDay[d] = (byDay[d] || 0) + (h.minutes || 0); });
+    rows.forEach((h) => { const d = localDayKey(h.at); byDay[d] = (byDay[d] || 0) + (h.minutes || 0); });
     return { mins: rows.reduce((n, h) => n + (h.minutes || 0), 0), rows,
              byDay: Object.entries(byDay).sort((a, b) => (a[0] < b[0] ? -1 : 1)) };
   }, [st]);
@@ -7128,7 +6977,7 @@ function Input({ cards, onAdd, onPark }) {
   const exportWeek = () => {
     const lines = [
       "TANGOCHO — 入力ログ / immersion log",
-      new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) + " → " + new Date().toISOString().slice(0, 10),
+      localDayKey(Date.now() - 7 * 86400000) + " → " + localDayKey(),
       "",
       `total: ${week.mins} min over ${week.rows.length} session(s)`,
       `listening: ${bandName(st.levels.listening)} · reading: ${bandName(st.levels.reading)}`,
@@ -7136,12 +6985,12 @@ function Input({ cards, onAdd, onPark }) {
       ...week.byDay.map(([d, m]) => `  ${d}   ${m} min`),
       "",
       "detail:",
-      ...week.rows.map((h) => `  ${new Date(h.at).toISOString().slice(0, 10)}  ${String(h.minutes).padStart(3)}m  ${h.medium === "reading" ? "読" : "聞"}  ${INPUT_VERDICTS[h.verdict] ? INPUT_VERDICTS[h.verdict].en : "-"}  ${h.title}`),
+      ...week.rows.map((h) => `  ${localDayKey(h.at)}  ${String(h.minutes).padStart(3)}m  ${h.medium === "reading" ? "読" : "聞"}  ${INPUT_VERDICTS[h.verdict] ? INPUT_VERDICTS[h.verdict].en : "-"}  ${h.title}`),
     ].join("\n");
     try {
       const url = URL.createObjectURL(new Blob([lines], { type: "text/plain;charset=utf-8" }));
       const a = document.createElement("a");
-      a.href = url; a.download = "tangocho-input-" + new Date().toISOString().slice(0, 10) + ".txt";
+      a.href = url; a.download = "tangocho-input-" + localDayKey() + ".txt";
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {}
@@ -9397,7 +9246,7 @@ function Freq() {
       setWords(words);
       try { const q = await sGet(FREQ_QUOTA_KEY); if (q) setQuota(Number(q) || 15); } catch (e) {}
       const days = await loadDays();
-      const today = days[new Date().toISOString().slice(0, 10)];
+      const today = days[localDayKey()];
       setTodayNew(today ? today.fnew || 0 : 0);
     })();
   }, []);
@@ -9527,16 +9376,13 @@ function Freq() {
   if (pos >= queue.length) {
     const pct = total ? Math.round((right / total) * 100) : 0;
     return (
-      <div className="tc-summary">
-        <h2>セッション終了！</h2>
-        <div className="tc-sumgrid">
-          <div className="tc-sumitem"><b>{pct}%</b><span>accuracy</span></div>
-          <div className="tc-sumitem"><b>{right}/{total}</b><span>correct</span></div>
-          <div className="tc-sumitem"><b>{todayNew}/{quota}</b><span>new today</span></div>
-        </div>
-        <div className="tc-gradebtns">
+      <div className="tc-done">
+        <p className="tc-eyebrow">Session complete</p>
+        <div className="tc-bignum">{pct}<span>%</span></div>
+        <p className="tc-donesub">{right}/{total} correct · {todayNew}/{quota} new today</p>
+        <div className="tc-donebtns">
           <button className="tc-btn" onClick={() => { setRunning(false); }}>Back</button>
-          <button className="tc-btn" onClick={freeStart}>Extra practice</button>
+          <button className="tc-btn tc-btn-primary" onClick={freeStart}>Extra practice</button>
         </div>
       </div>
     );
@@ -9978,8 +9824,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 @media (max-width:560px){
   .tc-term{font-size:46px;}
-  .tc-row{grid-template-columns:auto 1fr auto auto;}
-  .tc-rowread,.tc-rowstat{display:none;}
+  .tc-prow-top{flex-wrap:wrap;}
+  .tc-prow-top .tc-rowread{flex-basis:100%;order:3;}
+  .tc-prow-top .tc-del{margin-left:auto;}
 }
 @media (prefers-reduced-motion:reduce){
   .tc-card-inner{transition:none;}
