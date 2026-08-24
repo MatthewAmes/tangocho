@@ -6,10 +6,18 @@
 export function cardMergeKey(c) { return c.term + "|" + (c.lesson || "") + "|" + (c.sec || ""); }   // term alone collapses legit duplicate words that appear in two different lessons (e.g. なるほど in both 3-1 and 3-3)
 export const SAFE_KEY = (k) => k !== "__proto__" && k !== "constructor" && k !== "prototype";   // merge loops copy keys straight from the cloud payload onto plain objects; without this a poisoned key clobbers Object.prototype
 
+// A deck that parses but isn't an array of real cards (a truncated write, a half-restored
+// backup, JSON that happens to be a string or object) must not be merged as if it were
+// data — treating it as empty lets the healthy side win outright instead of contributing
+// garbage keys to the result.
+const validDeck = (a) => Array.isArray(a) && a.every((c) => c && typeof c.term === "string");
+
 export function mergeDeck(localRaw, cloudRaw) {   // per-card: keep whichever side studied that card more/most recently
   let local = [], cloud = [];
   try { local = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
   try { cloud = cloudRaw ? JSON.parse(cloudRaw) : []; } catch (e) {}
+  if (!validDeck(local)) local = [];
+  if (!validDeck(cloud)) cloud = [];
   if (!cloud.length) return localRaw;
   if (!local.length) return cloudRaw;
   const byKey = new Map(local.map((c) => [cardMergeKey(c), c]));

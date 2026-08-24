@@ -324,13 +324,11 @@ const RECO = await (async () => {
   const code2 = [
     "const clamp100 = (n) => Math.max(0, Math.min(100, n));",
     grab("seededShuffle", "function"),
-    grab("isKidsContent", "function"),
     grab("recommend", "function"),
-    "export { recommend, isKidsContent };",
+    "export { recommend };",
   ].join("\n");
   return await import("data:text/javascript;base64," + Buffer.from(code2).toString("base64"));
 })();
-const isKidsContent = RECO.isKidsContent;
 
 console.log("\n=== recommender prefers sources it can resolve to one episode ===");
 const mk = (id, difficulty, feed) => ({ id, difficulty, medium: "reading", tags: [], _feed: feed });
@@ -347,42 +345,10 @@ t("feedless sources still fill in when there aren't enough", () => {
   if (r.length < 2) throw new Error("should still return options, got " + r.length);
   if (r[0].id !== "f1") throw new Error("the one feed-backed source should lead, got " + r[0].id);
 });
-function recommendWrap({ catalog, level, preferred, avoidKids }) {
+function recommendWrap({ catalog, level, preferred }) {
   return RECO.recommend({ catalog, level, mode: "active", medium: "reading", minutes: 15,
-                history: [], tagScores: {}, seed: 3, preferred, avoidKids });
+                history: [], tagScores: {}, seed: 3, preferred });
 }
-
-console.log("\n=== kids-content preference ===");
-t("isKidsContent checks both the indexed-video audience field and the catalog tag", () => {
-  if (!isKidsContent({ audience: "kids" })) throw new Error("audience field should count");
-  if (!isKidsContent({ tags: ["ci", "kids"] })) throw new Error("tags array should count");
-  if (isKidsContent({ audience: "adult", tags: ["ci"] })) throw new Error("false positive");
-});
-const mkA = (id, difficulty, kids) => ({ id, difficulty, medium: "reading", tags: kids ? ["kids"] : [] });
-t("avoidKids drops kids rows from a pick when enough non-kids candidates exist in band", () => {
-  const catalog = [
-    ...Array.from({ length: 6 }, (_, i) => mkA("adult" + i, 20 + i, false)),
-    ...Array.from({ length: 6 }, (_, i) => mkA("kids" + i, 20 + i, true)),
-  ];
-  const r = recommendWrap({ catalog, level: 22, avoidKids: true });
-  if (r.some((x) => x.id.startsWith("kids"))) throw new Error("kids row picked with 6+ non-kids candidates available");
-});
-t("avoidKids still allows kids rows when there's nothing else in band (empty-deck learner)", () => {
-  const catalog = [
-    ...Array.from({ length: 2 }, (_, i) => mkA("adult" + i, 20 + i, false)),
-    ...Array.from({ length: 6 }, (_, i) => mkA("kids" + i, 20 + i, true)),
-  ];
-  const r = recommendWrap({ catalog, level: 22, avoidKids: true });
-  if (!r.some((x) => x.id.startsWith("kids"))) throw new Error("should have fallen back to kids rows — nothing else was available");
-});
-t("without avoidKids, kids rows compete normally", () => {
-  const catalog = [
-    ...Array.from({ length: 6 }, (_, i) => mkA("adult" + i, 20 + i, false)),
-    ...Array.from({ length: 6 }, (_, i) => mkA("kids" + i, 20 + i, true)),
-  ];
-  const r = recommendWrap({ catalog, level: 22, avoidKids: false });
-  if (!r.length) throw new Error("expected some picks");
-});
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} tests passed`);
 process.exit(fail ? 1 : 0);

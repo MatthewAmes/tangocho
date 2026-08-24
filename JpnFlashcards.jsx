@@ -1769,8 +1769,13 @@ const SYNC_PREFIX = "jpn101:";
 // record still carries it (e.g. jpn101:session — syncing a bearer token across devices via
 // an unauthenticated snapshot merge would let one device silently sign another one in).
 const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncLastPulled", "jpn101:snapshot",
-  "jpn101:kanjiData", "jpn101:freqData",
+  "jpn101:kanjiData", "jpn101:freqData", "jpn101:deck.corrupt",
   "jpn101:session", "jpn101:userEmail", "jpn101:syncPending", "jpn101:lastBackup", "jpn101:videoIndex"]);
+
+/* Set when this device's stored deck failed to parse (see loadCardsAndSync). While true no
+   push may run: the in-memory deck is empty/unknown, and uploading it would replace a good
+   cloud copy — the one remaining source of truth — with nothing. */
+let _deckCorrupt = false;
 
 function collectLocalSnapshot() {
   const snap = {};
@@ -1913,6 +1918,7 @@ function hasSyncPending() { try { return !!window.localStorage.getItem(SYNC_PEND
 let _retryTimer = null;
 async function pushCloudNow({ attempt = 0, keepalive = false } = {}) {
   if (_cloudPushTimer) { clearTimeout(_cloudPushTimer); _cloudPushTimer = null; }
+  if (_deckCorrupt) { setSyncState("idle"); return false; }   // damaged local deck: never overwrite the cloud copy with it
   const req = syncRequestOptions({
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -2053,6 +2059,7 @@ export default function JpnFlashcards() {
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState("study");
   const [storageOk, setStorageOk] = useState(true);
+  const [deckCorrupt, setDeckCorrupt] = useState(false);
 
   const bannerBackup = async () => {   // one-tap backup from the storage-dead banner; sGet's mem fallback still holds this session's data
     let kana = null, scripts = null, freq = null, days = null, hooks = null, quota = null, oral = null;
@@ -2103,9 +2110,28 @@ export default function JpnFlashcards() {
     try { await pullAndMergeCloud(); } catch (e) { /* offline — proceed with whatever's local */ }
     const rawCards = await sGet(STORE_KEY);
     const rawVer = await sGet(SEED_KEY);
-    let list = null;
-    try { list = rawCards ? JSON.parse(rawCards) : null; } catch (e) { list = null; }
     const ver = rawVer ? Number(rawVer) : 0;
+
+    /* "Corrupt" and "absent" used to collapse into the same `null`, so a truncated or
+       half-written jpn101:deck (storage quota hit mid-write, a browser bug, a partial
+       restore) looked exactly like a first run: the app reseeded every card at seen:0,
+       wrote that over the damaged value, and then pushed a zero-progress deck to the
+       cloud. On a second device mergeDeck's higher-seen rule usually rescues it, but a
+       single-device user loses everything and is never told why. Reseed now happens ONLY
+       when the key is genuinely missing. */
+    let list = null, corrupt = false;
+    if (rawCards != null) {
+      try { list = JSON.parse(rawCards); } catch (e) { list = null; }
+      if (!Array.isArray(list) || !list.every((c) => c && typeof c.term === "string")) { list = null; corrupt = true; }
+    }
+    if (corrupt) {
+      try { window.localStorage.setItem("jpn101:deck.corrupt", rawCards); } catch (e) {}
+      _deckCorrupt = true;                 // blocks pushCloudNow from overwriting the cloud copy
+      setDeckCorrupt(true);
+      setCards([]); setReady(true);
+      return;                              // no reseed, no push — wait for a cloud pull or a manual restore
+    }
+    _deckCorrupt = false; setDeckCorrupt(false);
 
     if (!list) {
       list = SEED.map((c) => ({ id: uid(), seen: 0, correct: 0, ...c }));
@@ -2168,7 +2194,12 @@ export default function JpnFlashcards() {
   }, []);
 
   const clearAll = useCallback(() => { persist([]); }, [persist]);
-  const restoreDeck = useCallback(async (deck) => { persist(deck); }, [persist]);
+  // A restore is the documented way out of the damaged-deck state, so it clears the flag
+  // (and re-enables pushing) once a real deck is back in place.
+  const restoreDeck = useCallback(async (deck) => {
+    _deckCorrupt = false; setDeckCorrupt(false);
+    persist(deck);
+  }, [persist]);
 
 
   const setMnemonic = useCallback((id, text) => {
@@ -2245,6 +2276,12 @@ export default function JpnFlashcards() {
           <div className="tc-senterr" style={{ margin: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
             <span>⚠️ Storage isn't working in this session — anything you add or review lives only until you close the app. Tap Backup before closing (it downloads a file + copies to clipboard), then Restore it next session.</span>
             <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={bannerBackup} style={{ alignSelf: "flex-start" }}>💾 Backup now</button>
+          </div>
+        )}
+        {deckCorrupt && (
+          <div className="tc-senterr" style={{ margin: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <span>⚠️ The saved deck on this device is damaged, and was <b>not</b> replaced — your progress has not been overwritten. If you're signed in, the cloud copy loads on the next successful sync. Otherwise open Browse → More → Restore and paste a backup. (The damaged data is kept under <code>jpn101:deck.corrupt</code>.)</span>
+            <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={() => loadCardsAndSync()} style={{ alignSelf: "flex-start" }}>Try again</button>
           </div>
         )}
         <header className="tc-head">
@@ -6658,12 +6695,7 @@ function seededShuffle(arr, seed) {
   return a;
 }
 
-// Indexed videos carry `audience` from their channel's own data; hand-curated catalog rows
-// (INPUT_CATALOG) have no such field and mark themselves via a "kids" tag instead — check
-// both so a preference applies uniformly to whichever kind of row it's looking at.
-function isKidsContent(it) { return it.audience === "kids" || (it.tags || []).includes("kids"); }
-
-function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay, preferred, avoidKids }) {
+function recommend({ catalog, level, mode, medium, minutes, history, tagScores, seed, allowReplay, preferred }) {
   const now = Date.now();
   const recent = new Set((history || []).filter((h) => now - h.at < 14 * 86400000).map((h) => h.itemId));
   let pool = catalog.filter((it) => {
@@ -6673,13 +6705,6 @@ function recommend({ catalog, level, mode, medium, minutes, history, tagScores, 
     return true;
   });
   if (!pool.length) pool = catalog.filter((it) => (medium === "reading" ? it.medium === "reading" : it.medium !== "reading"));
-  // "avoid" (not "never" — that's a hard filter applied earlier, in the catalog itself):
-  // drop kids rows from THIS pick only when there's enough left in-band without them, so a
-  // learner just starting out with an empty deck still gets something rather than nothing.
-  if (avoidKids) {
-    const nonKids = pool.filter((it) => !isKidsContent(it));
-    if (nonKids.filter((it) => it.difficulty >= level - 3 && it.difficulty <= level + 6).length >= 6) pool = nonKids;
-  }
 
   const pick = (from) => {
     const band = (lo, hi) => from.filter((it) => it.difficulty >= level + lo && it.difficulty <= level + hi);
@@ -6888,8 +6913,7 @@ function agoLabel(at) {
 }
 function blankInput(cards) {
   return { v: 1, levels: seedLevelsFromDeck(cards), counts: { listening: 0, reading: 0 },
-           items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [],
-           prefs: { kids: "avoid" } };
+           items: {}, history: [], pending: [], custom: [], tagScores: {}, hidden: [] };
 }
 
 function Input({ cards, onAdd, onPark }) {
@@ -6921,7 +6945,6 @@ function Input({ cards, onAdd, onPark }) {
     o.pending = o.pending || []; o.history = o.history || []; o.custom = o.custom || [];
     o.items = o.items || {}; o.tagScores = o.tagScores || {}; o.hidden = o.hidden || [];
     o.counts = o.counts || { listening: 0, reading: 0 };
-    o.prefs = o.prefs || { kids: "avoid" };
     stRef.current = o;
     setSt(o);
   })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -6959,10 +6982,6 @@ function Input({ cards, onAdd, onPark }) {
     if (!st) return [];
     return [...INPUT_CATALOG, ...videos, ...st.custom]
       .filter((it) => !st.hidden.includes(it.id))
-      // "never": excluded outright, everywhere, no matter how thin the band gets — the
-      // softer "avoid" default is handled inside recommend(), which can still fall back to
-      // kids rows for a learner with nothing else in range.
-      .filter((it) => st.prefs.kids !== "never" || !isKidsContent(it))
       .map((it) => {
         const o = st.items[it.id];
         return o ? { ...it, difficulty: o.difficulty, difficultyConfidence: o.confidence } : it;
@@ -6983,7 +7002,6 @@ function Input({ cards, onAdd, onPark }) {
     const sources = recommend({
       catalog, level, mode: cfg.mode, medium: cfg.medium, minutes,
       history: st.history, tagScores: st.tagScores, seed, preferred: FEED_SOURCES,
-      avoidKids: st.prefs.kids === "avoid",
     });
     // An indexed video already IS one specific thing — there's nothing to look up, so it
     // resolves immediately and never shows the "finding an episode…" state.
@@ -7219,13 +7237,6 @@ function Input({ cards, onAdd, onPark }) {
         <span className="tc-kanalenlabel">Time</span>
         {INPUT_TIMES.map((n) => (
           <button key={n} className={"tc-fchip" + (minutes === n ? " is-on" : "")} onClick={() => setMinutes(n)}>{n === 60 ? "60+" : n} min</button>
-        ))}
-      </div>
-      <div className="tc-kanaseg tc-kanalen">
-        <span className="tc-kanalenlabel">Kids shows</span>
-        {[["allow", "Allow", "許可"], ["avoid", "Avoid", "避ける"], ["never", "Never", "なし"]].map(([k, en, ja]) => (
-          <button key={k} className={"tc-fchip" + (st.prefs.kids === k ? " is-on" : "")}
-            onClick={() => save((s0) => ({ ...s0, prefs: { ...s0.prefs, kids: k } }))}><Bi en={en} ja={ja} /></button>
         ))}
       </div>
 

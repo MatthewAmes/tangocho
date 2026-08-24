@@ -48,6 +48,16 @@ t("empty cloud returns local raw unchanged", () => {
   const local = JSON.stringify([{ term: "a", lesson: 1, sec: "", seen: 1 }]);
   eq(mergeDeck(local, "[]"), local);
 });
+t("a corrupt local deck loses to a healthy cloud deck instead of poisoning the merge", () => {
+  const cloud = JSON.stringify([{ term: "a", lesson: 1, sec: "", seen: 9 }]);
+  eq(mergeDeck("{tru ncated", cloud), cloud, "unparsable local");
+  eq(mergeDeck(JSON.stringify({ not: "an array" }), cloud), cloud, "parses but wrong shape");
+  eq(mergeDeck(JSON.stringify([{ noTermField: 1 }]), cloud), cloud, "array of non-cards");
+});
+t("a corrupt cloud deck loses to a healthy local deck", () => {
+  const local = JSON.stringify([{ term: "a", lesson: 1, sec: "", seen: 3 }]);
+  eq(mergeDeck(local, JSON.stringify([{ noTermField: 1 }])), local);
+});
 
 console.log("=== applySeed ===");
 const MINI_SEED = [
