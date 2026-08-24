@@ -1266,11 +1266,47 @@ function isEmoji(s) {
   try { return /\p{Extended_Pictographic}/u.test(t); } catch (e) { return /[\u2190-\u2BFF\u2700-\u27BF]/.test(t); }
 }
 
+/* The nav went from eight tabs to five. The old ids stay valid as aliases so every
+   existing setTab() call site — goAdd, the sync dot, restore intents — keeps working
+   without knowing the new structure. */
+const TAB_ALIAS = { freq: ["study", "core"], input: ["more", "input"], write: ["practice", "write"], scripts: ["practice", "scripts"], browse: ["more", "deck"] };
+
+function SubNav({ items, value, onChange }) {
+  return (
+    <div className="tc-subnav" role="group">
+      {items.map(([id, label, ja]) => (
+        <button key={id} className={"tc-fchip" + (value === id ? " is-on" : "")} aria-pressed={value === id}
+          onClick={() => onChange(id)}>{ja ? <Bi en={label} ja={ja} /> : label}</button>
+      ))}
+    </div>
+  );
+}
+
 export default function JpnFlashcards() {
   const [cards, setCards] = useState([]);
   const [ready, setReady] = useState(false);
-  const [tab, setTab] = useState("study");
+  const [tab, setTabRaw] = useState("study");
+  const [sub, setSub] = useState({ study: "class", practice: "write", more: "input" });
   const [storageOk, setStorageOk] = useState(true);
+  const tabsRef = useRef(null);
+
+  const setTab = useCallback((id, subId) => {   // accepts new ids and the old aliases alike
+    const a = TAB_ALIAS[id];
+    const t = a ? a[0] : id;
+    const s = subId || (a ? a[1] : undefined);
+    setTabRaw(t);
+    if (s) setSub((p) => ({ ...p, [t]: s }));
+  }, []);
+
+  useEffect(() => {   // the bar scrolls instead of wrapping now, so keep the active tab in view
+    const el = tabsRef.current;
+    if (!el) return;
+    el.querySelector(".tc-tab.is-on")?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    const onScroll = () => el.classList.toggle("is-end", el.scrollLeft + el.clientWidth >= el.scrollWidth - 2);
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [tab]);
 
   const bannerBackup = async () => {   // one-tap backup from the storage-dead banner; sGet's mem fallback still holds this session's data
     let kana = null, scripts = null, freq = null, days = null, hooks = null, quota = null, oral = null;
@@ -1442,6 +1478,11 @@ export default function JpnFlashcards() {
     });
   }, []);
 
+  const deckSwitcher = (
+    <SubNav items={[["class", `Class deck · ${cards.length}`], ["core", "Core words · 148"]]}
+      value={sub.study} onChange={(s) => setSub((p) => ({ ...p, study: s }))} />
+  );
+
   return (
     <div className="tc-root">
       <style>{CSS}</style>
@@ -1460,9 +1501,9 @@ export default function JpnFlashcards() {
               <p className="tc-sub">JPN 101 · flashcards · <span className="tc-count">{cards.length} words</span></p>
             </div>
           </div>
-          <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["write", "Write"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"]].map(([id, label]) => (
-              <button key={id} role="tab" aria-selected={tab === id}
+          <nav ref={tabsRef} className="tc-tabs" aria-label="Sections">
+            {[["study", "Study"], ["kana", "Kana"], ["drill", "Grammar"], ["practice", "Practice"], ["more", "More"]].map(([id, label]) => (
+              <button key={id} aria-current={tab === id ? "page" : undefined}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
           </nav>
@@ -1472,21 +1513,31 @@ export default function JpnFlashcards() {
         {!ready ? (
           <div className="tc-empty">Loading your deck…</div>
         ) : tab === "study" ? (
-          <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
-        ) : tab === "freq" ? (
-          <Freq />
-        ) : tab === "drill" ? (
-          <ConjDrill />
-        ) : tab === "input" ? (
-          <Input cards={cards} />
-        ) : tab === "write" ? (
-          <Write cards={cards} onResult={recordResult} />
+          sub.study === "core" ? (
+            <Freq switcher={deckSwitcher} />
+          ) : (
+            <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} switcher={deckSwitcher} />
+          )
         ) : tab === "kana" ? (
           <Kana />
-        ) : tab === "scripts" ? (
-          <Scripts />
+        ) : tab === "drill" ? (
+          <ConjDrill />
+        ) : tab === "practice" ? (
+          <>
+            <SubNav items={[["write", "Write"], ["scripts", "Scripts"]]} value={sub.practice}
+              onChange={(x) => setSub((p) => ({ ...p, practice: x }))} />
+            {sub.practice === "scripts" ? <Scripts /> : <Write cards={cards} onResult={recordResult} />}
+          </>
         ) : (
-          <Browse cards={cards} onRemove={removeCard} onClear={clearAll} onRestore={restoreDeck} />
+          <>
+            <SubNav items={[["input", "Watch & Read", "\u5165\u529b"], ["deck", "Deck"], ["account", "Account"]]} value={sub.more}
+              onChange={(x) => setSub((p) => ({ ...p, more: x }))} />
+            {sub.more === "input" ? (
+              <Input cards={cards} />
+            ) : (
+              <Browse cards={cards} onRemove={removeCard} onClear={clearAll} onRestore={restoreDeck} section={sub.more} />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -1494,7 +1545,8 @@ export default function JpnFlashcards() {
 }
 
 /* ───────────────────────────── STUDY ───────────────────────────── */
-function Study({ cards, onResult, goAdd, onMnemonic }) {
+function Study({ cards, onResult, goAdd, onMnemonic, switcher }) {
+  const [showAllSections, setShowAllSections] = useState(false);
   const [showRomaji, setShowRomaji] = useState(false); // front rōmaji on/off
   const [showPitch, setShowPitch] = useState(true);    // back pitch ⸢ ⸣ marks on/off
   const [queue, setQueue] = useState([]);              // working order; missed cards get re-inserted
@@ -1678,12 +1730,27 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     return base.concat(dryRuns).sort((a, b) => sectionRank(a.name) - sectionRank(b.name));
   }, [cards]);
 
+  // Grouped for display only: the chips themselves are unchanged, they just sit under
+  // an Act heading so the setup screen opens at ~10 chips instead of 40.
+  const batchGroups = useMemo(() => {
+    const m = new Map();
+    batches.forEach((b) => { const g = groupOf(b.name); if (!m.has(g)) m.set(g, []); m.get(g).push(b); });
+    return Array.from(m, ([name, items]) => ({ name, items }));
+  }, [batches]);
+
   const smartBatch = useMemo(() => {
     if (!batches.length) return null;
     const fresh = batches.filter((b) => b.rate === null);
     if (fresh.length) return fresh[0];
     return batches.slice().sort((a, b) => a.rate - b.rate)[0];
   }, [batches]);
+
+  // Open the act Smart Review would pick: the earliest one with unstudied cards is the
+  // frontier you're working in, and everything before it is already in rotation.
+  const openGroup = useMemo(
+    () => groupOf(smartBatch ? smartBatch.name : (batches[0] || { name: "" }).name),
+    [smartBatch, batches]
+  );
 
   const lastPool = useRef(null);
   const start = useCallback((subset, preordered, opts) => {
@@ -1775,16 +1842,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
   if (cards.length === 0) {
     return (
-      <div className="tc-empty">
-        <p>No words yet. Your deck is empty.</p>
-        <button className="tc-btn tc-btn-primary" onClick={goAdd}>Add your first words</button>
-      </div>
+      <>
+        {switcher}
+        <div className="tc-empty">
+          <p>No words yet. Your deck is empty.</p>
+          <button className="tc-btn tc-btn-primary" onClick={goAdd}>Add your first words</button>
+        </div>
+      </>
     );
   }
 
   if (!running) {
     return (
       <div className="tc-study-setup">
+        {switcher}
         <div className="tc-buddy">
           <Mascot state={buddy.state} />
           <div className="tc-buddytext">
@@ -1883,23 +1954,35 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         )}
 
         <div className="tc-batchhead"><span>Sections</span></div>
-        <div className="tc-batchgrid">
-          {batches.map((b) => {
-            const art = sectionArt(b.cards);
-            return (
-              <button key={b.name} className="tc-batchchip" onClick={() => start(b.cards)}
-                style={{ background: `radial-gradient(140% 160% at 30% -15%, hsla(${hueFor(b.name)},75%,62%,.5) 0%, hsla(${hueFor(b.name)},55%,42%,.16) 55%, rgba(255,255,255,.02) 85%)` }}>
-                <div className="tc-batchglass">
-                  {art[0] && <span className="tc-batchicon" aria-hidden="true">{art[0]}</span>}
-                  <span className="tc-batchnum">{b.name}</span>
-                  <span className={"tc-batchmeta" + (b.rate === null ? " tc-rate-new" : b.rate < 0.6 ? " tc-rate-low" : "")}>
-                    {b.cards.length} words · {b.rate === null ? "new" : Math.round(b.rate * 100) + "%"}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        {batchGroups.filter((g) => showAllSections || g.name === openGroup).map((g) => (
+          <div key={g.name} className="tc-batchgroup">
+            <div className="tc-grouphead"><span>{g.name}</span><em>{g.items.reduce((n, b) => n + b.cards.length, 0)} words</em></div>
+            <div className="tc-batchgrid">
+              {g.items.map((b) => {
+                const art = sectionArt(b.cards);
+                const hue = groupHue(g.name);
+                const dry = /Dry Run$/.test(b.name);
+                return (
+                  <button key={b.name} className="tc-batchchip" onClick={() => start(b.cards)}
+                    style={{ background: `radial-gradient(140% 160% at 30% -15%, hsla(${hue},75%,${dry ? 72 : 62}%,${dry ? .32 : .5}) 0%, hsla(${hue},55%,42%,.16) 55%, rgba(255,255,255,.02) 85%)` }}>
+                    <div className="tc-batchglass">
+                      {art[0] && <span className="tc-batchicon" aria-hidden="true">{art[0]}</span>}
+                      <span className="tc-batchnum">{chipLabel(b.name)}</span>
+                      <span className={"tc-batchmeta" + (b.rate === null ? " tc-rate-new" : b.rate < 0.6 ? " tc-rate-low" : "")}>
+                        {b.cards.length} words · {b.rate === null ? "new" : Math.round(b.rate * 100) + "%"}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {batchGroups.length > 1 && (
+          <button className="tc-btn tc-btn-sm tc-showall" onClick={() => setShowAllSections((v) => !v)}>
+            {showAllSections ? "Show less \u2303" : `Show all sections \u2304 (${batchGroups.length})`}
+          </button>
+        )}
         <div className="tc-setupfoot">
           <button className="tc-btn tc-btn-sm" onClick={() => start()}>All · {cards.length}</button>
           {weak.length > 0 && (
@@ -2201,6 +2284,21 @@ async function callClaude(prompt) {
     throw e;
   } finally { clearTimeout(timer); }
 }
+/* Section chips are grouped under their Act so the default view is ~10 chips instead of
+   40. One hue per act keeps a whole act visually together; the Dry Run sits lighter. */
+const ACT_HUES = [214, 258, 186, 152, 42, 22, 350];
+function groupOf(name) {
+  const m = /^(\d+)-/.exec(name) || /^Act (\d+)/.exec(name);
+  if (m) return "Act " + m[1];
+  if (/^\d+\/\d+$/.test(name)) return "Class notes";
+  return name;
+}
+function groupHue(g) {
+  const m = /^Act (\d+)/.exec(g);
+  return m ? ACT_HUES[Number(m[1]) % ACT_HUES.length] : hueFor(g);
+}
+function chipLabel(name) { return name.replace(/^(\d+-\d+)R$/, "$1 review"); }
+
 function parseJSON(text) {
   let t = text.replace(/```json|```/g, "").trim();
   const s = t.indexOf("{"), e = t.lastIndexOf("}");      // tolerate prose around the JSON
@@ -3819,10 +3917,9 @@ const SYNC_UI = {
   pending: { dot: "#ff8a7a", label: "⚠ Not saved yet — your progress is safe on this device and will upload automatically." },
 };
 
-function Browse({ cards, onRemove, onClear, onRestore }) {
+function Browse({ cards, onRemove, onClear, onRestore, section = "deck" }) {
   const [syncState, setSyncState] = useState(syncStateNow);
   useEffect(() => watchSyncState(setSyncState), []);
-  const [showMore, setShowMore] = useState(false);
   const [showRestore, setShowRestore] = useState(false);
   const [restoreText, setRestoreText] = useState("");
   const [backupDone, setBackupDone] = useState(false);
@@ -3952,15 +4049,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
     navigator.clipboard?.writeText(tsv).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); });
   }, [cards]);
 
-  return (
-    <div className="tc-browse">
-      <div className="tc-summary">
-        <div className="tc-sumitem"><b>{summary.total}</b><span>words</span></div>
-        <div className="tc-sumitem tc-sum-good"><b>{summary.mastered}</b><span>mastered</span></div>
-        <div className="tc-sumitem tc-sum-need"><b>{summary.need}</b><span>need work</span></div>
-        <div className="tc-sumitem tc-sum-new"><b>{summary.fresh}</b><span>untouched</span></div>
-      </div>
-
+  const syncBox = (
       <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
         {googleEmail ? (
@@ -3983,46 +4072,65 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
           </>
         )}
       </div>
+  );
+
+  const accountPanel = (
+      <div style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+        {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
+          <p className="tc-conjnote" style={{ marginTop: 0 }}>💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — a backup file has everything: both decks, all stats, think-times, scripts, and exam history.</p>
+        )}
+        <div className="tc-browsebar" style={{ marginBottom: 0 }}>
+          <button className="tc-btn tc-btn-sm" onClick={exportText} disabled={!cards.length}>{copied ? "Copied!" : "Export"}</button>
+          <button className="tc-btn tc-btn-sm" onClick={doBackup} disabled={!cards.length}>{backupDone ? "Backed up ✓" : "💾 Backup"}</button>
+          <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore((v) => !v); setRestoreMsg(""); }}>Restore</button>
+          {!confirm ? (
+            <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => setConfirm(true)} disabled={!cards.length}>Clear all</button>
+          ) : (
+            <span className="tc-confirm">
+              Delete everything?
+              <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => { onClear(); setConfirm(false); }}>Yes</button>
+              <button className="tc-btn tc-btn-sm" onClick={() => setConfirm(false)}>No</button>
+            </span>
+          )}
+        </div>
+
+        {showRestore && (
+          <div className="tc-restore">
+            <p className="tc-restorehint">Paste a 💾 backup (replaces everything) or an update pack from Claude (adds new words & scripts — progress untouched), then Apply.</p>
+            <textarea className="tc-restorebox" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='{"app":"tangocho", ...}' />
+            <div className="tc-restorebtns">
+              <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={doRestore} disabled={!restoreText.trim()}>Apply backup</button>
+              <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore(false); setRestoreMsg(""); }}>Close</button>
+            </div>
+            {restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
+          </div>
+        )}
+        {!showRestore && restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
+      </div>
+  );
+
+  if (section === "account") {
+    return (
+      <div className="tc-browse">
+        {syncBox}
+        {accountPanel}
+      </div>
+    );
+  }
+
+  return (
+    <div className="tc-browse">
+      <div className="tc-summary">
+        <div className="tc-sumitem"><b>{summary.total}</b><span>words</span></div>
+        <div className="tc-sumitem tc-sum-good"><b>{summary.mastered}</b><span>mastered</span></div>
+        <div className="tc-sumitem tc-sum-need"><b>{summary.need}</b><span>need work</span></div>
+        <div className="tc-sumitem tc-sum-new"><b>{summary.fresh}</b><span>untouched</span></div>
+      </div>
 
       <div className="tc-browsebar">
         <input className="tc-search" placeholder="Search words…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button className="tc-btn tc-btn-sm" onClick={() => setShowMore((v) => !v)}>{showMore ? "Less ⌃" : "More ⌄"}</button>
       </div>
 
-      {showMore && (
-        <div style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
-          {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
-            <p className="tc-conjnote" style={{ marginTop: 0 }}>💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — a backup file has everything: both decks, all stats, think-times, scripts, and exam history.</p>
-          )}
-          <div className="tc-browsebar" style={{ marginBottom: 0 }}>
-            <button className="tc-btn tc-btn-sm" onClick={exportText} disabled={!cards.length}>{copied ? "Copied!" : "Export"}</button>
-            <button className="tc-btn tc-btn-sm" onClick={doBackup} disabled={!cards.length}>{backupDone ? "Backed up ✓" : "💾 Backup"}</button>
-            <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore((v) => !v); setRestoreMsg(""); }}>Restore</button>
-            {!confirm ? (
-              <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => setConfirm(true)} disabled={!cards.length}>Clear all</button>
-            ) : (
-              <span className="tc-confirm">
-                Delete everything?
-                <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => { onClear(); setConfirm(false); }}>Yes</button>
-                <button className="tc-btn tc-btn-sm" onClick={() => setConfirm(false)}>No</button>
-              </span>
-            )}
-          </div>
-
-          {showRestore && (
-            <div className="tc-restore">
-              <p className="tc-restorehint">Paste a 💾 backup (replaces everything) or an update pack from Claude (adds new words & scripts — progress untouched), then Apply.</p>
-              <textarea className="tc-restorebox" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='{"app":"tangocho", ...}' />
-              <div className="tc-restorebtns">
-                <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={doRestore} disabled={!restoreText.trim()}>Apply backup</button>
-                <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore(false); setRestoreMsg(""); }}>Close</button>
-              </div>
-              {restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
-            </div>
-          )}
-          {!showRestore && restoreMsg && <p className="tc-restoremsg">{restoreMsg}</p>}
-        </div>
-      )}
       <div className="tc-filters">
         {[["all", "All"], ["review", "Needs work"], ["new", "Untouched"], ["mastered", "Mastered"]].map(([id, label]) => (
           <button key={id} className={"tc-fchip" + (filter === id ? " is-on" : "")} onClick={() => setFilter(id)}>{label}</button>
@@ -5385,7 +5493,7 @@ function fmtIn(ms) {
   return "in ~" + Math.round(h / 24) + "d";
 }
 
-function Freq() {
+function Freq({ switcher }) {
   const [deck, setDeck] = useState(null);
   const [quota, setQuota] = useState(15);
   const [todayNew, setTodayNew] = useState(0);
@@ -5504,13 +5612,14 @@ function Freq() {
     setPos((p) => p + 1);
   }, [queue, pos, deck, persist]);
 
-  if (!deck || !stats) return <div className="tc-empty">Loading the 10k deck…</div>;
+  if (!deck || !stats) return <>{switcher}<div className="tc-empty">Loading the core deck…</div></>;
 
   if (!running) {
     const newLeft = Math.max(0, quota - todayNew);
     const doneToday = stats.due === 0 && (newLeft === 0 || stats.fresh === 0);
     return (
       <div className="tc-conj">
+        {switcher}
         <div className="tc-hero">
           <div className="tc-heronum">{stats.due + Math.min(newLeft, stats.fresh)}</div>
           <p className="tc-herolabel">in today's session</p>
@@ -5518,7 +5627,7 @@ function Freq() {
             {stats.due === 0 && stats.nextIn != null && stats.nextIn > 0 ? ` · next reviews ${fmtIn(stats.nextIn)}` : ""}</p>
         </div>
         <div className="tc-conjintro">
-          <h2 className="tc-conjtitle">Frequency 10k · Tier 1</h2>
+          <h2 className="tc-conjtitle">Core words · Tier 1</h2>
           <p className="tc-conjsub">The long game: highest-frequency everyday words at a fixed daily intake.
             {" "}{stats.learned}/{stats.total} started · {stats.mastered} mastered · {stats.fresh} untouched.
             Every review is logged: result, streak, level, and think time.</p>
@@ -5607,7 +5716,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   --sumi:#26221d; --washi:#f2ecde; --washi-2:#ece4d2; --line:#d8cdb4;
   --mut:#7d7361; --mut-2:#9aa3bd; --violet:#7c5cff;
   --mono:ui-monospace,"SF Mono","Roboto Mono","JetBrains Mono",Menlo,monospace;
-  --r-s:9px; --r-m:12px; --tap:46px;
+  --r-s:9px; --r-m:12px; --tap:44px;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable","Segoe UI",Roboto,"Helvetica Neue",sans-serif;
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; text-rendering:optimizeLegibility;
   font-variant-numeric:tabular-nums;
@@ -5638,9 +5747,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-count{color:var(--shu-soft);font-weight:600;}
 
 .tc-tabs{display:flex;gap:4px;background:rgba(255,255,255,.07);backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
-  padding:4px;border-radius:999px;width:fit-content;flex-wrap:wrap;}
+  padding:4px;border-radius:999px;max-width:100%;flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;
+  -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);}
+.tc-tabs::-webkit-scrollbar{display:none;}
+.tc-tabs.is-end{-webkit-mask-image:none;mask-image:none;}
 .tc-tab{appearance:none;border:0;background:transparent;color:var(--mut-2);
-  font:inherit;font-size:13.5px;font-weight:600;letter-spacing:.01em;min-height:42px;padding:8px 15px;border-radius:999px;cursor:pointer;transition:background .15s,color .15s,transform .1s;white-space:nowrap;}
+  font:inherit;font-size:13.5px;font-weight:600;letter-spacing:.01em;min-height:44px;padding:8px 15px;border-radius:999px;cursor:pointer;
+  transition:background .15s,color .15s,transform .1s;white-space:nowrap;scroll-snap-align:start;flex:none;}
 .tc-tab:hover{color:#fff;}
 .tc-tab:active{transform:scale(.96);}
 .tc-tab.is-on{background:rgba(255,255,255,.94);color:#141a33;}
@@ -5905,6 +6019,28 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-fchip:active{transform:scale(.95);}
 .tc-fchip.is-on{background:var(--shu);border-color:var(--shu);color:#fff;}
 .tc-fchip-sort{margin-left:auto;}
+
+/* Tap-target floor. Apple/Google both specify 44px; several daily-use controls were
+   24-36px, which is a miss-prone target for a thumb on a bus. */
+.tc-fchip{min-height:44px;}
+@media (max-width:460px){.tc-fchip{min-height:40px;}}
+.tc-rpill{min-height:44px;padding:5px 14px;}
+.tc-del,.tc-inx{min-width:44px;min-height:44px;display:inline-grid;place-items:center;}
+.tc-btn-sm{min-height:44px;}
+.tc-hookbtn{min-height:40px;}
+.tc-speakbtn{position:relative;}
+.tc-speakbtn::after{content:"";position:absolute;inset:-10px;}   /* hit area only; the visual stays 32x24 */
+
+/* Sub-nav: the second level under Study / Practice / More. */
+.tc-subnav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;}
+.tc-subnav .tc-fchip{font-weight:600;}
+
+/* Section chips, grouped under their Act. */
+.tc-batchgroup{margin-bottom:14px;}
+.tc-grouphead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 2px 8px;
+  font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--mut-2);}
+.tc-grouphead em{font-style:normal;font-weight:500;letter-spacing:.02em;text-transform:none;opacity:.65;}
+.tc-showall{width:100%;margin-bottom:14px;}
 .tc-fchip-sort.is-on{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:#fff;}
 .tc-prow{list-style:none;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:11px;padding:12px 14px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px;}
 .tc-prow-top{display:flex;align-items:baseline;gap:10px;}
