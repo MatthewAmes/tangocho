@@ -1431,32 +1431,33 @@ export default function JpnFlashcards() {
     setCards((prev) => {
       const next = prev.map((c) => {
         if (c.id !== id) return c;
-        const firstProdTry = dir === "prod" && (c.rseen || 0) === 0;   // first attempt at producing = learning, not a lapse
+        const isProd = dir === "prod";
+        const firstProdTry = isProd && (c.rseen || 0) === 0;   // first attempt at producing = learning, not a lapse
+        const gt = isProd && t ? Math.round(t / WRITE_LATENCY_SCALE) : t;   // grading clock (see WRITE_LATENCY_SCALE)
         /* Hesitation predicts failure. In this deck, answers given in under 3 seconds
             are 87% correct and answers taking over 6 seconds are 71% correct — so a slow
             "got it" is much weaker evidence than a fast one, and treating them the same
             is why 503 studied cards produced only ten at level 4.
             Fast+right now advances two levels, slow+right advances one, and a right answer
             that took more than 10 seconds holds level instead of advancing. */
-        const fast = got && t > 0 && t < 3000;
-        const crawl = got && t >= 10000;
+        const fast = got && gt > 0 && gt < 3000;
+        const crawl = got && gt >= 10000;
         const delta = got ? (fast ? 0.08 : crawl ? 0 : 0.05) : firstProdTry ? 0 : -0.15;
         /* FSRS runs alongside the old counters rather than replacing them: seen/correct/
            level still drive the existing UI, and keeping them means nothing already
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
-        const grade = gradeFromLatency(got, t);
+        const grade = gradeFromLatency(got, gt);
         /* Recognition and production are tracked separately. Being able to read 火曜日 says
            very little about being able to produce it from "Tuesday", so one shared
            stability would over-schedule one direction and under-schedule the other. */
-        const isProd = dir === "prod";
         const prior = isProd ? (c.rfsrs || null) : (c.fsrs || seedFromHistory(c));
         const nextState = fsrsReview(prior, grade, Date.now(), retentionTarget);
         const fsrs = isProd ? c.fsrs : nextState;
         const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
         const base = { ...c, ease, fsrs, rfsrs, streak: got ? (c.streak || 0) + 1 : 0, last: Date.now() };
-        if (dir === "prod") {                       // EN→JP recall (production)
+        if (isProd) {                               // EN→JP recall (production)
           return {
             ...base,
             rseen: (c.rseen || 0) + 1,
@@ -2139,6 +2140,13 @@ function masteryScore(c) {            // higher = stronger; seen cards only
 
 // ── spaced repetition ──
 const DAY = 86400000;
+
+/* Writing a word by hand is slower than recognising it, and most of the gap is the pen,
+   not the recall — a 12-second handwrite is not a 12-second hesitation. Grading Write on
+   the recognition clock put nearly every answer in HARD, which is why production
+   intervals never grew. The latency is scaled before it reaches the grade; the raw time
+   is still what gets stored, because that's what the "think time" display means. */
+const WRITE_LATENCY_SCALE = 2.5;
 const REVIEW_INTERVALS = [0.007 * DAY, 1 * DAY, 3 * DAY, 7 * DAY, 16 * DAY, 35 * DAY]; // per mastery level (L0…L5)
 /* Production (EN→JP) unlocks once recognition is solid — stability of a week or more.
    Asking you to produce a word you can't yet recognise is just failure with extra steps;
@@ -3803,9 +3811,35 @@ function Scripts() {
   );
 }
 
+/* Write asks for production, so the pass is ordered by production need — words whose
+   writing is actually due, then words you can already read but write weakly, then the
+   rest. Sorting the whole deck by recognition mastery meant every visit reopened on the
+   same handful of words and never ended. */
+const WRITE_PASS = 20;
+function writePass(cards) {
+  const now = Date.now();
+  const due = cards.filter((c) => prodDue(c, now))
+    .sort((a, b) => ((a.rfsrs && a.rfsrs.due) || 0) - ((b.rfsrs && b.rfsrs.due) || 0));
+  const weak = cards.filter((c) => !prodDue(c, now) && recallUnlocked(c))
+    .sort((a, b) => (a.rlevel || 0) - (b.rlevel || 0));
+  const rest = cards.filter((c) => !recallUnlocked(c))
+    .sort((a, b) => masteryScore(a) - masteryScore(b));
+  return due.concat(weak, rest).slice(0, WRITE_PASS).map((c) => c.id);
+}
+
 function Write({ cards, onResult }) {
-  const order = useMemo(() => cards.slice().sort((a, b) => masteryScore(a) - masteryScore(b)), [cards]);
+  /* Held as ids, resolved against the live deck on every render: `cards` is replaced on
+     each grade, so ordering off it directly would re-sort mid-pass and slide the next
+     card out from under you. */
+  const [passIds, setPassIds] = useState(() => writePass(cards));
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
+  const order = useMemo(() => {
+    const byId = new Map(cards.map((c) => [c.id, c]));
+    return passIds.map((id) => byId.get(id)).filter(Boolean);
+  }, [passIds, cards]);
   const [pos, setPos] = useState(0);
+  const startPass = useCallback(() => { setPassIds(writePass(cardsRef.current)); setPos(0); }, []);
   /* Writing was feeding the scheduler without ever timing the answer, so every card here
      landed as a middling grade no matter how long it took. Production recall is the
      harder direction and the more valuable signal — it deserves the same fast/slow
@@ -3861,7 +3895,7 @@ function Write({ cards, onResult }) {
 
   useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos]);
   const next = (got) => {
-    if (card) onResult(card.id, got, undefined, thinkRef.current || undefined);
+    if (card) onResult(card.id, got, "prod", thinkRef.current || undefined);
     setRevealed(false); setGuide(false); setPos((p) => p + 1);
   };
 
@@ -3869,7 +3903,7 @@ function Write({ cards, onResult }) {
   if (!card) return (
     <div className="tc-done">
       <p className="tc-eyebrow">Writing set complete ✍️</p>
-      <div className="tc-donebtns"><button className="tc-btn tc-btn-primary" onClick={() => setPos(0)}>Go again</button></div>
+      <div className="tc-donebtns"><button className="tc-btn tc-btn-primary" onClick={startPass}>Go again</button></div>
     </div>
   );
 
@@ -3877,7 +3911,7 @@ function Write({ cards, onResult }) {
 
   return (
     <div className="tc-write">
-      <p className="tc-eyebrow">Write it from memory · {pos + 1}/{order.length}</p>
+      <p className="tc-eyebrow">Write it from memory · EN→JP · {pos + 1}/{order.length}</p>
       <div className="tc-card2">
         <p className="tc-sentgoal">{card.meaning}</p>
         <div className="tc-canvaswrap">
