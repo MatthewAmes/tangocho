@@ -5806,7 +5806,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-controls{display:flex;flex-direction:column;gap:20px;margin-bottom:24px;}
 .tc-field{border:0;margin:0;padding:0;}
 .tc-field legend{font-size:13px;color:var(--mut-2);margin-bottom:9px;padding:0;}
-.tc-seg{display:flex;gap:8px;flex-wrap:wrap;}
 .tc-segbtn{appearance:none;border:0;background:rgba(255,255,255,.07);color:var(--washi);
   font:inherit;font-size:14px;font-weight:500;min-height:40px;padding:9px 16px;border-radius:var(--r-s);cursor:pointer;transition:border-color .15s,background .15s,transform .1s;}
 .tc-segbtn:active{transform:scale(.96);}
@@ -5924,15 +5923,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-search::placeholder{color:var(--mut-2);}
 .tc-confirm{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mut-2);}
 .tc-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
-.tc-row{display:grid;grid-template-columns:auto 1.3fr 1.3fr 1.4fr auto auto;gap:12px;align-items:center;
-  padding:11px 8px;border-bottom:1px solid rgba(255,255,255,.07);font-size:14px;}
-.tc-rowkind{font-family:"Yu Gothic","Noto Sans JP",sans-serif;font-size:10px;color:var(--ai);
-  background:var(--washi-2);border-radius:5px;padding:3px 6px;text-align:center;white-space:nowrap;}
+.tc-front{}                                    /* front face; .tc-back carries the rotate */
+.tc-kana,.tc-study{}                           /* tab wrappers: hooks only, children are block-level */
 .tc-rowterm{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:19px;color:#fff;}
 .tc-rowread{display:flex;flex-direction:column;color:var(--washi);}
 .tc-rowread em{font-style:italic;color:var(--shu-soft);font-size:12px;letter-spacing:.08em;}
-.tc-rowmean{color:var(--mut-2);}
-.tc-rowstat{font-size:12px;color:var(--mut-2);font-variant-numeric:tabular-nums;text-align:right;}
 .tc-del{appearance:none;border:0;background:transparent;color:var(--mut-2);cursor:pointer;font-size:14px;min-width:32px;min-height:32px;border-radius:8px;
   padding:4px 6px;border-radius:6px;transition:all .15s;}
 .tc-del:hover{color:var(--shu-soft);background:rgba(216,72,47,.12);}
@@ -5956,8 +5951,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 @media (max-width:560px){
   .tc-term{font-size:46px;}
-  .tc-row{grid-template-columns:auto 1fr auto auto;}
-  .tc-rowread,.tc-rowstat{display:none;}
+  /* The reading drops under the term rather than disappearing. The old rule hid it,
+     which on a JPN 101 deck means 預言者 with no かな — unreadable, and on the exact
+     device the app is mostly used on. It was written for .tc-row, a table layout that
+     no longer exists. */
+  .tc-prow-top{flex-wrap:wrap;align-items:flex-start;}
+  .tc-prow-top .tc-rowterm{flex:1 1 0;min-width:0;}   /* basis 0, or flex wraps ✕ to its own line instead of shrinking the term */
+  .tc-prow-top .tc-rowread{flex-basis:100%;order:3;}
+  .tc-prow-top .tc-del{flex:none;margin-left:auto;}
 }
 @media (prefers-reduced-motion:reduce){
   .tc-card-inner{transition:none;}
@@ -6165,19 +6166,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-speakbtn:active{background:rgba(255,255,255,.25);}
 .tc-timetag{display:inline-block;margin-top:8px;font-size:11.5px;color:var(--mut-2);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);padding:4px 10px;border-radius:999px;font-variant-numeric:tabular-nums;}
 .tc-btn[disabled]{opacity:.5;cursor:default;}
-.tc-oral{display:flex;flex-direction:column;gap:12px;}
-.tc-oralchat{display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto;padding:4px 2px;}
-.tc-bubble{max-width:85%;padding:10px 14px;border-radius:14px;font-size:15px;line-height:1.55;white-space:pre-wrap;}
-.tc-bubble-you{align-self:flex-end;background:rgba(230,90,70,.22);border:1px solid rgba(230,90,70,.35);color:#fff;border-bottom-right-radius:4px;}
-.tc-bubble-kanda{align-self:flex-start;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:var(--washi,#efeae2);border-bottom-left-radius:4px;}
-.tc-bubblewho{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;opacity:.55;margin-bottom:3px;}
-.tc-oralbar{display:flex;gap:8px;align-items:stretch;}
-.tc-input{appearance:none;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px;color:#fff;padding:10px 12px;font-size:15px;}
-.tc-input:focus{outline:2px solid rgba(230,90,70,.5);}
-.tc-oralinput{flex:1;min-width:0;}
-.tc-oraldebrief{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;}
-.tc-oraldebrief h3{margin:0;font-size:16px;color:#fff;}
-.tc-debrieftext{margin:0;font-size:13.5px;line-height:1.6;color:var(--washi,#efeae2);white-space:pre-wrap;}
 .tc-conjask{margin-top:10px;font-size:15px;color:rgba(255,255,255,.65);font-style:italic;}
 .tc-conjanswer{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:32px;font-weight:600;color:#fff;text-align:center;line-height:1.3;}
 .tc-conjhow{font-size:15px;color:var(--shu-soft,#ff8a7a);font-variant-numeric:tabular-nums;}
