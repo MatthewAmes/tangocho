@@ -1777,6 +1777,16 @@ const SYNC_SKIP_KEYS = new Set(["jpn101:ping", "jpn101:syncLastPulled", "jpn101:
    cloud copy — the one remaining source of truth — with nothing. */
 let _deckCorrupt = false;
 
+/* ── after-pull notification ──
+   A pull writes merged values straight into localStorage, but anything already cached in a
+   module variable keeps serving the pre-merge copy. That is not just staleness: `_days` is
+   read once and then written back wholesale on every logDay(), so the first grade after a
+   pull serialises the STALE day log over the freshly merged one and pushes that to the
+   cloud — silently discarding the days the pull just brought down. Callers register here to
+   drop or re-read their cache once the merged values have landed. */
+const _afterPull = new Set();
+function onAfterPull(fn) { _afterPull.add(fn); return () => _afterPull.delete(fn); }
+
 function collectLocalSnapshot() {
   const snap = {};
   try {
@@ -1916,13 +1926,43 @@ function clearSyncPending() { try { window.localStorage.removeItem(SYNC_PENDING_
 function hasSyncPending() { try { return !!window.localStorage.getItem(SYNC_PENDING_KEY); } catch (e) { return false; } }
 
 let _retryTimer = null;
-async function pushCloudNow({ attempt = 0, keepalive = false } = {}) {
+/* The server blind-overwrites on POST, so two overlapping pushes can land out of order and
+   the older snapshot wins. Coalesce instead of racing: a call made while one is in flight
+   sets a flag and re-runs once, after, with a freshly collected snapshot. */
+let _pushInFlight = false, _pushAgain = false;
+async function pushCloudNow(opts = {}) {
+  if (_pushInFlight) { _pushAgain = true; return false; }
+  _pushInFlight = true;
+  try { return await pushCloudOnce(opts); }
+  finally {
+    _pushInFlight = false;
+    if (_pushAgain) { _pushAgain = false; pushCloudNow(); }
+  }
+}
+// Browsers reject a keepalive fetch whose body exceeds 64 KiB — and they reject it BEFORE
+// sending, by throwing. The real deck is ~284 KB, so the pagehide flush never once left the
+// device: it threw, the catch marked pending, and the last few seconds of grading before a
+// tab close reached the cloud only on that same device's next visit.
+const KEEPALIVE_MAX = 60 * 1024;
+async function pushCloudOnce({ attempt = 0, keepalive = false } = {}) {
   if (_cloudPushTimer) { clearTimeout(_cloudPushTimer); _cloudPushTimer = null; }
   if (_deckCorrupt) { setSyncState("idle"); return false; }   // damaged local deck: never overwrite the cloud copy with it
+  const body = JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() });
+  if (keepalive) {
+    // UTF-8 bytes, not UTF-16 units — Japanese text is 3 bytes per character, so
+    // body.length would understate the real size by roughly a third.
+    const bytes = new TextEncoder().encode(body).length;
+    if (bytes > KEEPALIVE_MAX) {
+      // Doomed before it starts. Flag it durably and let the next visit retry rather than
+      // throwing a TypeError into the console and calling that a failed save.
+      markSyncPending(); setSyncState("pending");
+      return false;
+    }
+  }
   const req = syncRequestOptions({
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ updatedAt: Date.now(), snapshot: collectLocalSnapshot() }),
+    body,
     keepalive,                        // lets the request outlive the page on pagehide
   });
   if (!req) { setSyncState("idle"); return false; }   // signed out: nothing to push anywhere
@@ -1941,6 +1981,8 @@ async function pushCloudNow({ attempt = 0, keepalive = false } = {}) {
     if (attempt < 5) {
       const wait = Math.min(30000, 1000 * Math.pow(2, attempt));   // 1s,2s,4s,8s,16s
       clearTimeout(_retryTimer);
+      // via the wrapper, not pushCloudOnce: the timer can fire while a user-triggered push
+      // is already running, and two overlapping POSTs can land out of order
       _retryTimer = setTimeout(() => pushCloudNow({ attempt: attempt + 1 }), wait);
     }
     return false;
@@ -1955,9 +1997,16 @@ if (typeof window !== "undefined") {
   // retry the moment there's any reason to think it might work now
   window.addEventListener("online", () => { if (hasSyncPending()) pushCloudNow(); });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && hasSyncPending()) pushCloudNow();
+    if (document.visibilityState === "hidden") {
+      // The real last-chance signal on mobile — switching apps fires this, and often no
+      // pagehide follows. A normal (non-keepalive) fetch started from a hidden tab is
+      // usually allowed to finish, and unlike keepalive it has no size limit, so this is
+      // the path that actually gets a full snapshot out.
+      if (_cloudPushTimer) pushCloudNow();
+    } else if (hasSyncPending()) pushCloudNow();
   });
-  // flush a debounced-but-not-yet-sent save before the page goes away
+  // Last resort. Anything larger than the keepalive cap is refused by the size guard in
+  // pushCloudOnce and left as pending for the next visit instead.
   window.addEventListener("pagehide", () => {
     if (_cloudPushTimer || hasSyncPending()) pushCloudNow({ keepalive: true });
   });
@@ -1977,6 +2026,9 @@ async function pullAndMergeCloud() {
     const merged = mergeSnapshots(localSnap, data.snapshot, data.updatedAt, lastPulled, SYNC_SKIP_KEYS);
     Object.keys(merged).forEach((k) => { try { window.localStorage.setItem(k, merged[k]); } catch (e) {} });
     try { window.localStorage.setItem("jpn101:syncLastPulled", String(Date.now())); } catch (e) {}
+    // Only now that every merged key is on disk: let cached readers drop/refresh, so the
+    // next write serialises the merged value rather than the pre-pull one.
+    _afterPull.forEach((fn) => { try { fn(Object.keys(merged)); } catch (e) {} });
     return true;
   } catch (e) { return false; /* offline — keep using local data */ }
 }
@@ -1999,6 +2051,13 @@ function setRetention(r) {
   retentionTarget = Math.min(0.97, Math.max(0.7, r));
   sSet(RETENTION_KEY, String(retentionTarget));   // async, fire-and-forget; schedules a push like any other setting
 }
+// read once at module load, so a target changed on another device needs this to take effect
+onAfterPull(() => {
+  try {
+    const r = Number(window.localStorage.getItem(RETENTION_KEY));
+    if (r >= 0.7 && r <= 0.97) retentionTarget = r;
+  } catch (e) {}
+});
 
 const DAYS_KEY = "jpn101:days";
 let _days = null;
@@ -2006,6 +2065,9 @@ async function loadDays() {
   if (_days === null) { try { const r = await sGet(DAYS_KEY); _days = r ? JSON.parse(r) : {}; } catch (e) { _days = {}; } }
   return _days;
 }
+// Dropping the cache is enough — the next loadDays() re-reads the merged log. Do NOT switch
+// logDay to a per-call read: it runs on every grade and relies on the cached object.
+onAfterPull(() => { _days = null; });
 async function logDay({ ok, ms, deck, fnew, area }) {
   await loadDays();
   const k = localDayKey();
@@ -2565,12 +2627,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
   /* ── buddy state ── */
   const [days, setDays] = useState(null);
-  useEffect(() => { loadDays().then((d) => setDays({ ...d })); }, [running]);
+  // Re-read after a pull too, not only when a session starts/ends — otherwise the streak and
+  // "N today" keep showing this device's pre-sync numbers until the next session toggle.
+  useEffect(() => {
+    const load = () => loadDays().then((d) => setDays({ ...d }));
+    load();
+    return onAfterPull(load);
+  }, [running]);
   const streak = useMemo(() => streakFrom(days), [days]);
   const todayKey = localDayKey();
   const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
   const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
   const [retention, setRetentionState] = useState(retentionTarget);
+  // module-level retentionTarget is refreshed by its own onAfterPull above, which is
+  // registered first (at module load) and so has already run when this callback fires
+  useEffect(() => onAfterPull(() => setRetentionState(retentionTarget)), []);
   /* What the memory model actually predicts. Shown because a scheduler you can't inspect
      is a scheduler you don't trust — and because "34 words are fading" is a far better
      reason to open the app than "you have 392 due". */
