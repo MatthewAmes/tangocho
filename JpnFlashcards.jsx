@@ -20,6 +20,7 @@ import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs"
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
+import { contrastSet } from "./tools/contrast.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -2355,7 +2356,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
+            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["spell", "Spelling"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -2393,6 +2394,8 @@ export default function JpnFlashcards() {
           <Write cards={cards} onResult={recordResult} />
         ) : tab === "plan" ? (
           <Plan cards={cards} />
+        ) : tab === "spell" ? (
+          <Contrast cards={cards} onResult={recordResult} />
         ) : tab === "kana" ? (
           <Kana />
         ) : tab === "scripts" ? (
@@ -5081,6 +5084,113 @@ const fmtSecs = (ms) => {
   const s = Math.round(ms / 1000);
   return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
 };
+
+/* ── spelling contrast ──
+   The one drill in the app that tests orthography directly. A learner can know 学校 as
+   meaning-plus-sound and still write がこう every time, and nothing else here would ever
+   notice: recognition cards keep coming back correct. Options differ from the right answer
+   by exactly one feature, so the contrast itself is the question. */
+function Contrast({ cards, onResult }) {
+  const [round, setRound] = useState(0);
+  const [pos, setPos] = useState(0);
+  const [picked, setPicked] = useState(null);
+  const [right, setRight] = useState(0);
+  const shownRef = useRef(0);
+
+  /* Weakest first, same ordering rule the rest of the app uses, filtered to cards that
+     actually have something to contrast (about 86% of the deck).
+
+     Built ONCE per round, not as a memo over `cards`. Answering calls recordResult, which
+     replaces the deck array, which would recompute the memo and reshuffle the list under
+     the learner mid-answer — the result panel ended up rendering against a different word
+     than the one just answered. */
+  const buildDrills = useCallback(() => {
+    const pool = cards
+      .filter((c) => (c.seen || 0) > 0 || (c.level || 0) > 0)
+      .slice()
+      .sort((a, b) => masteryScore(a) - masteryScore(b));
+    const src = pool.length >= 8 ? pool : cards.slice();
+    return contrastSet(src, 12, { seed: round * 31 });
+  }, [cards, round]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const [drills, setDrills] = useState(buildDrills);
+  const nextRound = () => {
+    const r = round + 1;
+    setRound(r);
+    const pool = cards.filter((c) => (c.seen || 0) > 0 || (c.level || 0) > 0)
+      .slice().sort((a, b) => masteryScore(a) - masteryScore(b));
+    setDrills(contrastSet(pool.length >= 8 ? pool : cards.slice(), 12, { seed: r * 31 }));
+    setPos(0); setRight(0);
+  };
+
+  const d = pos < drills.length ? drills[pos] : null;
+  useEffect(() => { shownRef.current = Date.now(); setPicked(null); }, [pos, round]);
+
+  const choose = (opt) => {
+    if (picked || !d) return;
+    const ok = opt === d.answer;
+    setPicked(opt);
+    if (ok) setRight((n) => n + 1);
+    const ms = Date.now() - shownRef.current;
+    onResult(d.id, ok, undefined, ms, "writing",
+             { failure: ok ? null : "orthography", skill: "production" });
+  };
+
+  if (!drills.length) {
+    return <div className="tc-empty"><p>Nothing to contrast yet — study a few words first and they will show up here.</p></div>;
+  }
+  if (!d) {
+    const pct = drills.length ? Math.round((right / drills.length) * 100) : 0;
+    return (
+      <div className="tc-done">
+        <p className="tc-eyebrow">Spelling round complete</p>
+        <div className="tc-bignum">{pct}<span>%</span></div>
+        <p className="tc-donesub">{right}/{drills.length} spelled right</p>
+        <div className="tc-donebtns">
+          <button className="tc-btn tc-btn-primary" onClick={nextRound}>Another round</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tc-study">
+      <div className="tc-progress">
+        <div className="tc-segrail" role="progressbar" aria-valuemin={0} aria-valuemax={drills.length} aria-valuenow={pos}>
+          {drills.map((_, i) => (
+            <span key={i} className={"tc-seg2" + (i === pos ? " is-now" : i < pos ? " is-ok" : "")} />
+          ))}
+        </div>
+        <span className="tc-progtext">{pos + 1} / {drills.length}</span>
+      </div>
+
+      <div className="tc-mcwrap" style={masteryStyle(d)}>
+        <span className="tc-kindchip tc-clozechip">{d.label}</span>
+        {d.emoji && <div className="tc-emoji tc-emoji-lg">{d.emoji}</div>}
+        <div className={"tc-term" + (d.term.length <= 5 ? " tc-term-" + d.term.length : "")}>{d.term}</div>
+        {d.meaning && <p className="tc-clozeen">{d.meaning}</p>}
+        <p className="tc-conjnote" style={{ marginTop: 0 }}>Which spelling is right?</p>
+        <div className="tc-mcopts">
+          {d.options.map((o) => {
+            const isAnswer = o === d.answer;
+            const cls = !picked ? "" : isAnswer ? " is-answer" : o === picked ? " is-wrongpick" : "";
+            return (
+              <button key={o} type="button" className={"tc-mcopt tc-mcopt-kana" + cls}
+                      disabled={!!picked} onClick={() => choose(o)}>{o}</button>
+            );
+          })}
+        </div>
+        {picked && (
+          <>
+            {/* The rule, not a scolding. With a minimal pair the contrast IS the lesson, so
+                the note is shown whether they got it right or wrong. */}
+            <p className="tc-conjnote">{d.note}</p>
+            <button className="tc-btn tc-btn-primary tc-btn-sm" onClick={() => setPos((p) => p + 1)}>Next →</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Kana() {
   const [script, setScript] = useState("hira");     // hira | kata
@@ -10127,6 +10237,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-noaudio:hover{background:rgba(255,255,255,.13);color:#fff;}
 .tc-listenreveal{margin-top:10px;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;font-size:22px;color:rgba(255,255,255,.8);}
 .tc-mcopts{display:flex;flex-direction:column;gap:9px;width:min(100%,380px);}
+
+/* Kana options are compared character by character, so they need to be big, monospaced-ish
+   and generously spaced — the whole task is spotting a one-kana difference. */
+.tc-mcopt-kana{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
+  font-size:21px;letter-spacing:.14em;text-align:center;font-weight:500;}
 .tc-mcopt{appearance:none;text-align:left;font:inherit;font-size:15.5px;line-height:1.4;color:#fff;
   background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.16);border-radius:13px;
   padding:12px 15px;cursor:pointer;transition:background .12s,border-color .12s;}
