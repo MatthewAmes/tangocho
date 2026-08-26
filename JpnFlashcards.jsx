@@ -3191,7 +3191,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         /* An introduction has nothing to reveal and only one way forward, so the whole
            card is the control. Tapping anywhere continues, and the audio button stops
            the click from bubbling so hearing it does not skip past it. */
-        <div className="tc-learn tc-learn-tap" role="button" tabIndex={0}
+        <div className="tc-learn tc-learn-tap" style={masteryStyle(live || card)} role="button" tabIndex={0}
              aria-label="Continue"
              onClick={() => grade(true)}
              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); grade(true); } }}>
@@ -3214,7 +3214,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           alongside so the task is "which word belongs here" rather than "guess the
           sentence". This is the only exercise that tests usage rather than translation. */}
       {fmt === "cloze" && clozeEx && (
-        <div className="tc-mcwrap">
+        <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className="tc-kindchip tc-clozechip">in context</span>
           <p className="tc-clozeen">{clozeEx.en}</p>
           <div className="tc-clozesent">
@@ -3243,7 +3243,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       )}
 
       {(fmt === "mc" || fmt === "listen") && (
-        <div className="tc-mcwrap">
+        <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className={"tc-kindchip " + (fmt === "listen" ? "tc-listenchip" : "tc-mcchip")}>
             {fmt === "listen" ? "listen" : "which one?"}
           </span>
@@ -3293,6 +3293,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
       {(fmt === "recall" || fmt === "type") && (
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
+           style={masteryStyle(live || card)}
            role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
         <div className="tc-card-inner">
           {/* FRONT — normally the Japanese; on a production card, the English, and you
@@ -4418,6 +4419,48 @@ function remapStats(stats, src) {
 }
 
 /** Probability you'd recall this card right now — used for the UI, not the schedule. */
+/* ── mastery as colour ──
+   FSRS stability IS the mastery number — how many days this memory survives — so the card
+   shows it directly rather than through a separate progress bar. Cool muted slate for a
+   memory that will not last the night, warming to gold as it starts holding for months.
+
+   Stability is logarithmic in practice (a card goes 2d -> 8d -> 30d -> 120d), so a linear
+   ramp would leave everything past the first week looking identical. The log curve spends
+   its resolution where the learning actually happens: 1d reads clearly different from 14d,
+   while 200d and 300d both just read "solid". */
+const MASTERY_CEIL = 365;                 // matches session.mjs ceilingDays
+/* Interpolated in RGB, not HSL: a hue sweep from slate-blue to gold runs through green on
+   the short arc and through violet/red on the long one. Straight RGB gives a desaturated
+   middle, which reads honestly as "in progress" and stays out of the way of the text. */
+const MASTERY_STOPS = [
+  [0.00, [107, 122, 148]],   // steel blue — new, or actively falling apart
+  [0.45, [150, 138, 132]],   // warm grey — finding its feet
+  [0.75, [201, 156, 92]],    // amber — holding for weeks
+  [1.00, [232, 191, 90]],    // gold — holding for months
+];
+function masteryWarmth(c) {
+  const st = (c && c.fsrs) || (c ? seedFromHistory(c) : null);
+  const S = st && st.S > 0 ? st.S : 0;
+  if (!S) return 0;
+  return Math.max(0, Math.min(1, Math.log(1 + S) / Math.log(1 + MASTERY_CEIL)));
+}
+function masteryColor(w) {
+  const x = Math.max(0, Math.min(1, w || 0));
+  let lo = MASTERY_STOPS[0], hi = MASTERY_STOPS[MASTERY_STOPS.length - 1];
+  for (let i = 0; i < MASTERY_STOPS.length - 1; i++) {
+    if (x >= MASTERY_STOPS[i][0] && x <= MASTERY_STOPS[i + 1][0]) { lo = MASTERY_STOPS[i]; hi = MASTERY_STOPS[i + 1]; break; }
+  }
+  const span = hi[0] - lo[0];
+  const t = span > 0 ? (x - lo[0]) / span : 0;
+  const ch = (i) => Math.round(lo[1][i] + (hi[1][i] - lo[1][i]) * t);
+  return ch(0) + "," + ch(1) + "," + ch(2);      // bare triplet, so CSS can vary the alpha
+}
+/* Everything the card needs, as custom properties. Returned as a style object so the value
+   rides on the element and CSS does the rest — no extra class permutations. */
+function masteryStyle(c) {
+  const w = masteryWarmth(c);
+  return { "--mastery": masteryColor(w), "--mastery-w": w.toFixed(3) };
+}
 function recallChance(c, now) {
   const st = c.fsrs || seedFromHistory(c);
   if (!st || !(st.S > 0)) return null;
@@ -9696,13 +9739,23 @@ function Freq() {
 }
 
 const CSS = `
-html,body{margin:0;padding:0;background:#0c1122;}
+html,body{margin:0;padding:0;background:#121212;}
 html{height:100%;}
 body{min-height:100%;overscroll-behavior-y:none;}
 .tc-root{
-  --ai:#1f2d54; --ai-deep:#16203c; --shu:#d8482f; --shu-soft:#e06848;
-  --sumi:#26221d; --washi:#f2ecde; --washi-2:#ece4d2; --line:#d8cdb4;
-  --mut:#7d7361; --mut-2:#9aa3bd; --violet:#7c5cff;
+  /* Google-dark base. The shu/washi token NAMES are kept because several hundred rules
+     reference them; only the values move, so the retheme is one edit rather than a sweep. */
+  --bg:#121212; --surface:#202124; --surface-2:#282a2d;
+  --ai:#202124; --ai-deep:#171717; --shu:#e0655a; --shu-soft:#ef8378;
+  --sumi:#0f0f0f; --washi:#e8eaed; --washi-2:#dadce0; --line:#3c4043;
+  --mut:#9aa0a6; --mut-2:#9aa0a6; --violet:#a78bfa;
+  /* Liquid glass */
+  --glass:rgba(255,255,255,.03); --glass-hi:rgba(255,255,255,.06);
+  --gloss:inset 0 1px 0 rgba(255,255,255,.10);
+  --glass-blur:blur(16px) saturate(140%);
+  /* Holographic foil edge — smooth, saturated, wraps back to the start so the sweep has
+     no visible seam when it animates. */
+  --foil:linear-gradient(115deg,#ff6b6b 0%,#ffa94d 14%,#ffd43b 28%,#69db7c 42%,#38d9a9 56%,#4dabf7 70%,#9775fa 84%,#ff6b6b 100%);
   --mono:ui-monospace,"SF Mono","Roboto Mono","JetBrains Mono",Menlo,monospace;
   --r-s:9px; --r-m:12px; --tap:46px;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable","Segoe UI",Roboto,"Helvetica Neue",sans-serif;
@@ -9710,10 +9763,10 @@ body{min-height:100%;overscroll-behavior-y:none;}
   font-variant-numeric:tabular-nums;
   color:var(--washi);
   background:
-    radial-gradient(90% 60% at 18% -8%, rgba(64,84,168,.55) 0%, rgba(64,84,168,0) 60%),
-    radial-gradient(70% 50% at 88% 4%, rgba(124,92,255,.28) 0%, rgba(124,92,255,0) 62%),
-    radial-gradient(90% 55% at 50% 112%, rgba(216,72,47,.20) 0%, rgba(216,72,47,0) 60%),
-    linear-gradient(180deg, #17203f 0%, #10162c 55%, #0c1122 100%);
+    radial-gradient(85% 55% at 15% -10%, rgba(77,171,247,.07) 0%, rgba(77,171,247,0) 60%),
+    radial-gradient(70% 50% at 88% 2%, rgba(151,117,250,.06) 0%, rgba(151,117,250,0) 62%),
+    radial-gradient(90% 55% at 50% 112%, rgba(255,107,107,.05) 0%, rgba(255,107,107,0) 60%),
+    #121212;
   position:relative;
   min-height:100vh; padding:22px 16px 44px; box-sizing:border-box;
 }
@@ -9792,15 +9845,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-hintline{text-align:center;font-size:12px;color:var(--mut-2);margin:14px 0 0;}
 
 /* buttons */
-.tc-btn{appearance:none;border:1px solid transparent;background:rgba(255,255,255,.09);
-  color:var(--washi);font:inherit;font-size:15px;font-weight:600;letter-spacing:.01em;
-  min-height:var(--tap);padding:11px 20px;border-radius:var(--r-m);
-  cursor:pointer;transition:background .15s,border-color .15s,filter .15s,transform .1s;}
-.tc-btn:hover{background:rgba(255,255,255,.12);}
-.tc-btn:active{transform:scale(.97);}
-.tc-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
-.tc-btn-primary{background:linear-gradient(135deg,#d8482f 0%,#e86a3c 100%);border-color:transparent;color:#fff;box-shadow:0 8px 20px -8px rgba(216,72,47,.65);}
-.tc-btn-primary:hover{filter:brightness(1.07);}
+
+
+
+
+
+
 .tc-btn-wide{width:100%;}
 .tc-btn-sm{min-height:38px;padding:8px 15px;font-size:13.5px;border-radius:var(--r-s);}
 .tc-btn-danger{border-color:rgba(216,72,47,.5);color:var(--shu-soft);}
@@ -10099,6 +10149,52 @@ body{min-height:100%;overscroll-behavior-y:none;}
 @media (prefers-reduced-motion:reduce){
   .tc-card-inner{transition:none;}
 }
+/* ── mastery colour ──
+   --mastery (an "r,g,b" triplet) and --mastery-w (0..1) are set per card in masteryStyle().
+   Both faces read them, so the warmth survives the flip. Deliberately restrained: the tint
+   lives in the rim, the glow and a rail, never behind the Japanese itself — a wash under
+   36px kanji costs more legibility than the signal is worth. The default keeps unstyled
+   uses (Kanji tab's own .tc-card-inner) looking exactly as before. */
+.tc-card{--mastery:107,122,148; --mastery-w:0;}
+.tc-card .tc-face{
+  border:1px solid rgba(var(--mastery), calc(.20 + .45 * var(--mastery-w)));
+  box-shadow:
+    0 24px 54px -22px rgba(0,0,0,.7),
+    inset 0 1px 0 rgba(255,255,255,.14),
+    0 0 calc(18px + 46px * var(--mastery-w)) calc(-14px + 2px * var(--mastery-w)) rgba(var(--mastery), calc(.10 + .38 * var(--mastery-w)));
+  transition:border-color .6s ease, box-shadow .6s ease;
+}
+/* The rail is the actual readable scale — a bar that fills and warms with stability, so
+   "how well do I know this" is answerable at a glance without reading a number. */
+.tc-card .tc-face::after{
+  content:"";position:absolute;left:26px;right:26px;bottom:14px;height:3px;border-radius:2px;
+  background:linear-gradient(90deg,
+    rgba(var(--mastery),.95) 0%,
+    rgba(var(--mastery),.95) calc(var(--mastery-w) * 100%),
+    rgba(255,255,255,.09) calc(var(--mastery-w) * 100%),
+    rgba(255,255,255,.09) 100%);
+  transition:background .6s ease;
+}
+@media (prefers-reduced-motion:reduce){
+  .tc-card .tc-face,.tc-card .tc-face::after{transition:none;}
+}
+/* The other exercise formats (learn / mc / listen / cloze) are flat panels rather than
+   flip cards, so they take the same warmth as a rim + rail without the 3D face rules. */
+.tc-mcwrap,.tc-learn{--mastery:107,122,148; --mastery-w:0; position:relative;}
+.tc-mcwrap::after,.tc-learn::after{
+  content:"";position:absolute;left:0;right:0;bottom:-10px;height:3px;border-radius:2px;
+  background:linear-gradient(90deg,
+    rgba(var(--mastery),.95) 0%,
+    rgba(var(--mastery),.95) calc(var(--mastery-w) * 100%),
+    rgba(255,255,255,.09) calc(var(--mastery-w) * 100%),
+    rgba(255,255,255,.09) 100%);
+  transition:background .6s ease;
+}
+@media (prefers-reduced-motion:reduce){
+  .tc-mcwrap::after,.tc-learn::after{transition:none;}
+}
+
+
 
 /* focus + insights */
 .tc-focus-btn{margin-top:10px;border-color:var(--shu);color:var(--shu-soft);}
@@ -10233,10 +10329,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-senterr{background:rgba(216,72,47,.14);border:1px solid rgba(216,72,47,.4);color:var(--shu-soft);padding:12px 14px;border-radius:10px;font-size:14px;}
 .tc-sentempty{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:30px;text-align:center;display:flex;flex-direction:column;gap:16px;align-items:center;color:var(--mut-2);}
 .tc-sentloading{text-align:center;color:var(--shu-soft);padding:40px 20px;font-size:15px;}
-.tc-card2{background:radial-gradient(140% 130% at 25% -15%, rgba(64,84,168,.28) 0%, rgba(124,92,255,.12) 45%, rgba(255,255,255,.05) 80%);
-  backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);
-  color:#fff;border-radius:26px;border-left:0;padding:26px 24px;
-  box-shadow:0 24px 54px -22px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14);display:flex;flex-direction:column;gap:14px;}
+
 .tc-sentgoal{margin:0;font-size:15px;color:rgba(255,255,255,.6);font-style:italic;}
 .tc-sentbig{font-size:20px;font-style:normal;font-weight:600;color:var(--sumi);}
 .tc-sentjp{margin:0;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:26px;line-height:2.1;color:#fff;font-weight:500;}
@@ -10553,6 +10646,96 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
 .tc-root :is(button,[role="tab"]):focus-visible{outline:2px solid var(--shu-soft);outline-offset:2px;border-radius:inherit;}
 @media (prefers-reduced-motion:reduce){.tc-root *{transition:none !important;animation:none !important;}}
+
+/* ── liquid glass + holographic foil edge ───────────────────────────────────────────────
+   The edge is a masked ::before, not a border. A gradient cannot be painted into a real
+   border, and border-image kills border-radius — so the pseudo-element is inset:0, filled
+   with the foil gradient, and then masked to a 1px rim: two stacked masks, one clipped to
+   the content box and one to the whole box, composited with exclude so only the
+   difference (the rim) survives. This is the padding-1px trick, done with masks so it
+   works on any border-radius and never affects layout.
+
+   pointer-events:none matters — the overlay covers the whole control, and without it the
+   rim would eat every click. */
+.tc-glass{
+  position:relative;
+  background:var(--glass);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--gloss), 0 18px 40px -24px rgba(0,0,0,.9);
+  border:0;
+}
+.tc-glass::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--foil);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask-composite:exclude;
+  opacity:.55;                       /* foil, not neon: the rim should read as a sheen */
+  pointer-events:none;
+  transition:opacity .18s ease;
+}
+.tc-glass:hover::before{opacity:.9;}
+
+/* Buttons: glass by default, foil rim on every one. */
+.tc-btn{
+  appearance:none;border:0;position:relative;
+  background:var(--glass);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  color:var(--washi);font:inherit;font-size:15px;font-weight:600;letter-spacing:.01em;
+  min-height:var(--tap);padding:11px 20px;border-radius:var(--r-m);
+  box-shadow:var(--gloss);
+  cursor:pointer;transition:background .15s,box-shadow .15s,transform .1s;}
+.tc-btn::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--foil);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask-composite:exclude;
+  opacity:.5;pointer-events:none;transition:opacity .18s ease;}
+.tc-btn:hover{background:var(--glass-hi);}
+.tc-btn:hover::before{opacity:.95;}
+.tc-btn:active{transform:scale(.97);}
+.tc-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+.tc-btn:disabled::before{opacity:.18;}
+/* Primary keeps the accent as a fill wash under the glass rather than a flat slab, so the
+   foil rim still reads on top of it. */
+.tc-btn-primary{
+  background:linear-gradient(135deg,rgba(224,101,90,.30) 0%,rgba(239,131,120,.18) 100%),var(--glass);
+  color:#fff;box-shadow:var(--gloss),0 10px 26px -14px rgba(224,101,90,.5);}
+.tc-btn-primary::before{opacity:.95;padding:2px;}   /* 2px rim marks the primary action */
+.tc-btn-primary:hover{background:linear-gradient(135deg,rgba(224,101,90,.42) 0%,rgba(239,131,120,.26) 100%),var(--glass-hi);}
+
+/* Cards: same glass, foil rim held back so it frames rather than shouts. */
+.tc-card2{
+  position:relative;
+  background:var(--glass);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  color:var(--washi);border-radius:26px;border:0;padding:26px 24px;
+  box-shadow:var(--gloss),0 24px 54px -22px rgba(0,0,0,.85);
+  display:flex;flex-direction:column;gap:14px;}
+.tc-card2::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--foil);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask-composite:exclude;
+  opacity:.38;pointer-events:none;}
+
+@media (prefers-reduced-motion:reduce){
+  .tc-glass::before,.tc-btn,.tc-btn::before{transition:none;}
+}
+/* backdrop-filter is well supported now, but where it is not the glass would render as a
+   nearly invisible 3% white film over the page. Fall back to an opaque surface. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .tc-glass,.tc-btn,.tc-card2{background:var(--surface);}
+  .tc-btn-primary{background:linear-gradient(135deg,#8c3b34 0%,#a3524a 100%);}
+}
 `;
 
 /* ── mount ── */
