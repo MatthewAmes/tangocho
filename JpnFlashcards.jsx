@@ -23,7 +23,7 @@ import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } 
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
-  pushRecent, confusionFrom, buildRecovery, latencyNorms, latencyVerdict,
+  pushRecent, confusionFrom, buildRecovery, scoreAnswer, isMemoryCheck, latencyNorms, latencyVerdict,
   posterior, stateOf, STATE, STATE_LABEL, abilityFrom,
 } from "./tools/learner.mjs";
 import {
@@ -2448,6 +2448,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* One mark per QUEUE POSITION, not per card: an item can legitimately appear several
      times in a session as learning steps, and each showing is its own beat of progress. */
   const startStateRef = useRef(null);
+  const [xp, setXp] = useState(0);
+  const [award, setAward] = useState(null);      // {points, reasons, memory} for the flyup
   const [marks, setMarks] = useState([]);
   const [combo, setCombo] = useState(0);
   const [bestCombo, setBestCombo] = useState(0);
@@ -2735,6 +2737,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
     setMarks([]);
+    setXp(0); setAward(null);
     /* Snapshot the memory state the session STARTS from, so the summary can report what
        actually moved. Accuracy answers "how did I do at answering"; this answers "what
        changed in my memory", which is the only thing a review session is for. */
@@ -2894,6 +2897,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        should differ. The predicted-recall figure is kept so the model's confidence can
        later be checked against what actually happened. */
     const evSkill = skillForFormat(fmt);
+    /* Score the ANSWER, not the outcome. Every input here is already in the evidence
+       record — cue level, latency against this learner's own median for this skill+format,
+       and how long the scheduler had left the item alone. */
+    {
+      const stabDays = (live && live.fsrs && live.fsrs.S) || 0;
+      const lv = latencyVerdict(think, evSkill, fmt, latencyNormsRef.current);
+      const sc = scoreAnswer({ ok: got, cue: cueLevel, verdict: lv, comeback, stabilityDays: stabDays });
+      setXp((n) => n + sc.points);
+      setAward({ ...sc, memory: isMemoryCheck(stabDays, got), at: Date.now() });
+    }
     if (evSkill) {
       const rec = makeEvidence({
         id: c.id, deck: c.src || "vocab", format: fmt, skill: evSkill,
@@ -3167,6 +3180,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           if (!bits.length) return null;
           return <p className="tc-donemove">{bits.join(" · ")}</p>;
         })()}
+        {xp > 0 && <p className="tc-donexp">{xp} <span>xp earned</span></p>}
         {bestCombo >= 2 && (
           <p className="tc-donecombo">best run: <b>{bestCombo}</b> instant recalls back to back</p>
         )}
@@ -3247,6 +3261,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           ))}
         </div>
         <span className="tc-progtext">{passed.size} / {poolSize}</span>
+        {xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
         {combo >= 2 && (
           <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
             {combo}<i>×</i>
@@ -3265,6 +3280,28 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           🔊 Voice {voiceOn ? "on" : "off"}
         </button>
       </div>
+
+      {/* The moment spacing visibly paid off. The scheduler had left this item alone for
+          weeks precisely because it predicted the memory would hold — this is that
+          prediction coming true, and it was previously invisible. */}
+      {award && award.memory && (
+        <div className="tc-memcheck" key={"mc" + award.at} role="status">
+          <span aria-hidden="true">🧠</span>
+          <span>Memory check — you still had it.</span>
+        </div>
+      )}
+
+      {/* What the last answer earned, and why. Showing the reasons is the whole point: the
+          number is only motivating if it is legible, and "unaided +8" teaches what the
+          system values in a way a bare total never does. */}
+      {award && award.points > 0 && (
+        <div className="tc-award" key={"aw" + award.at} aria-hidden="true">
+          <b>+{award.points}</b>
+          {award.reasons.filter((r) => r.label !== "attempt").map((r) => (
+            <span key={r.label}>{r.label}</span>
+          ))}
+        </div>
+      )}
 
       {/* A rescue reads as help, never as a scolding. It appears only on the first stage;
           the later rungs just get on with it, because by then the framing is established
@@ -9985,6 +10022,27 @@ body{min-height:100%;overscroll-behavior-y:none;}
   backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
   box-shadow:var(--gloss);animation:tc-rescue-in .32s cubic-bezier(.2,.8,.3,1);}
 .tc-rescueicon{color:rgb(105,219,124);font-size:11px;}
+.tc-xp{font-family:var(--mono);font-size:12px;font-weight:700;color:rgb(232,191,90);
+  letter-spacing:.04em;animation:tc-xp-bump .3s ease;}
+.tc-xp i{font-style:normal;opacity:.6;margin-left:2px;font-size:10px;}
+@keyframes tc-xp-bump{from{transform:scale(1.35);}to{transform:scale(1);}}
+.tc-award{display:flex;align-items:center;gap:7px;margin:0 0 12px;font-family:var(--mono);
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut-2);
+  animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
+.tc-award b{font-size:14px;color:rgb(232,191,90);letter-spacing:0;}
+.tc-award span{padding:2px 7px;border-radius:99px;background:rgba(255,255,255,.05);}
+@keyframes tc-award-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+.tc-memcheck{display:flex;align-items:center;gap:9px;margin:0 0 12px;padding:10px 14px;
+  border-radius:12px;font-size:13.5px;font-weight:600;color:var(--washi);
+  background:linear-gradient(135deg,rgba(151,117,250,.18),rgba(77,171,247,.10));
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--gloss);animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
+.tc-donexp{margin:-10px 0 14px;font-family:var(--mono);font-size:15px;font-weight:700;
+  color:rgb(232,191,90);letter-spacing:.04em;}
+.tc-donexp span{font-size:11px;font-weight:600;opacity:.65;letter-spacing:.14em;text-transform:uppercase;}
+@media (prefers-reduced-motion:reduce){
+  .tc-xp,.tc-award,.tc-memcheck{animation:none;}
+}
 @keyframes tc-rescue-in{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:none;}}
 @media (prefers-reduced-motion:reduce){ .tc-rescue{animation:none;} }
 @media (prefers-reduced-motion:reduce){ .tc-seg2{transition:none;} }

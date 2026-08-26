@@ -10,7 +10,7 @@ import {
   DIRECTIONS, pushRecent, recentAcc, predictSuccess, chooseIntervention, skillAfterFailure,
   posterior, stateOf, STATE, practiceValue, abilityFrom, planAfterFailure,
   latencyNorms, latencyVerdict, confusionFrom,
-  buildRecovery, FAILURES,
+  buildRecovery, FAILURES, scoreAnswer, isMemoryCheck,
 } from "./learner.mjs";
 
 let fail = 0, run = 0;
@@ -477,6 +477,71 @@ t("a very low failed cue still leaves one workable stage", () => {
     const st = buildRecovery(f, { failedCue: CUE.SHOWN });
     if (!st.length) throw new Error(f + " left nothing at the lowest cue");
   }
+});
+
+
+console.log("\n=== scoring rewards learning behaviour, not just correctness ===");
+t("a miss is never worth zero — attempting a hard item is the behaviour we want", () => {
+  const s = scoreAnswer({ ok: false, cue: CUE.FREE });
+  if (s.points <= 0) throw new Error("a miss scored " + s.points);
+});
+t("nothing is ever subtracted", () => {
+  for (const ok of [true, false]) {
+    for (const cue of [0, 1, 2, 3, 4, 5]) {
+      for (const verdict of ["fast", "normal", "slow", null]) {
+        const s = scoreAnswer({ ok, cue, verdict, stabilityDays: 0 });
+        if (s.points < 0) throw new Error("negative score");
+        if (s.reasons.some((r) => r.points < 0)) throw new Error("negative reason");
+      }
+    }
+  }
+});
+t("producing it cold beats picking it from four options", () => {
+  const picked = scoreAnswer({ ok: true, cue: CUE.CHOOSE }).points;
+  const cold   = scoreAnswer({ ok: true, cue: CUE.FREE }).points;
+  gt(cold, picked);
+});
+t("less scaffolding scores monotonically higher", () => {
+  let prev = -1;
+  for (const cue of [CUE.CHOOSE, CUE.STRONG, CUE.PARTIAL, CUE.FREE]) {
+    const p = scoreAnswer({ ok: true, cue }).points;
+    if (p < prev) throw new Error("score went down as support was removed");
+    prev = p;
+  }
+});
+t("beating your own median pays, being slow costs nothing", () => {
+  const fast = scoreAnswer({ ok: true, cue: CUE.FREE, verdict: "fast" }).points;
+  const norm = scoreAnswer({ ok: true, cue: CUE.FREE, verdict: "normal" }).points;
+  const slow = scoreAnswer({ ok: true, cue: CUE.FREE, verdict: "slow" }).points;
+  gt(fast, norm);
+  eq(slow, norm, "slow should not be penalised, only unrewarded");
+});
+t("remembering something left alone for months is the biggest single bonus", () => {
+  const fresh = scoreAnswer({ ok: true, cue: CUE.FREE, stabilityDays: 1 }).points;
+  const held  = scoreAnswer({ ok: true, cue: CUE.FREE, stabilityDays: 200 }).points;
+  gt(held, fresh);
+  const bonus = held - fresh;
+  if (bonus < 10) throw new Error("delayed-retention bonus too small to notice: " + bonus);
+});
+t("the held bonus is capped, not unbounded", () => {
+  const a = scoreAnswer({ ok: true, cue: CUE.FREE, stabilityDays: 200 }).points;
+  const b = scoreAnswer({ ok: true, cue: CUE.FREE, stabilityDays: 5000 }).points;
+  eq(a, b, "a five-year interval should not score more than a five-month one");
+});
+t("a comeback pays on the rescue even though the item was missed first", () => {
+  const plain = scoreAnswer({ ok: true, cue: CUE.CHOOSE }).points;
+  const back  = scoreAnswer({ ok: true, cue: CUE.CHOOSE, comeback: true }).points;
+  gt(back, plain);
+});
+t("every point in the total is explained by a reason", () => {
+  const s = scoreAnswer({ ok: true, cue: CUE.FREE, verdict: "fast", comeback: true, stabilityDays: 90 });
+  const sum = s.reasons.reduce((n, r) => n + r.points, 0);
+  eq(sum, s.points, "reasons must account for the whole score");
+});
+t("memory check fires only on a correct answer after a real gap", () => {
+  eq(isMemoryCheck(60, true), true);
+  eq(isMemoryCheck(60, false), false, "a miss is not a memory check");
+  eq(isMemoryCheck(2, true), false, "a card seen yesterday is not a memory check");
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} learner tests passed`);

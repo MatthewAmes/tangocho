@@ -675,6 +675,76 @@ export const FAILURE_PLAN = {
   context:     { skill: "production",  cue: CUE.FREE,    note: "secure the word before using it" },
 };
 
+/* ── scoring what actually predicts retention ──
+   The obvious scheme is +10 for correct. It is also the wrong one: it pays the same for
+   picking a word out of four options as for producing it cold, and it pays nothing for the
+   two things that most reliably signal a memory is consolidating — retrieving with less
+   support than last time, and retrieving something that has been left alone for weeks.
+
+   So the score is built from the evidence already logged per answer. Every term below is a
+   quantity the app records anyway; nothing here needs new instrumentation.
+
+   Two deliberate refusals:
+     - A miss is never worth zero. Attempting a hard item IS the behaviour spaced repetition
+       is trying to produce, and zeroing it teaches avoidance of exactly the material that
+       needs the work.
+     - Nothing is subtracted, ever. A score that can go down turns a study tool into
+       something with a losing condition, and the only winning move becomes not studying
+       the hard cards. */
+export const SCORE = {
+  attempt: 2,          // showing up to a hard one
+  correct: 10,
+  perCueRung: 4,       // less scaffolding = more credit
+  fast: 6,             // beat your own median for this skill+format
+  comeback: 12,        // completed a rescue ladder
+  memoryCapDays: 140,  // beyond ~5 months the bonus stops growing
+  memoryMax: 20,
+};
+
+/** Points for one answer, with the reasons attached so the UI can show WHY.
+ *  All inputs are already in the evidence record. `verdict` is latencyVerdict()'s output. */
+export function scoreAnswer({ ok, cue, verdict, comeback = false, stabilityDays = 0 } = {}) {
+  const reasons = [];
+  let points = SCORE.attempt;
+  reasons.push({ label: "attempt", points: SCORE.attempt });
+
+  if (ok) {
+    points += SCORE.correct;
+    reasons.push({ label: "correct", points: SCORE.correct });
+
+    /* Credit for the ABSENCE of help. CUE.CHOOSE is the floor of real retrieval (pick from
+       options); every rung above it removed some scaffolding, so it earns another step. */
+    const rungs = Math.max(0, (typeof cue === "number" ? cue : CUE.CHOOSE) - CUE.CHOOSE);
+    if (rungs > 0) {
+      const p = rungs * SCORE.perCueRung;
+      points += p;
+      reasons.push({ label: "unaided", points: p });
+    }
+    if (verdict === "fast") {
+      points += SCORE.fast;
+      reasons.push({ label: "fast", points: SCORE.fast });
+    }
+    /* Recalling something the scheduler had let lie for weeks is the strongest evidence of
+       a durable memory that a single answer can give, so it is the largest single bonus. */
+    if (stabilityDays >= 21) {
+      const p = Math.min(SCORE.memoryMax, Math.round((Math.min(stabilityDays, SCORE.memoryCapDays) / SCORE.memoryCapDays) * SCORE.memoryMax));
+      if (p > 0) { points += p; reasons.push({ label: "held", points: p }); }
+    }
+  }
+  if (comeback) {
+    points += SCORE.comeback;
+    reasons.push({ label: "comeback", points: SCORE.comeback });
+  }
+  return { points, reasons };
+}
+
+/* A card the scheduler had left alone for weeks, answered right, is worth calling out —
+   it is the moment spacing visibly paid off, and it is invisible in the current UI. */
+export const MEMORY_CHECK_DAYS = 21;
+export function isMemoryCheck(stabilityDays, ok) {
+  return !!ok && (stabilityDays || 0) >= MEMORY_CHECK_DAYS;
+}
+
 /* ── recovery: turn a miss into a sequence that ends in success ──
    A failure used to do one thing: lower the cue by a rung and show the same card again
    later. That is a correction, not a rescue — the learner still meets the item at roughly
