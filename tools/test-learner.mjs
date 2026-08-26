@@ -10,6 +10,7 @@ import {
   DIRECTIONS, pushRecent, recentAcc, predictSuccess, chooseIntervention, skillAfterFailure,
   posterior, stateOf, STATE, practiceValue, abilityFrom, planAfterFailure,
   latencyNorms, latencyVerdict, confusionFrom,
+  buildRecovery, FAILURES,
 } from "./learner.mjs";
 
 let fail = 0, run = 0;
@@ -407,6 +408,75 @@ t("the words this learner actually mixes up are remembered", () => {
 t("correct answers contribute no confusion", () => {
   const evs = [makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true, confused: "b" })];
   eq(confusionFrom(evs).size, 0);
+});
+
+
+console.log("\n=== recovery: a miss becomes a ladder that ends in success ===");
+t("every failure kind has a ladder", () => {
+  for (const f of FAILURES) {
+    const st = buildRecovery(f);
+    if (!st.length) throw new Error("no recovery for " + f);
+  }
+});
+t("a ladder starts at or below the cue that failed, never above", () => {
+  for (const f of FAILURES) {
+    for (const failedCue of [CUE.CHOOSE, CUE.STRONG, CUE.PARTIAL, CUE.FREE]) {
+      for (const s of buildRecovery(f, { failedCue })) {
+        if (s.cue > failedCue) throw new Error(`${f}: stage cue ${s.cue} > failed ${failedCue}`);
+      }
+    }
+  }
+});
+t("it climbs — each stage asks for at least as much as the one before", () => {
+  for (const f of FAILURES) {
+    const st = buildRecovery(f);
+    for (let i = 1; i < st.length; i++) {
+      if (st[i].cue < st[i - 1].cue) throw new Error(f + " goes backwards at stage " + i);
+    }
+  }
+});
+t("exactly one stage is marked last, and it is the final one", () => {
+  for (const f of FAILURES) {
+    const st = buildRecovery(f);
+    const lasts = st.filter((s) => s.last);
+    if (lasts.length !== 1) throw new Error(f + " has " + lasts.length + " last stages");
+    if (!st[st.length - 1].last) throw new Error(f + ": last flag is not on the final stage");
+  }
+});
+t("a reading fumble routes through hearing it, not back to meaning", () => {
+  const st = buildRecovery("reading");
+  eq(st[0].skill, "listening", "reading rescue should start by hearing the word");
+});
+t("a blank restarts from recognition", () => {
+  eq(buildRecovery("blank")[0].skill, "recognition");
+});
+t("caps drop rungs the item cannot support", () => {
+  const noAudio = buildRecovery("reading", { caps: { listen: false } });
+  if (noAudio.some((s) => s.skill === "listening")) throw new Error("kept a listening stage with no audio");
+  if (!noAudio.length) throw new Error("should still offer something");
+});
+t("every stage carries a renderable format and direction", () => {
+  for (const f of FAILURES) {
+    for (const s of buildRecovery(f)) {
+      if (!s.format) throw new Error(f + " stage has no format");
+      if (!s.direction) throw new Error(f + " stage has no direction");
+    }
+  }
+});
+t("the opening stage explains itself, later ones do not repeat it", () => {
+  const st = buildRecovery("production");
+  if (!st[0].note) throw new Error("first stage should carry the note");
+  if (st.slice(1).some((s) => s.note)) throw new Error("later stages should not repeat the note");
+});
+t("an unknown failure kind yields nothing rather than guessing", () => {
+  eq(buildRecovery("nonsense").length, 0);
+  eq(buildRecovery(null).length, 0);
+});
+t("a very low failed cue still leaves one workable stage", () => {
+  for (const f of FAILURES) {
+    const st = buildRecovery(f, { failedCue: CUE.SHOWN });
+    if (!st.length) throw new Error(f + " left nothing at the lowest cue");
+  }
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} learner tests passed`);

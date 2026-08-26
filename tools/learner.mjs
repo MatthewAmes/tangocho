@@ -675,6 +675,79 @@ export const FAILURE_PLAN = {
   context:     { skill: "production",  cue: CUE.FREE,    note: "secure the word before using it" },
 };
 
+/* ── recovery: turn a miss into a sequence that ends in success ──
+   A failure used to do one thing: lower the cue by a rung and show the same card again
+   later. That is a correction, not a rescue — the learner still meets the item at roughly
+   the demand that just beat them, and the session's emotional shape is "you got it wrong,
+   here it is again".
+
+   A recovery is a short staged ladder instead. It starts BELOW the level that failed —
+   low enough to be a near-certain success — and climbs back to the demand that was
+   originally being asked, over two or three beats. The learner ends on a success they
+   actually produced, which is both the better memory outcome (successful retrieval is what
+   builds stability; a failed one builds very little) and the better game beat.
+
+   Which ladder depends on WHAT broke, which the app already diagnoses into seven kinds.
+   A reading fumble means the word WAS retrieved and only the form slipped, so it routes
+   through hearing it rather than back to meaning; a blank means nothing came at all and
+   has to restart from recognition. Each ladder ends at or just below the demand that
+   failed, never above it.
+
+   Pure and data-only: it returns descriptors, and the caller renders them. */
+export const RECOVERY_LADDERS = {
+  meaning:     [{ skill: "recognition", cue: CUE.CHOOSE }, { skill: "recognition", cue: CUE.FREE }],
+  blank:       [{ skill: "recognition", cue: CUE.CHOOSE }, { skill: "recognition", cue: CUE.STRONG }, { skill: "recognition", cue: CUE.FREE }],
+  reading:     [{ skill: "listening",   cue: CUE.CHOOSE }, { skill: "production",  cue: CUE.PARTIAL }, { skill: "production", cue: CUE.FREE }],
+  production:  [{ skill: "recognition", cue: CUE.CHOOSE }, { skill: "production",  cue: CUE.PARTIAL }, { skill: "production", cue: CUE.FREE }],
+  orthography: [{ skill: "production",  cue: CUE.PARTIAL }, { skill: "production", cue: CUE.FREE }],
+  listening:   [{ skill: "listening",   cue: CUE.CHOOSE }, { skill: "listening",   cue: CUE.FREE }],
+  context:     [{ skill: "recognition", cue: CUE.CHOOSE }, { skill: "context",     cue: CUE.CONTEXT }],
+};
+/* Shown above each rescue step. Deliberately not "wrong" or "try again": the framing is
+   that the system is helping you crack this one, because that is what it is doing. */
+export const RECOVERY_NOTE = {
+  meaning:     "Let's find it again.",
+  blank:       "Nothing came. Start from the meaning.",
+  reading:     "You had the word — the reading slipped. Hear it first.",
+  production:  "Let's build back up to producing it.",
+  orthography: "Close. Let's nail the form.",
+  listening:   "Listen again, with options this time.",
+  context:     "Secure the word, then use it.",
+};
+
+/** Stages for rescuing one miss. `caps` drops rungs the item cannot support (no audio, no
+ *  typeable reading), and the ladder is trimmed so it never asks for MORE than the demand
+ *  that just failed — a miss is not a reason to raise the bar. Returns [] when there is
+ *  nothing sensible to do, and the caller falls back to a plain requeue. */
+export function buildRecovery(failure, opts = {}) {
+  const caps = opts.caps || {};
+  const failedAt = typeof opts.failedCue === "number" ? opts.failedCue : null;
+  const ladder = RECOVERY_LADDERS[failure];
+  if (!ladder) return [];
+  const usable = ladder.filter((s) => {
+    if (s.skill === "listening" && caps.listen === false) return false;
+    if (s.skill === "production" && caps.type === false) return false;
+    if (s.skill === "context" && caps.context === false) return false;
+    return true;
+  });
+  const capped = failedAt === null ? usable : usable.filter((s) => s.cue <= failedAt);
+  /* Nothing in this ladder is gentle enough — e.g. an orthography miss at CUE.CHOOSE, when
+     that ladder only offers PARTIAL and FREE. Falling back to the ladder's own lowest rung
+     would hand back a HARDER question than the one just failed, so drop out of the skill
+     entirely and go back to picking it out, which is the universal floor. */
+  const stages = capped.length
+    ? capped
+    : [{ skill: "recognition", cue: Math.min(CUE.CHOOSE, failedAt === null ? CUE.CHOOSE : failedAt) }];
+  return stages.map((s, i) => ({
+    ...s,
+    stage: i,
+    last: i === stages.length - 1,
+    format: formatFromSkillCue(s.skill, s.cue),
+    direction: directionFor(s.skill),
+    note: i === 0 ? (RECOVERY_NOTE[failure] || "Let's crack this one.") : null,
+  }));
+}
+
 export function planAfterFailure(failure) {
   return FAILURE_PLAN[failure] || null;
 }

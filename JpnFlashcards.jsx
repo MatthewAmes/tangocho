@@ -23,7 +23,7 @@ import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } 
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
-  pushRecent, confusionFrom, latencyNorms, latencyVerdict,
+  pushRecent, confusionFrom, buildRecovery, latencyNorms, latencyVerdict,
   posterior, stateOf, STATE, STATE_LABEL, abilityFrom,
 } from "./tools/learner.mjs";
 import {
@@ -2770,6 +2770,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const live = card ? (cards.find((c) => c.id === card.id) || card) : null;
   const intervention = useMemo(() => {
     if (!card) return null;
+    /* A rescue stage IS the decision — it was derived from what actually broke, so the
+       policy does not get to re-derive a format here and undo the ladder. */
+    if (card._rescue) {
+      const s = card._rescue;
+      return { skill: s.skill, direction: s.direction, cue: s.cue, format: s.format,
+               expected: null, rescue: s };
+    }
     const base = card._pick;
     if (!base) return null;                       // came from a section drill, not Smart Review
     return interventionFor(
@@ -2853,7 +2860,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const think = thinkRef.current || 0;
     // The combo counts instant recall, not merely correct answers — it rewards the thing
     // that actually correlates with remembering the word tomorrow.
-    setMarks((m) => { const n = m.slice(); n[pos] = got ? (think > 0 && think < 3000 ? "fast" : "ok") : "miss"; return n; });
+    /* Completing the LAST rung of a rescue is the moment the item flipped from lost to
+       recovered — the most earned success in the session, so it gets its own mark and its
+       own flash rather than being scored as an ordinary correct answer. */
+    const comeback = got && card && card._rescue && card._rescue.last;
+    setMarks((m) => { const n = m.slice(); n[pos] = got ? (comeback ? "back" : think > 0 && think < 3000 ? "fast" : "ok") : "miss"; return n; });
+    if (comeback) setFlash(Date.now());
     if (got && think > 0 && think < 3000) {
       setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
       setFlash(Date.now());
@@ -2925,7 +2937,26 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       const m = (missRef.current[c.id] || 0) + 1;
       missRef.current[c.id] = m;
       if (m <= REQUEUE_CAP) {
-        setQueue((prev) => { const next = prev.slice(); next.splice(Math.min(pos + 1 + REQUEUE_GAP, next.length), 0, c); return next; });
+        /* A miss now schedules a RECOVERY: a short ladder starting below what just beat you
+           and climbing back, so the item is last met as a SUCCESS. Successful retrieval is
+           what builds stability — a failed one builds very little — so ending on the win is
+           the better memory outcome as well as the better beat. Stages go in back-to-back
+           immediately; a rescue only works while the miss is still live in mind. Falls back
+           to the old spaced requeue when there is no sensible ladder. */
+        const stages = buildRecovery(outcome && outcome.failure, {
+          failedCue: intervention ? intervention.cue : null,
+          caps: (c._pick && c._pick.caps) || {},
+        });
+        setQueue((prev) => {
+          const next = prev.slice();
+          if (stages.length) {
+            next.splice(Math.min(pos + 1, next.length), 0,
+                        ...stages.map((s) => ({ ...c, _rescue: s, _step: 0 })));
+          } else {
+            next.splice(Math.min(pos + 1 + REQUEUE_GAP, next.length), 0, c);
+          }
+          return next;
+        });
       }
     }
     setFlipped(false);
@@ -3234,6 +3265,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           🔊 Voice {voiceOn ? "on" : "off"}
         </button>
       </div>
+
+      {/* A rescue reads as help, never as a scolding. It appears only on the first stage;
+          the later rungs just get on with it, because by then the framing is established
+          and repeating it would turn a two-beat recovery into nagging. */}
+      {intervention && intervention.rescue && intervention.rescue.note && (
+        <div className="tc-rescue" role="status">
+          <span className="tc-rescueicon" aria-hidden="true">◆</span>
+          <span>{intervention.rescue.note}</span>
+        </div>
+      )}
 
       {/* ── first contact ──
           A word you have never met cannot be retrieved, and asking anyway just teaches it
@@ -9937,6 +9978,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-seg2.is-fast{background:rgba(232,191,90,.95);}
 .tc-seg2.is-miss{background:rgba(154,160,166,.45);}
 .tc-seg2.is-now{background:rgba(255,255,255,.85);transform:scaleY(2.2);}
+.tc-seg2.is-back{background:rgba(105,219,124,.95);}   /* recovered: the one green in the app */
+.tc-rescue{display:flex;align-items:center;gap:9px;margin:0 0 14px;padding:10px 14px;
+  border-radius:12px;font-size:13.5px;font-weight:600;letter-spacing:.01em;
+  color:var(--washi);background:rgba(255,255,255,.04);
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--gloss);animation:tc-rescue-in .32s cubic-bezier(.2,.8,.3,1);}
+.tc-rescueicon{color:rgb(105,219,124);font-size:11px;}
+@keyframes tc-rescue-in{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion:reduce){ .tc-rescue{animation:none;} }
 @media (prefers-reduced-motion:reduce){ .tc-seg2{transition:none;} }
 
 
