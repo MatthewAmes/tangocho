@@ -2355,7 +2355,7 @@ export default function JpnFlashcards() {
             </div>
           </div>
           <nav className="tc-tabs" role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
+            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -2382,6 +2382,10 @@ export default function JpnFlashcards() {
           <Kanji cards={cards} />
         ) : tab === "dates" ? (
           <Dates />
+        ) : tab === "sentences" ? (
+          /* Fill-in-the-blank and translation, the only exercises that put a word in a
+             SENTENCE rather than in isolation. Fully built and previously unreachable. */
+          <Sentences cards={cards} onResult={recordResult} />
         ) : tab === "write" ? (
           /* Write keeps its render branch and its component. The tab chip is gone for now,
              not the feature — it is the only production-recall practice in the app and
@@ -2441,6 +2445,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
   const [prodSet, setProdSet] = useState(() => new Set());
+  /* One mark per QUEUE POSITION, not per card: an item can legitimately appear several
+     times in a session as learning steps, and each showing is its own beat of progress. */
+  const startStateRef = useRef(null);
+  const [marks, setMarks] = useState([]);
   const [combo, setCombo] = useState(0);
   const [bestCombo, setBestCombo] = useState(0);
   const [flash, setFlash] = useState(0);
@@ -2726,6 +2734,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
+    setMarks([]);
+    /* Snapshot the memory state the session STARTS from, so the summary can report what
+       actually moved. Accuracy answers "how did I do at answering"; this answers "what
+       changed in my memory", which is the only thing a review session is for. */
+    startStateRef.current = new Map(cards.map((c) => {
+      const st = c.fsrs || seedFromHistory(c);
+      return [c.id, { S: (st && st.S) || 0, warmth: masteryWarmth(c), leech: isLeech(c) }];
+    }));
     /* Interleave production into the session rather than leaving it on a separate tab you
        have to remember to visit. Roughly a third of the cards that have earned it get
        asked backwards — enough that the direction is genuinely unpredictable, which is
@@ -2837,10 +2853,17 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const think = thinkRef.current || 0;
     // The combo counts instant recall, not merely correct answers — it rewards the thing
     // that actually correlates with remembering the word tomorrow.
+    setMarks((m) => { const n = m.slice(); n[pos] = got ? (think > 0 && think < 3000 ? "fast" : "ok") : "miss"; return n; });
     if (got && think > 0 && think < 3000) {
       setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
       setFlash(Date.now());
-    } else if (!got) setCombo(0);
+    } else if (!got) {
+      /* A miss DEGRADES the combo, it does not wipe it. Zeroing a long run on one slip is
+         the mechanic that teaches people to avoid the cards they are worst at — which is
+         precisely the material spaced repetition exists to put in front of them. Dropping
+         two keeps the stake real without making a hard card feel like a punishment. */
+      setCombo((n) => Math.max(0, n - 2));
+    }
     /* Credit the area the exercise actually worked, not the deck it came from. A typed
        answer is writing practice and a listening question is listening practice even
        when the word is ordinary vocabulary — otherwise the coverage report says you
@@ -3090,6 +3113,29 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         <p className="tc-eyebrow">Session complete</p>
         <div className="tc-bignum">{pct}<span>%</span></div>
         <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {poolSize} cards</p>
+        {/* What MOVED. A percentage says how the answering went; these say what happened to
+            the memory, which is the thing the session was actually for. */}
+        {(() => {
+          const before = startStateRef.current;
+          if (!before || !before.size) return null;
+          const GOLD = 0.75;                       // the amber -> gold stop in MASTERY_STOPS
+          let gold = 0, freed = 0, days = 0;
+          for (const c of cards) {
+            const b = before.get(c.id);
+            if (!b) continue;
+            const st = c.fsrs || seedFromHistory(c);
+            const S = (st && st.S) || 0;
+            if (S > b.S) days += S - b.S;
+            if (masteryWarmth(c) >= GOLD && b.warmth < GOLD) gold++;
+            if (b.leech && !isLeech(c)) freed++;
+          }
+          const bits = [];
+          if (gold) bits.push(gold + (gold === 1 ? " word moved into gold" : " words moved into gold"));
+          if (freed) bits.push(freed + (freed === 1 ? " leech broken" : " leeches broken"));
+          if (days >= 1) { const d = Math.round(days); bits.push("+" + d + (d === 1 ? " day" : " days") + " of staying power"); }
+          if (!bits.length) return null;
+          return <p className="tc-donemove">{bits.join(" · ")}</p>;
+        })()}
         {bestCombo >= 2 && (
           <p className="tc-donecombo">best run: <b>{bestCombo}</b> instant recalls back to back</p>
         )}
@@ -3161,7 +3207,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   return (
     <div className="tc-study">
       <div className="tc-progress">
-        <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${poolSize ? (passed.size / poolSize) * 100 : 0}%` }} /></div>
+        {/* One segment per beat of the session. Duolingo’s single most load-bearing UI
+            element: it turns "this continues" into "this ends, and soon". */}
+        <div className="tc-segrail" role="progressbar" aria-valuemin={0} aria-valuemax={queue.length}
+             aria-valuenow={pos} aria-label="Session progress">
+          {queue.map((_, i) => (
+            <span key={i} className={"tc-seg2" + (i === pos ? " is-now" : marks[i] ? " is-" + marks[i] : "")} />
+          ))}
+        </div>
         <span className="tc-progtext">{passed.size} / {poolSize}</span>
         {combo >= 2 && (
           <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
@@ -9787,8 +9840,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sub{margin:5px 0 0;font-size:12.5px;letter-spacing:.04em;color:var(--mut-2);text-transform:lowercase;}
 .tc-count{color:var(--shu-soft);font-weight:600;}
 
+/* Scrolls sideways rather than wrapping. Twelve tabs wrap to two rows, which eats ~50px of
+   vertical space on a phone before any content — and the second row is easy to miss entirely.
+   A single scrolling row keeps the bar one tap-height tall at any count. */
 .tc-tabs{display:flex;gap:4px;background:rgba(255,255,255,.07);backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%);
-  padding:4px;border-radius:999px;width:fit-content;flex-wrap:wrap;}
+  padding:4px;border-radius:999px;width:fit-content;max-width:100%;flex-wrap:nowrap;
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  scroll-snap-type:x proximity;}
+.tc-tabs::-webkit-scrollbar{display:none;}
+.tc-tab{scroll-snap-align:center;flex:0 0 auto;}
 .tc-tab{appearance:none;border:0;background:transparent;color:var(--mut-2);
   font:inherit;font-size:13.5px;font-weight:600;letter-spacing:.01em;min-height:42px;padding:8px 15px;border-radius:999px;cursor:pointer;transition:background .15s,color .15s,transform .1s;white-space:nowrap;}
 .tc-tab:hover{color:#fff;}
@@ -9866,6 +9926,19 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-progtrack{flex:1;height:4px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden;}
 .tc-progfill{height:100%;background:var(--shu);border-radius:99px;transition:width .3s;}
 .tc-progtext{font-size:12px;color:var(--mut-2);font-variant-numeric:tabular-nums;}
+/* Segmented session rail. Colours are outcome, not score: a miss is a muted slate, never a
+   red slap — the design rule for this whole app is that failing a card is a normal event in
+   a retrieval system, not a punishment. Fast+correct earns the gold that stability uses
+   elsewhere, so the two reward languages agree. */
+.tc-segrail{flex:1;display:flex;gap:2px;align-items:center;min-width:120px;}
+.tc-seg2{flex:1;height:4px;border-radius:99px;background:rgba(255,255,255,.10);
+  transition:background .25s ease,transform .25s ease;transform-origin:center;}
+.tc-seg2.is-ok{background:rgba(201,156,92,.85);}
+.tc-seg2.is-fast{background:rgba(232,191,90,.95);}
+.tc-seg2.is-miss{background:rgba(154,160,166,.45);}
+.tc-seg2.is-now{background:rgba(255,255,255,.85);transform:scaleY(2.2);}
+@media (prefers-reduced-motion:reduce){ .tc-seg2{transition:none;} }
+
 
 /* card flip */
 .tc-card{perspective:1400px;cursor:pointer;margin-bottom:18px;}
@@ -10099,6 +10172,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-bignum{font-size:82px;font-weight:300;letter-spacing:-.02em;color:#fff;line-height:1;font-family:-apple-system,"SF Pro Display",BlinkMacSystemFont,"Segoe UI",sans-serif;}
 .tc-bignum span{font-size:30px;color:var(--shu-soft);}
 .tc-donesub{color:var(--mut-2);font-size:14px;margin:8px 0 22px;}
+.tc-donemove{margin:-14px 0 20px;font-size:13.5px;font-weight:600;color:rgb(232,191,90);letter-spacing:.01em;}
 .tc-donebtns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 
 .tc-empty{text-align:center;color:var(--mut-2);display:flex;flex-direction:column;gap:16px;align-items:center;}
