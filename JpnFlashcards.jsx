@@ -9828,7 +9828,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   color:var(--washi);font:inherit;min-height:62px;padding:0;border-radius:16px;cursor:pointer;
   transition:box-shadow .15s,transform .1s;}
 .tc-batchchip:active{transform:scale(.97);}
-.tc-batchchip:hover{box-shadow:0 0 26px -6px rgba(216,72,47,.5);}
+.tc-batchchip:hover{box-shadow:0 0 30px -8px rgba(255,255,255,.28);}
 .tc-batchglass{position:relative;z-index:1;height:100%;box-sizing:border-box;min-height:62px;
   display:flex;flex-direction:column;gap:3px;justify-content:center;padding:12px 40px 12px 14px;
   background:linear-gradient(155deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 55%, rgba(255,255,255,.02) 100%);
@@ -10736,6 +10736,24 @@ body{min-height:100%;overscroll-behavior-y:none;}
   .tc-glass,.tc-btn,.tc-card2{background:var(--surface);}
   .tc-btn-primary{background:linear-gradient(135deg,#8c3b34 0%,#a3524a 100%);}
 }
+/* Section chips: bring them into the foil language. The rim goes on an ::after of the
+   OUTER button rather than replacing .tc-batchglass's border, so the glass layer keeps its
+   own 1px highlight and nothing reflows — a masked pseudo-element costs no layout, whereas
+   swapping the real border for one would shrink the chip by 2px.
+   z-index 2 clears .tc-batchglass (z-index 1); the parent's overflow:hidden does not clip
+   an inset:0 child. The per-section hue behind the glass stays: it encodes WHICH section
+   the chip is, so it is information, not decoration. */
+.tc-batchchip::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--foil);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask-composite:exclude;
+  opacity:.45;z-index:2;pointer-events:none;transition:opacity .18s ease;}
+.tc-batchchip:hover::after{opacity:.9;}
+@media (prefers-reduced-motion:reduce){ .tc-batchchip::after{transition:none;} }
+
 `;
 
 /* ── mount ── */
