@@ -2228,14 +2228,49 @@ export default function JpnFlashcards() {
   useEffect(() => {
     const el = tabsRef.current;
     if (!el) return;
-    const sync = () => {
+    /* Measured immediately AND again after a beat. The re-measure exists because a strip
+       can finish laying out after the first read (a webfont landing re-widths every tab).
+       It is a timer rather than requestAnimationFrame on purpose: rAF does not fire at all
+       in a hidden tab, so a deferred-only measure left the fade permanently uncomputed for
+       anyone who opened the app in a background tab — and made it untestable in a headless
+       pane, which is how this was found. */
+    let settle = 0;
+    const measure = () => {
       const more = el.scrollWidth - el.clientWidth;
-      setTabEdges({ left: el.scrollLeft > 4, right: more > 4 && el.scrollLeft < more - 4 });
+      setTabEdges((prev) => {
+        const next = { left: more > 4 && el.scrollLeft > 4, right: more > 4 && el.scrollLeft < more - 4 };
+        return prev.left === next.left && prev.right === next.right ? prev : next;
+      });
     };
+    const sync = () => { measure(); clearTimeout(settle); settle = setTimeout(measure, 150); };
     sync();
     el.addEventListener("scroll", sync, { passive: true });
-    window.addEventListener("resize", sync);
-    return () => { el.removeEventListener("scroll", sync); window.removeEventListener("resize", sync); };
+    /* ResizeObserver rather than a window resize listener: the strip can stop or start
+       overflowing without the window changing size at all — a webfont landing and renaming
+       every tab by a few pixels does it, as does the tab set itself changing. */
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(sync);
+      ro.observe(el);
+      /* ...and a child. ResizeObserver watches the BORDER BOX, and this strip overflows
+         WITHOUT its own box ever changing: at 375px the nav stays 351px wide while its
+         content grows to 921px. Observing only the nav meant the fade never appeared on a
+         phone, because nothing RO can see had changed. A tab does change size when the
+         layout settles, so watching one catches the reflow the container hides. */
+      const child = el.querySelector("button");
+      if (child) ro.observe(child);
+    }
+    window.addEventListener("resize", sync);   // cheap, and covers paths RO can miss
+    /* A webfont swapping in re-widths every tab after the first measure. */
+    if (typeof document !== "undefined" && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(sync).catch(() => {});
+    }
+    return () => {
+      clearTimeout(settle);
+      el.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+      if (ro) ro.disconnect();
+    };
   }, []);
   /* Keep the active tab reachable: selecting one off-screen (or landing on a stored tab)
      should bring it into view rather than leaving the strip parked at the start. */
@@ -10065,6 +10100,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
   overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;
   scroll-snap-type:x proximity;}
 .tc-tabs::-webkit-scrollbar{display:none;}
+/* The shell is capped at 660px because that is a comfortable reading measure for CARD
+   content — but a tab strip is not prose, and obeying that cap was forcing 13 tabs to
+   scroll inside a 668px box on a 1280px screen, with ~600px sitting empty beside it. On
+   anything wide enough, the strip breaks out of the column and centres on it instead, so
+   every tab is simply visible and there is nothing to scroll. Narrow screens keep the
+   scroll-plus-fade behaviour, which is the right answer when the tabs genuinely cannot fit. */
+@media (min-width:720px){
+  .tc-tabs{max-width:min(94vw,1040px);position:relative;left:50%;transform:translateX(-50%);}
+}
 /* Fade whichever edge still has tabs behind it. mask-image rather than an overlay element so
    it works over the strip's own translucent background without painting a hard rectangle. */
 .tc-tabs.has-right{-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%);
