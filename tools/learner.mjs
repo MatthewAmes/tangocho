@@ -130,7 +130,7 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, pRecall, at, confused }) {
+export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1 }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
@@ -148,6 +148,13 @@ export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, pr
     // Which wrong option was picked, when there was one. This is the raw material for
     // learner-specific distractors: what THIS person mixes up beats "same length".
     confused: !ok && confused ? confused : null,
+    /* FSRS stability either side of this answer, in days. The learning-gain metric is a
+       change in stability, so without these a row cannot be scored at all — and rows
+       written before this existed are skipped rather than counted as zero gain
+       (tools/gain.mjs). Recorded rather than recomputed: a metric derived from its own
+       parallel copy of the scheduler is a metric that can quietly stop matching it. */
+    s0: typeof s0 === "number" && isFinite(s0) ? Math.round(s0 * 1000) / 1000 : null,
+    s1: typeof s1 === "number" && isFinite(s1) ? Math.round(s1 * 1000) / 1000 : null,
     at: at || Date.now(),
   };
 }

@@ -23,6 +23,7 @@ import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } 
 import { contrastSet } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
 import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
+import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -2357,14 +2358,7 @@ export default function JpnFlashcards() {
            level still drive the existing UI, and keeping them means nothing already
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
-        const grade = gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
-          dir === "prod" ? "type" : "recall", latencyNormsRef.current, c.streak || 0);
-        /* Recognition and production are tracked separately. Being able to read 火曜日 says
-           very little about being able to produce it from "Tuesday", so one shared
-           stability would over-schedule one direction and under-schedule the other. */
-        const isProd = dir === "prod";
-        const prior = isProd ? (c.rfsrs || null) : (c.fsrs || seedFromHistory(c));
-        const nextState = fsrsReview(prior, grade, Date.now(), retentionTarget);
+        const { next: nextState, isProd } = reviewOutcome(c, { got, ms: t, dir, area });
         const fsrs = isProd ? c.fsrs : nextState;
         const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
@@ -2486,6 +2480,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [struggled, setStruggled] = useState(() => new Set()); // missed at least once
   const missRef = useRef({});                          // id -> miss count this session
   const sessionLog = useRef([]);                       // evidence gathered this session, for the debrief
+  /* The learning rate BEFORE this session, captured when it starts. A rate on its own is
+     an uninterpretable number; the only thing that makes it mean anything on a results
+     screen is the same learner's own recent rate to compare it against. Snapshotted at
+     the start so the session being summarised is not also inside its own baseline. */
+  const baselineRef = useRef(null);
   const hooksRef = useRef(null);                       // term -> memory hook (cached forever)
   const [hook, setHook] = useState(null);              // {term, text|"...", err}
   const [debrief, setDebrief] = useState(null);        // {text} | {err} | {busy:true}
@@ -2831,6 +2830,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setHook(null); setDebrief(null);
     setFlipped(false); setTyped(""); setVerdict(null); setShowWhy(false); setRunning(true);
     sessionLog.current = [];
+    baselineRef.current = null;
+    loadEvidence().then((list) => {
+      const g = gainPerMinute((list || []).filter((r) => r && r.at > Date.now() - 30 * 86400000));
+      baselineRef.current = g.rate != null && g.n >= MIN_ROWS ? g : null;
+    }).catch(() => {});
   }, [cards, coverage]);
 
   const card = queue[pos];
@@ -2986,6 +2990,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        should differ. The predicted-recall figure is kept so the model's confidence can
        later be checked against what actually happened. */
     const evSkill = skillForFormat(fmt);
+    /* Stability either side of this answer, from the same function that just scheduled
+       the card. This is what makes the answer measurable at all: learning gain is a
+       change in stability, and a row without it is skipped by the metric rather than
+       counted as a zero (tools/gain.mjs). */
+    const stab = reviewOutcome(live || c, {
+      got, ms: think, dir: prodSet.has(c.id) ? "prod" : undefined,
+      area: workedArea, foreign: !!c.src,
+    });
     /* Score the ANSWER, not the outcome. Every input here is already in the evidence
        record — cue level, latency against this learner's own median for this skill+format,
        and how long the scheduler had left the item alone. */
@@ -3024,6 +3036,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         predicted: intervention && typeof intervention.expected === "number"
           ? intervention.expected : recallChance(c, Date.now()),
         pRecall: recallChance(c, Date.now()),
+        s0: stab.s0, s1: stab.s1,
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
@@ -3306,6 +3319,28 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           if (days >= 1) { const d = Math.round(days); bits.push("+" + d + (d === 1 ? " day" : " days") + " of staying power"); }
           if (!bits.length) return null;
           return <p className="tc-donemove">{bits.join(" · ")}</p>;
+        })()}
+        {/* The north-star metric, closed at the moment it was earned. Shown only against
+            the learner's own recent rate — "0.42 per minute" is not a fact anyone can act
+            on, and inventing a target to compare it against would be worse than silence. */}
+        {(() => {
+          const g = gainPerMinute(sessionLog.current);
+          const base = baselineRef.current;
+          /* Silent when the session bought no durable memory. The line above counts every
+             upward flicker of stability including sub-day ones, so a session of pure
+             misses can read "+5 days of staying power" — and "0% of your usual rate"
+             next to it looks like one of the two is broken. Neither is: they answer
+             different questions. But a results screen is the wrong place to litigate
+             that, and the screen already says which words to review. */
+          if (g.rate == null || !(g.gain > 0) || !base || !(base.rate > 0)) return null;
+          const x = g.rate / base.rate;
+          const pace = x >= 1.25 ? "faster learning than usual"
+            : x <= 0.75 ? "slower going than usual" : "about your usual pace";
+          return (
+            <p className="tc-donerate">
+              <b>{Math.round(x * 100)}%</b> of your usual learning rate — {pace}
+            </p>
+          );
         })()}
         {xp > 0 && <p className="tc-donexp">{xp} <span>xp earned</span></p>}
         {bestCombo >= 2 && (
@@ -3975,6 +4010,14 @@ function ProductionBlock({ drills, onDone }) {
   );
 }
 
+/* Exercise formats, in learner words rather than internal ones. */
+const FORMAT_LABEL = {
+  mc: "Multiple choice", choice: "Multiple choice", recall: "Flip and rate",
+  type: "Typing", fill: "Fill the blank", build: "Build the sentence",
+  order: "Word order", listen: "Listening", write: "Writing", unknown: "Other",
+};
+const fmtLabel = (k) => FORMAT_LABEL[k] || (k ? k[0].toUpperCase() + k.slice(1) : "Other");
+
 function Plan({ cards = [] }) {
   const [plan, setPlan] = useState(PLAN_DEFAULT);
   const [days, setDays] = useState(null);
@@ -3992,6 +4035,21 @@ function Plan({ cards = [] }) {
      window because calibration moves slowly and there is no point asking the question of
      three sessions. */
   const cal = useMemo(() => calibrationReport(evidence, { days: 365 }), [evidence]);
+  /* The north star: how much durable memory a minute of study bought. 30 days, because a
+     rate is only useful if it reflects how you are studying NOW. */
+  const gainWindow = useMemo(
+    () => evidence.filter((r) => r && r.at > Date.now() - 30 * 86400000),
+    [evidence]);
+  const gain = useMemo(() => gainPerMinute(gainWindow), [gainWindow]);
+  const gainFmt = useMemo(() => gainBy(gainWindow, "format"), [gainWindow]);
+  const gainBest = useMemo(() => bestUse(gainWindow, "format"), [gainWindow]);
+  const gainFade = useMemo(() => fadePoint(gainWindow, 5), [gainWindow]);
+  /* The two reference points that give the number a scale. Computed from the same
+     function the metric uses, so the explanation cannot drift from the measure. */
+  const gainRef = useMemo(() => ({
+    fresh: Math.round(answerGain(0, 3) * 10) / 10,
+    easy: Math.round(answerGain(200, 240) * 100) / 100,
+  }), []);
   /* The identical reserve the scheduler is excluding. Computed the same way from the same
      deck, so the test cannot drift out of step with what study is avoiding. */
   const heldOut = useMemo(() => reserveFor(cards, cycleFor()), [cards]);
@@ -4147,6 +4205,73 @@ function Plan({ cards = [] }) {
             return SKILL_LABEL[k] + ": " + STATE_LABEL[stateOf(posterior(row.ok || 0, (row.n || 0) - (row.ok || 0)))];
           }).join(" · ")}
         </p>
+      </section>
+
+      <section className="tc-plansec">
+        <h2 className="tc-planh">What a minute of study buys <span className="tc-planh-sub">last 30 days</span></h2>
+        {/* The north-star metric. Gain is measured in DOUBLINGS of memory stability, not
+            in days of it: one easy review of a mature card adds ~140 days of stability
+            while learning a new word adds ~3, so a days-based score would rank grinding
+            what you already know forty times above learning anything. See tools/gain.mjs. */}
+        {gain.rate == null ? (
+          <p className="tc-planhint">
+            Nothing measurable yet. This fills in as you study — answers recorded before
+            this existed can't be scored, so it starts from your next session.
+          </p>
+        ) : (
+          <>
+            <div className="tc-gainhead">
+              <span className="tc-gainnum">{gain.rate}</span>
+              <span className="tc-gainunit">memory doublings<br />per minute</span>
+            </div>
+            <p className="tc-planhint">
+              One point is a memory becoming twice as durable. Learning a word you didn't
+              know is worth about <b>{gainRef.fresh}</b>; one easy review of a word you
+              already know well, about <b>{gainRef.easy}</b> — which is why this can't be
+              raised by grinding easy cards. <b>{gain.gain}</b> doublings over{" "}
+              <b>{Math.round(gain.minutes)} min</b> of actual study, from {gain.n} answers
+              {gain.skipped > 0 ? " (" + gain.skipped + " older answers can't be scored)" : ""}.
+            </p>
+            {gainBest && (
+              <p className="tc-planhint">
+                <b>{fmtLabel(gainBest.top)}</b> is buying you {gainBest.times}× more per
+                minute than <b>{fmtLabel(gainBest.bottom).toLowerCase()}</b>.
+              </p>
+            )}
+            <div className="tc-cover" style={{ marginTop: 10 }}>
+              {gainFmt.slice(0, 6).map((row) => {
+                const top = gainFmt.find((x) => x.rate != null);
+                const w = row.rate != null && top && top.rate > 0 ? Math.max(3, (row.rate / top.rate) * 100) : 0;
+                return (
+                  <div key={row.key} className="tc-coverrow">
+                    <span className="tc-covername">{fmtLabel(row.key)}</span>
+                    <div className="tc-coverbar" title={row.n + " answers"}>
+                      {row.rate != null && <div className="tc-coverfill" style={{ width: w + "%" }} />}
+                    </div>
+                    <span className="tc-covernum">{row.rate != null ? row.rate : row.n + "/" + MIN_ROWS}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="tc-planhint" style={{ marginTop: 10 }}>
+              {/* A rate from a handful of answers is noise; those rows show progress
+                  towards being measurable instead of a number worth acting on. */}
+              {gainFmt.some((r) => r.rate == null)
+                ? "A count instead of a rate means too few answers of that kind to say anything yet."
+                : "Every format above has enough answers behind it to compare."}
+            </p>
+            {gainFade && (
+              <p className="tc-planhint">
+                {gainFade.faded
+                  ? <>Your sessions stop paying off around <b>answer {gainFade.from}</b> — the last stretch
+                    earns {Math.round(gainFade.ratio * 100)}% of what your best stretch does. Stopping there
+                    is not quitting early; it is the point where the minutes stop buying memory.</>
+                  : <>Your rate holds up across a session — the last stretch still earns{" "}
+                    {Math.round(gainFade.ratio * 100)}% of your best. No reason to cut sessions shorter.</>}
+              </p>
+            )}
+          </>
+        )}
       </section>
 
       <Checkpoint cards={cards} heldOut={heldOut} />
@@ -4324,6 +4449,34 @@ function dueness(c, now) {
 function statReview(st, ok, ms, now = Date.now()) {
   const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
   return fsrsReview(prior, gradeFromLatency(ok, ms, { streak: st && st.streak }), now, retentionTarget);
+}
+/* Latency bounds shared by every writer: under 250ms is a misfire, over three minutes is
+   a card someone walked away from. Both are noise, and both used to be re-spelled at each
+   call site. */
+function boundMs(ms) { return ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0; }
+/* What this answer does to the card memory, in one place.
+
+   The learning-gain metric is a change in stability, so it needs the stability either
+   side of an answer -- and the one thing it must never do is compute that from its own
+   copy of the scheduling rules. A metric with a parallel implementation drifts silently
+   the first time the real path changes, and then reports confidently about a scheduler
+   that no longer exists. So the writer and the metric call this, and only this.
+
+   Recognition and production carry separate stability (fsrs vs rfsrs): being able to
+   read 火曜日 says very little about producing it from "Tuesday". */
+function reviewOutcome(card, { got, ms, dir, area, foreign, now = Date.now() }) {
+  if (foreign) {                       // kana / kanji / 10k decks go through statReview
+    const prior = card && card.fsrs ? card.fsrs : (card && (card.seen || 0) > 0 ? seedFromHistory(card) : null);
+    const next = statReview(card, got, ms, now);
+    return { prior, next, t: ms, isProd: false, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
+  }
+  const t = boundMs(ms);
+  const isProd = dir === "prod";
+  const grade = gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
+    isProd ? "type" : "recall", latencyNormsRef.current, (card && card.streak) || 0);
+  const prior = isProd ? ((card && card.rfsrs) || null) : ((card && card.fsrs) || seedFromHistory(card || {}));
+  const next = fsrsReview(prior, grade, now, retentionTarget);
+  return { grade, prior, next, t, isProd, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
 }
 /** Higher = drill this sooner. Driven by how far recall has decayed below the target. */
 function statNeed(st, now = Date.now()) {
@@ -10547,6 +10700,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-pacelabel{font-size:16px;font-weight:650;}
 .tc-pacemins{font-family:var(--mono);font-size:12px;letter-spacing:.1em;color:var(--shu-soft);}
 .tc-pacenote{font-size:12px;line-height:1.45;color:var(--mut);}
+/* The north-star number. Display size from the type scale, because if it is not the
+   biggest thing in the section it is not a north star. */
+.tc-gainhead{display:flex;align-items:baseline;gap:12px;margin:4px 0 10px;}
+.tc-gainnum{font:var(--t-xl);letter-spacing:-.02em;color:var(--ok);font-variant-numeric:tabular-nums;}
+.tc-gainunit{font:var(--t-caps);letter-spacing:.05em;text-transform:uppercase;color:var(--mut-2);line-height:1.35;}
 .tc-cover{display:flex;flex-direction:column;gap:7px;}
 .tc-coverrow{display:grid;grid-template-columns:130px 1fr 38px;align-items:center;gap:10px;}
 .tc-covername{font-size:14px;color:rgba(255,255,255,.85);}
@@ -10582,6 +10740,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-bignum span{font-size:30px;color:var(--shu-soft);}
 .tc-donesub{color:var(--mut-2);font-size:14px;margin:8px 0 22px;}
 .tc-donemove{margin:-14px 0 20px;font-size:14px;font-weight:600;color:rgb(232,191,90);letter-spacing:.01em;}
+.tc-donerate{margin:6px 0 0;font-size:14px;color:var(--mut);}
+.tc-donerate b{color:var(--ok);}
 .tc-donebtns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 
 .tc-empty{text-align:center;color:var(--mut-2);display:flex;flex-direction:column;gap:16px;align-items:center;}
