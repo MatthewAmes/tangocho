@@ -21,6 +21,7 @@ import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
 import { contrastSet } from "./tools/contrast.mjs";
+import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -2514,8 +2515,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [prodSet, setProdSet] = useState(() => new Set());
   /* One mark per QUEUE POSITION, not per card: an item can legitimately appear several
      times in a session as learning steps, and each showing is its own beat of progress. */
+  const fatigueLog = useRef([]);
   const startStateRef = useRef(null);
   const [xp, setXp] = useState(0);
+  const [stopped, setStopped] = useState(null);   // {reason} once the session ends early
   const [award, setAward] = useState(null);      // {points, reasons, memory} for the flyup
   const [marks, setMarks] = useState([]);
   const [combo, setCombo] = useState(0);
@@ -2805,6 +2808,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setCombo(0); setBestCombo(0);
     setMarks([]);
     setXp(0); setAward(null);
+    fatigueLog.current = [];
+    setStopped(null);
     /* Snapshot the memory state the session STARTS from, so the summary can report what
        actually moved. Accuracy answers "how did I do at answering"; this answers "what
        changed in my memory", which is the only thing a review session is for. */
@@ -2864,7 +2869,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const cueLevel = intervention ? intervention.cue : null;
   const whyThis = intervention ? explainPick({ ...card._pick, ...intervention, st: live }) : null;
   const isProd = fmt === "type";
-  const done = running && pos >= queue.length;
+  const done = running && (pos >= queue.length || !!stopped);
 
   /* A finished session is the moment the other decks' snapshot is certainly stale.
      This has to live with the other hooks: there are early returns further down, and a
@@ -2907,6 +2912,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     if (verdict) return;
     const c = queue[pos];
     if (!c) return;
+    /* Choice formats have no reveal step, so nothing was setting thinkRef and every
+       multiple-choice, listening and cloze answer was recorded as ms: 0 — i.e. untimed.
+       That silently disabled four things at once: the latency norm for those formats
+       could never form (needs timed correct answers), gradeAgainstNorm fell back to a
+       flat GOOD for all of them, the speed bonus could not fire, and fatigue could not
+       see rapid guessing. Choosing IS the answer here, so the think time is simply how
+       long the card was on screen. */
+    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
     const ok = choice.id === c.id;
     setVerdict({ ok, mc: true, chose: choice.meaning, chosenId: choice.id, want: c.meaning });
     setFlipped(true);
@@ -3005,6 +3018,19 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
+      /* Fatigue needs the learner's OWN fast threshold, not a constant: a quick thinker
+         answering in 800ms is not guessing, and a deliberate one at 4s is not tired. The
+         norm is per skill+format and already maintained. */
+      {
+        /* Falls back to a floor when there is no norm yet. A norm needs eight correct
+           answers of that skill+format, so a new learner (or a new exercise type) has
+           none — and without a threshold the rapid-guess signal can never fire, which
+           made fatigue undetectable for exactly the people most likely to bail. The floor
+           is deliberately conservative: reading four options and choosing takes longer
+           than 1.2s for anyone, so a WRONG answer inside it was not a considered one. */
+        const n = latencyNormsRef.current && latencyNormsRef.current[evSkill + "|" + fmt];
+        fatigueLog.current.push({ ok: got, ms: think, fastMs: n ? n.fast : 1200 });
+      }
 
     }
     if (got) {
@@ -3041,6 +3067,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     }
     setFlipped(false);
     setTyped(""); setVerdict(null); setShowWhy(false);
+    /* Ask whether this is a good place to stop, rather than marching to a fixed count.
+       More questions is not more learning, and the honest end of a session is when the
+       learner stops retrieving and starts tapping. */
+    {
+      const fat = fatigueFrom(fatigueLog.current);
+      const verdictStop = shouldStop({
+        done: fatigueLog.current.length,
+        planned: queue.length,
+        fatigue: fat.level,
+        remainingValue: 1,     // TODO: fold in the real remaining practice value
+      });
+      if (verdictStop.stop && verdictStop.reason !== "done") {
+        setStopped({ reason: verdictStop.reason, note: STOP_NOTE[verdictStop.reason], fatigue: fat });
+      }
+    }
     setPos((p) => p + 1);
   }, [queue, pos, onResult]);
 
@@ -3221,7 +3262,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const missedCards = cards.filter((c) => struggled.has(c.id));
     return (
       <div className="tc-done">
-        <p className="tc-eyebrow">Session complete</p>
+        <p className="tc-eyebrow">{stopped ? "Good place to stop" : "Session complete"}</p>
+        {/* An early finish has to read as the system respecting your time, not as the
+            session being cut short or as a telling-off for getting tired. */}
+        {stopped && <p className="tc-stopnote">{stopped.note}</p>}
         <div className="tc-bignum">{pct}<span>%</span></div>
         <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {poolSize} cards</p>
         {/* What MOVED. A percentage says how the answering went; these say what happened to
@@ -10228,6 +10272,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background:linear-gradient(135deg,rgba(151,117,250,.18),rgba(77,171,247,.10));
   backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
   box-shadow:var(--gloss);animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
+.tc-stopnote{margin:-6px auto 16px;max-width:34ch;font-size:13.5px;line-height:1.5;color:var(--mut-2);}
 .tc-donexp{margin:-10px 0 14px;font-family:var(--mono);font-size:15px;font-weight:700;
   color:rgb(232,191,90);letter-spacing:.04em;}
 .tc-donexp span{font-size:11px;font-weight:600;opacity:.65;letter-spacing:.14em;text-transform:uppercase;}
