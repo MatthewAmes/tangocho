@@ -13,6 +13,11 @@
 // A bare import is not enough either — a free variable only throws when the code RUNS —
 // so each module has to be exercised, not merely loaded.
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + (e && e.message)); } };
 const ok = (cond, m) => { if (!cond) throw new Error(m || "expected truthy"); };
@@ -29,10 +34,12 @@ t("scripts-seed.js exports passages with lines", () => {
   ok(Array.isArray(scripts.SCRIPT_SEED) && scripts.SCRIPT_SEED.length > 0);
   ok(scripts.SCRIPT_SEED.every((s) => Array.isArray(s.lines)));
 });
-const freq = await import("../src/data/freq-seed.js");
-t("freq-seed.js rows are ranked from 1", () => {
-  ok(freq.FREQ_SEED.length > 0);
-  ok(freq.FREQ_SEED[0].rank === 1, "first rank " + freq.FREQ_SEED[0].rank);
+// The 148-word FREQ_SEED starter list is gone: cf/public/freq.json ships all ten
+// thousand, ranked, and a second shorter list was a stale rival source of truth.
+const freqAsset = JSON.parse(fs.readFileSync(path.join(ROOT, "cf/public/freq.json"), "utf8"));
+t("freq.json ships the full ranked list", () => {
+  ok(freqAsset.words.length === 10000, "expected 10000, got " + freqAsset.words.length);
+  ok(freqAsset.words[0].k === 1 && freqAsset.words[9999].k === 10000, "ranks must run 1..10000");
 });
 const cat = await import("../src/data/input-catalog.js");
 t("input-catalog.js exports the catalog, feed set and verdicts", () => {
@@ -105,6 +112,47 @@ t("input-engine: coverageAgainstDeck scores a known sentence", () => {
 t("input-engine: seedLevelsFromDeck returns both skills", () => {
   const l = engine.seedLevelsFromDeck([{ term: "猫", level: 3 }]);
   ok(typeof l.listening === "number" && typeof l.reading === "number");
+});
+
+const freqLib = await import("../src/lib/freq.js");
+t("freq: a freq.json row becomes a usable card", () => {
+  const c = freqLib.freqCard({ t: "猫", r: "ねこ", m: "cat", p: "n", k: 42 }, null);
+  ok(c.term === "猫" && c.reading === "ねこ" && c.rank === 42 && c.kind === "kanji", JSON.stringify(c));
+});
+t("freq: a kana-only word falls back to itself for the reading", () => {
+  ok(freqLib.freqCard({ t: "それから", r: "", m: "and then", k: 148 }, null).reading === "それから");
+});
+t("freq: legacy ARRAY progress converts instead of being dropped", () => {
+  // The bug this guards: two readers treated the store as an array long after the writer
+  // moved to a map, so every studied word read as absent — and one of them then wrote the
+  // empty array back over the map.
+  const map = freqLib.freqStatsFrom([{ term: "猫", seen: 3, correct: 2 }, { term: "犬", seen: 0 }]);
+  ok(Object.keys(map).length === 1 && map["猫"].seen === 3, JSON.stringify(map));
+});
+t("freq: a map is passed through, and junk yields an empty map", () => {
+  ok(freqLib.freqStatsFrom({ "猫": { seen: 1 } })["猫"].seen === 1);
+  ok(Object.keys(freqLib.freqStatsFrom(null)).length === 0);
+  ok(Object.keys(freqLib.freqStatsFrom("nonsense")).length === 0);
+});
+t("freq: only studied words are stored", () => {
+  const m = freqLib.freqStatsOf([{ term: "猫", seen: 2 }, { term: "犬", seen: 0 }]);
+  ok(Object.keys(m).length === 1, "ten thousand zero rows must not be persisted");
+});
+const WORDS = Array.from({ length: 500 }, (_, i) => ({ t: "w" + i, r: "", m: "m" + i, k: i + 1 }));
+t("freq: the pool returns started words plus a frontier of the next ranks", () => {
+  const { started, fresh } = freqLib.freqPool(WORDS, { w5: { seen: 3 } }, { room: 15 });
+  ok(started.length === 1 && started[0].term === "w5", JSON.stringify(started));
+  ok(fresh.length > 0 && fresh.length < 100, "frontier was " + fresh.length);
+  ok(fresh[0].rank < fresh[fresh.length - 1].rank, "the frontier must follow rank order");
+});
+t("freq: no daily room means no new words — only review", () => {
+  const { started, fresh } = freqLib.freqPool(WORDS, { w5: { seen: 3 } }, { room: 0 });
+  ok(fresh.length === 0, "quota exhausted must close the frontier, got " + fresh.length);
+  ok(started.length === 1, "review material still comes back");
+});
+t("freq: an empty word list is safe", () => {
+  const p = freqLib.freqPool(null, null, {});
+  ok(p.started.length === 0 && p.fresh.length === 0);
 });
 
 const sched = await import("../src/lib/schedule.js");

@@ -24,6 +24,7 @@ import { contrastSet } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
 import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
+import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -38,7 +39,6 @@ import {
 import { toKana, kanaEqual } from "./tools/romaji.mjs";
 import { SEED_VERSION, SEED } from "./src/data/seed.js";
 import { SCRIPT_SEED } from "./src/data/scripts-seed.js";
-import { FREQ_VERSION, FREQ_SEED } from "./src/data/freq-seed.js";
 import { FEED_SOURCES, INPUT_CATALOG, INPUT_VERDICTS, INPUT_PLANS, INPUT_TIMES, INPUT_BANDS } from "./src/data/input-catalog.js";
 import { CONJ_TYPES, CONJ_BANK, CONJ_FILTERS } from "./src/data/conj-bank.js";
 import { KANA_BASE_ROWS, KANA_DAKU_ROWS, KANA_YOON_ROWS, KANA_MARK_ROWS, KANA_EXT_ROWS, KANA_GROUPS, KANA_LENGTHS } from "./src/data/kana-tables.js";
@@ -744,7 +744,7 @@ export default function JpnFlashcards() {
           <nav ref={tabsRef}
                className={"tc-tabs" + (tabEdges.left ? " has-left" : "") + (tabEdges.right ? " has-right" : "")}
                role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["spell", "Spelling"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
+            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["spell", "Spelling"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -756,8 +756,6 @@ export default function JpnFlashcards() {
           <div className="tc-empty">Loading your deck…</div>
         ) : tab === "study" ? (
           <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
-        ) : tab === "freq" ? (
-          <Freq />
         ) : tab === "drill" ? (
           <ConjDrill />
         ) : tab === "input" ? (
@@ -3025,18 +3023,22 @@ async function recordForeign(card, ok, ms, area, outcome) {
   const key = foreignKey(card.src);
   try {
     const raw = await sGet(key);
-    const store = raw ? JSON.parse(raw) : (card.src === "freq" ? [] : {});
+    /* Every deck stores the same thing: a map from item id to its stats. freq used to be a
+       special case here that rebuilt an ARRAY — a shape its own writer had abandoned — so
+       a graded frequency word wrote `[]` over the whole map and took every studied word
+       with it. It could not fire only because the pooling above never yielded a freq card;
+       one bug was hiding the other. freqStatsFrom converts a legacy array rather than
+       discarding it, and the branch is gone: freq is now scheduled exactly like kanji. */
+    const store = card.src === "freq"
+      ? freqStatsFrom(raw ? JSON.parse(raw) : null)
+      : (raw ? JSON.parse(raw) : {});
     const now = Date.now();
-    if (card.src === "freq") {
-      const next = (Array.isArray(store) ? store : []).map((x) => (x.id !== card.srcId ? x : {
-        ...x, last: now, fsrs: statReview(x, ok, ms, now),
-        seen: (x.seen || 0) + 1, correct: (x.correct || 0) + (ok ? 1 : 0),
-        streak: ok ? (x.streak || 0) + 1 : 0,
-        level: ok ? Math.min(5, (x.level || 0) + 1) : Math.max(0, (x.level || 0) - 2),
-        ms: (x.ms || 0) + (ms || 0), msN: (x.msN || 0) + (ms ? 1 : 0),
-      }));
-      await sSet(key, JSON.stringify(next));
-    } else {
+    /* First sighting of a frequency word. The daily new-word budget is counted from this,
+       and the counting used to happen inside the 10k tab — with the tab gone, the only
+       place that can still see "this word had never been seen" is here. Without it the
+       quota reads zero used, forever, and the frontier never closes. */
+    const isNewFreq = card.src === "freq" && !((store[card.srcId] || {}).seen > 0);
+    {
       const st = store[card.srcId] || { seen: 0, correct: 0, level: 0, streak: 0 };
       store[card.srcId] = applyOutcome({
         ...st, last: now, fsrs: statReview(st, ok, ms, now),
@@ -3047,7 +3049,7 @@ async function recordForeign(card, ok, ms, area, outcome) {
       }, { ok, ...(outcome || {}) });
       await sSet(key, JSON.stringify(store));
     }
-    logDay({ ok, ms: ms || 0, deck: card.src, area });
+    logDay({ ok, ms: ms || 0, deck: card.src, area, fnew: isNewFreq });
   } catch (e) { /* a lost result is better than a broken session */ }
 }
 
@@ -3079,11 +3081,26 @@ async function loadForeignDecks(cards) {
     );
     out.push({ deck: "kanji", items, stats: remapStats(stats, "kanji") });
   } catch (e) {}
+  /* The frequency list. This used to pool only words already STARTED — and since the only
+     way to start one was the 10k tab, retiring that tab would have made all ten thousand
+     permanently unreachable. It also read the store as an array long after the writer had
+     changed it to a map keyed by term, so in practice it pooled nothing at all.
+
+     Now it works the way the kanji branch above does: everything in progress, plus a
+     frontier of the next unstarted ranks, so Smart Review can introduce frequency words
+     itself. New ones are capped by the day's remaining quota — the list is 10,000 long and
+     a session that offered all of it would be a vocabulary firehose, not a study plan. */
   try {
-    const raw = await sGet("jpn101:freq");
-    const deck = raw ? JSON.parse(raw) : [];
-    const started = (Array.isArray(deck) ? deck : []).filter((x) => (x.seen || 0) > 0);
-    const items = started.map((x) => foreignCard("freq", x));
+    const [raw, d, days, qRaw] = await Promise.all([
+      sGet("jpn101:freq"), loadFreqWords(), loadDays(), sGet("jpn101:freqQuota"),
+    ]);
+    const stats = freqStatsFrom(raw ? JSON.parse(raw) : null);
+    const words = (d && d.words) || [];
+    const quota = Number(qRaw) || FREQ_DEFAULT_QUOTA;
+    const today = days[localDayKey()];
+    const room = Math.max(0, quota - ((today && today.fnew) || 0));
+    const { started, fresh } = freqPool(words, stats, { room });
+    const items = [...started, ...fresh].map((x) => foreignCard("freq", x));
     out.push({ deck: "freq", items, stats: Object.fromEntries(items.map((i) => [i.id, i])) });
   } catch (e) {}
   return out.filter((s) => s.items.length);
@@ -4423,13 +4440,15 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       if (o.hooks) await sSet("jpn101:hooks", JSON.stringify(o.hooks));
       if (o.quota) await sSet("jpn101:freqQuota", String(o.quota));
       if (o.oral) await sSet("jpn101:oralAttempts", JSON.stringify(o.oral));
-      if (o.freq && Array.isArray(o.freq)) {
-        // keep freq stats from the backup, plus any tier words added since it was taken
-        const fmerged = [...o.freq];
-        const fhave = new Set(fmerged.map((c) => c.term));
-        FREQ_SEED.forEach((s) => { if (!fhave.has(s.term)) { fmerged.push({ id: uid(), seen: 0, correct: 0, ms: 0, msN: 0, ...s }); fhave.add(s.term); } });
-        await sSet("jpn101:freq", JSON.stringify(fmerged));
-        await sSet("jpn101:freqVersion", String(FREQ_VERSION));
+      /* Frequency-list progress. A backup taken before the 10k tab was retired holds an
+         ARRAY of full records; one taken since holds a map keyed by term. Both are
+         accepted, because refusing the old shape would silently drop every frequency word
+         the learner had studied. The words themselves are not restored from the backup —
+         freq.json ships all ten thousand, so a backup only needs to carry the progress. */
+      if (o.freq) {
+        const merged = { ...freqStatsFrom(o.freq) };
+        try { Object.assign(merged, freqStatsFrom(JSON.parse((await sGet("jpn101:freq")) || "null"))); } catch (e) {}
+        await sSet("jpn101:freq", JSON.stringify(merged));
       }
       if (o.days) {
         // merge day-by-day; keep whichever record shows more reviews for that date
@@ -7045,236 +7064,6 @@ function fmtIn(ms) {
   const h = Math.round(m / 60);
   if (h < 48) return "in ~" + h + "h";
   return "in ~" + Math.round(h / 24) + "d";
-}
-
-function Freq() {
-  const [words, setWords] = useState(null);      // static list from freq.json
-  const [statsMap, setStatsMap] = useState(null); // progress, keyed by term
-  /* The component still works on one merged array — only the STORAGE is split. */
-  const deck = useMemo(() => {
-    if (!words) return null;
-    return words.map((w) => ({
-      id: w.t, term: w.t, reading: w.r || w.t, romaji: "", meaning: w.m,
-      kind: /[一-龯]/.test(w.t) ? "kanji" : /^[゠-ヿー]+$/.test(w.t) ? "katakana" : "hiragana",
-      rank: w.k, pos: w.p,
-      seen: 0, correct: 0, ms: 0, msN: 0,
-      ...((statsMap && statsMap[w.t]) || {}),
-    }));
-  }, [words, statsMap]);
-  const [quota, setQuota] = useState(15);
-  const [todayNew, setTodayNew] = useState(0);
-  const [queue, setQueue] = useState([]);
-  const [pos, setPos] = useState(0);
-  const [flipped, setFlipped] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [right, setRight] = useState(0);
-  const [total, setTotal] = useState(0);
-  const missRef = useRef({});
-  const shownRef = useRef(0);
-  const thinkRef = useRef(null);
-  useEffect(() => { shownRef.current = Date.now(); thinkRef.current = null; }, [pos, running]);
-  const flip = useCallback(() => {
-    setFlipped((f) => {
-      if (!f && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
-      return !f;
-    });
-  }, []);
-
-  // load + seed/merge, quota, and today's new-word count
-  useEffect(() => {
-    (async () => {
-      /* Words from the shipped file, progress from storage. The 148 hand-picked words
-         that used to live inline are gone — this is the real 10,000, ranked by corpus
-         frequency — and any progress recorded against the old ones is migrated by term. */
-      let raw = null;
-      try { const r = await sGet(FREQ_KEY); raw = r ? JSON.parse(r) : null; } catch (e) { raw = null; }
-      const stats0 = migrateFreqStats(raw);
-      if (Array.isArray(raw)) await sSet(FREQ_KEY, JSON.stringify(stats0));
-      const data = await loadFreqWords();
-      const words = (data && data.words) || [];
-      setStatsMap(stats0);
-      setWords(words);
-      try { const q = await sGet(FREQ_QUOTA_KEY); if (q) setQuota(Number(q) || 15); } catch (e) {}
-      const days = await loadDays();
-      const today = days[localDayKey()];
-      setTodayNew(today ? today.fnew || 0 : 0);
-    })();
-  }, []);
-
-  /* Only studied words are stored. Ten thousand untouched records would be a megabyte of
-     zeroes re-synced on every save. */
-  const persist = useCallback((next) => {
-    const map = {};
-    for (const c of next) {
-      if (!((c.seen || 0) > 0)) continue;
-      map[c.term] = { seen: c.seen, correct: c.correct, level: c.level || 0, streak: c.streak || 0,
-        last: c.last || 0, ease: c.ease || 1, fsrs: c.fsrs || null, ms: c.ms || 0, msN: c.msN || 0 };
-    }
-    setStatsMap(map);
-    sSet(FREQ_KEY, JSON.stringify(map));
-  }, []);
-  const setQ = (n) => { setQuota(n); sSet(FREQ_QUOTA_KEY, String(n)); };
-
-  const stats = useMemo(() => {
-    if (!deck) return null;
-    const now = Date.now();
-    const studied = deck.filter((c) => (c.seen || 0) > 0);
-    let nextIn = null;
-    if (studied.length) nextIn = Math.min(...studied.map((c) => (c.last || 0) + REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1) - now));
-    return {
-      total: deck.length,
-      learned: studied.length,
-      mastered: deck.filter((c) => (c.level || 0) >= 4).length,
-      due: studied.filter((c) => dueness(c, now) >= 1).length,
-      fresh: deck.length - studied.length,
-      nextIn,
-    };
-  }, [deck]);
-
-  const freeStart = useCallback(() => {
-    if (!deck) return;
-    const now = Date.now();
-    const pool = deck.filter((c) => (c.seen || 0) > 0)
-      .sort((a, b) => needScore(b, now) - needScore(a, now)).slice(0, 20);
-    if (!pool.length) return;
-    missRef.current = {};
-    setQueue(pool); setPos(0); setFlipped(false); setRight(0); setTotal(0); setRunning(true);
-  }, [deck]);
-
-  const start = useCallback(() => {
-    if (!deck) return;
-    const now = Date.now();
-    const due = deck.filter((c) => (c.seen || 0) > 0 && dueness(c, now) >= 1)
-      .sort((a, b) => needScore(b, now) - needScore(a, now)).slice(0, 30);
-    const allowance = Math.max(0, quota - todayNew);
-    const fresh = deck.filter((c) => !((c.seen || 0) > 0)).sort((a, b) => a.rank - b.rank).slice(0, allowance);
-    const pool = [...due, ...fresh];
-    if (!pool.length) return;
-    missRef.current = {};
-    setQueue(pool); setPos(0); setFlipped(false); setRight(0); setTotal(0); setRunning(true);
-  }, [deck, quota, todayNew]);
-
-  const grade = useCallback((got) => {
-    const c = queue[pos];
-    if (!c) return;
-    const t = thinkRef.current && thinkRef.current > 250 && thinkRef.current < 180000 ? Math.round(thinkRef.current) : 0;
-    const wasNew = (c.seen || 0) === 0 && !missRef.current[c.id];
-    if (wasNew) setTodayNew((n) => n + 1);
-    logDay({ ok: got, ms: t, deck: "freq", fnew: wasNew });
-    const next = deck.map((x) => {
-      if (x.id !== c.id) return x;
-      const ease = Math.max(0.55, Math.min(1.8, (x.ease || 1) + (got ? 0.05 : -0.15)));
-      return {
-        ...x, ease, last: Date.now(),
-        fsrs: statReview(x, got, t, Date.now()),
-        streak: got ? (x.streak || 0) + 1 : 0,
-        seen: (x.seen || 0) + 1,
-        correct: (x.correct || 0) + (got ? 1 : 0),
-        ms: (x.ms || 0) + t, msN: (x.msN || 0) + (t ? 1 : 0),
-        level: got ? Math.min(5, (x.level || 0) + 1) : Math.max(0, (x.level || 0) - 2),
-      };
-    });
-    persist(next);
-    setTotal((n) => n + 1);
-    if (got) setRight((n) => n + 1);
-    else {
-      const m = (missRef.current[c.id] || 0) + 1;
-      missRef.current[c.id] = m;
-      if (m <= 3) setQueue((q) => { const nq = q.slice(); nq.splice(Math.min(pos + 4, nq.length), 0, { ...c, seen: 1 }); return nq; });
-    }
-    setFlipped(false);
-    setPos((p) => p + 1);
-  }, [queue, pos, deck, persist]);
-
-  if (!deck || !stats) return <div className="tc-empty">Loading the 10k deck…</div>;
-
-  if (!running) {
-    const newLeft = Math.max(0, quota - todayNew);
-    const doneToday = stats.due === 0 && (newLeft === 0 || stats.fresh === 0);
-    return (
-      <div className="tc-conj">
-        <div className="tc-hero">
-          <div className="tc-heronum">{stats.due + Math.min(newLeft, stats.fresh)}</div>
-          <p className="tc-herolabel">in today's session</p>
-          <p className="tc-herosub">{stats.due} due · {Math.min(newLeft, stats.fresh)} new ({todayNew}/{quota} new done today)
-            {stats.due === 0 && stats.nextIn != null && stats.nextIn > 0 ? ` · next reviews ${fmtIn(stats.nextIn)}` : ""}</p>
-        </div>
-        <div className="tc-conjintro">
-          <h2 className="tc-conjtitle">Frequency 10k · Tier 1</h2>
-          <p className="tc-conjsub">The long game: highest-frequency everyday words at a fixed daily intake.
-            {" "}{stats.learned}/{stats.total} started · {stats.mastered} mastered · {stats.fresh} untouched.
-            Every review is logged: result, streak, level, and think time.</p>
-          <div className="tc-conjchips" role="group" aria-label="Daily new-word quota">
-            {[10, 15, 20].map((n) => (
-              <button key={n} className={"tc-conjchip" + (quota === n ? " is-on" : "")} onClick={() => setQ(n)}>{n} new/day</button>
-            ))}
-          </div>
-          <button className="tc-btn tc-btn-wide tc-btn-primary" onClick={start} disabled={doneToday}>
-            {doneToday ? "Quota done for today ✓" : "Start session"}
-          </button>
-          {stats.learned > 0 && (
-            <button className="tc-btn tc-btn-wide" onClick={freeStart}>
-              Extra practice · weakest {Math.min(20, stats.learned)}
-            </button>
-          )}
-          {doneToday && <p className="tc-conjsub">The daily quota keeps tomorrow's review pile sane, but extra practice is always open — it drills your weakest studied words without touching the quota, and every rep still counts toward your stats.</p>}
-        </div>
-      </div>
-    );
-  }
-
-  if (pos >= queue.length) {
-    const pct = total ? Math.round((right / total) * 100) : 0;
-    return (
-      <div className="tc-done">
-        <p className="tc-eyebrow">Session complete</p>
-        <div className="tc-bignum">{pct}<span>%</span></div>
-        <p className="tc-donesub">{right}/{total} correct · {todayNew}/{quota} new today</p>
-        <div className="tc-donebtns">
-          <button className="tc-btn" onClick={() => { setRunning(false); }}>Back</button>
-          <button className="tc-btn tc-btn-primary" onClick={freeStart}>Extra practice</button>
-        </div>
-      </div>
-    );
-  }
-
-  const card = queue[pos];
-  return (
-    <div className="tc-conj">
-      <div className="tc-progress">
-        <div className="tc-progtrack"><div className="tc-progfill" style={{ width: `${(pos / queue.length) * 100}%` }} /></div>
-        <span className="tc-progtext">{pos + 1} / {queue.length}</span>
-      </div>
-      <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
-           role="button" tabIndex={0} aria-label="Flashcard, click to flip">
-        <div className="tc-card-inner">
-          <div className="tc-face tc-front">
-            <span className="tc-kindchip">#{card.rank} · {KIND_LABEL[card.kind] || ""}</span>
-            <div className="tc-term">{card.term}</div>
-            <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
-            {(card.seen || 0) === 0 && <div className="tc-conjask">new word</div>}
-            <span className="tc-flipcue">tap to flip</span>
-          </div>
-          <div className="tc-face tc-back">
-            {card.emoji && <div className="tc-emoji">{card.emoji}</div>}
-            <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
-            <div className="tc-romaji">{card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
-            {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen}× · {Math.round(((card.correct || 0) / card.seen) * 100)}%</span>}
-          </div>
-        </div>
-      </div>
-      <div className="tc-grade">
-        {!flipped ? (
-          <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); flip(); }}>Reveal answer</button>
-        ) : (
-          <>
-            <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
-            <button type="button" className="tc-btn tc-btn-got" onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it</button>
-          </>
-        )}
-      </div>
-    </div>
-  );
 }
 
 
