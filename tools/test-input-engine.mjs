@@ -3,65 +3,15 @@
 //
 //   node tools/test-input-engine.mjs
 //
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const src = fs.readFileSync(path.join(ROOT, "JpnFlashcards.jsx"), "utf8");
-
-// pull the engine out of the single-file app without executing React
-function grab(name, kind) {
-  const start = src.indexOf(`${kind} ${name}`);
-  if (start === -1) throw new Error("could not find " + name);
-  let depth = 0, i = src.indexOf(kind === "const" ? "=" : "(", start), started = false;
-  for (; i < src.length; i++) {
-    const c = src[i];
-    if (c === "{" || c === "[" || c === "(") { depth++; started = true; }
-    else if (c === "}" || c === "]" || c === ")") { depth--; if (started && depth === 0) { i++; break; } }
-  }
-  // For functions, skip the parameter list first — applyRating destructures, so its very
-  // first "{" belongs to the params, not the body. Close the parens, then brace-count.
-  if (kind === "function") {
-    let p = src.indexOf("(", start), pd = 0, j = p;
-    for (; j < src.length; j++) {
-      if (src[j] === "(") pd++;
-      else if (src[j] === ")") { pd--; if (pd === 0) { j++; break; } }
-    }
-    let d = 0, begun = false;
-    for (; j < src.length; j++) {
-      if (src[j] === "{") { d++; begun = true; }
-      else if (src[j] === "}") { d--; if (begun && d === 0) { j++; break; } }
-    }
-    return src.slice(start, j);
-  }
-  return src.slice(start, i) + ";";
-}
-
-/* INPUT_VERDICTS now lives in src/data/input-catalog.js. It is read through a real import
-   and re-emitted into the synthetic module, rather than sliced out of the app source. The
-   functions under test still live in JpnFlashcards.jsx so the grab() machinery stays, but
-   nothing that has a module to import from should be recovered by string search. */
-const { INPUT_VERDICTS } = await import("../src/data/input-catalog.js");
-
-const code = [
-  "const INPUT_VERDICTS = " + JSON.stringify(INPUT_VERDICTS) + ";",
-  "const clamp100 = (n) => Math.max(0, Math.min(100, n));",
-  grab("evidenceWeight", "function"),
-  grab("learningRate", "function"),
-  grab("applyRating", "function"),
-  grab("seedLevelsFromDeck", "function"),
-  grab("fuseLevels", "function"),
-  grab("seededShuffle", "function"),
-  grab("COVERAGE_LEADING_PARTICLES", "const"),
-  grab("COVERAGE_SAFE_SUFFIXES", "const"),
-  grab("COVERAGE_SAFE_SET", "const"),
-  grab("coverageAgainstDeck", "function"),
-  "export { applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, coverageAgainstDeck, evidenceWeight, learningRate };",
-].join("\n");
-
-const mod = await import("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
-const { applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, coverageAgainstDeck, evidenceWeight, learningRate } = mod;
+// The engine is imported now. This file used to reconstruct it by searching the app
+// source for `function applyRating` and brace-counting to its end, then eval'ing the
+// result as a data: URL — necessary while everything lived in one 11,000-line file, and
+// obsolete the moment it did not. A test that finds its subject by string search fails
+// when the subject moves, which says nothing about whether the subject still works.
+import {
+  applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle,
+  coverageAgainstDeck, evidenceWeight, learningRate, recommend,
+} from "../src/lib/input-engine.js";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
@@ -326,15 +276,8 @@ t("a deck that teaches particles as their own flashcards doesn't strand a stray 
 });
 
 // ── recommender: feed-backed sources must win the slots ──
-const RECO = await (async () => {
-  const code2 = [
-    "const clamp100 = (n) => Math.max(0, Math.min(100, n));",
-    grab("seededShuffle", "function"),
-    grab("recommend", "function"),
-    "export { recommend };",
-  ].join("\n");
-  return await import("data:text/javascript;base64," + Buffer.from(code2).toString("base64"));
-})();
+// `recommend` is imported like everything else; this block used to rebuild it from
+// source text for the same reason the preamble did.
 
 console.log("\n=== recommender prefers sources it can resolve to one episode ===");
 const mk = (id, difficulty, feed) => ({ id, difficulty, medium: "reading", tags: [], _feed: feed });
@@ -352,7 +295,7 @@ t("feedless sources still fill in when there aren't enough", () => {
   if (r[0].id !== "f1") throw new Error("the one feed-backed source should lead, got " + r[0].id);
 });
 function recommendWrap({ catalog, level, preferred }) {
-  return RECO.recommend({ catalog, level, mode: "active", medium: "reading", minutes: 15,
+  return recommend({ catalog, level, mode: "active", medium: "reading", minutes: 15,
                 history: [], tagScores: {}, seed: 3, preferred });
 }
 
