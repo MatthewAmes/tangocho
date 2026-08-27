@@ -264,5 +264,28 @@ t("nothing measurable at all recommends nothing", () => {
   eq(nextBest([], () => ({ pct: 80 })), null);
 });
 
+console.log("\n=== the grader takes RAW chunks, not the UI's keyed tiles ===");
+t("a correctly assembled sentence grades correct", () => {
+  const s = "私は学生です";
+  const d = buildDrill(s, { en: "I am a student", known: ["私", "学生"], seed: 1 });
+  if (!d) throw new Error("no drill built");
+  if (!gradeDrill(d, d.answer.slice()).ok) throw new Error("the exact answer graded as wrong");
+});
+t("tiles still carrying the UI's disambiguation key do NOT grade correct", () => {
+  /* The UI stores placed tiles as text + NUL + index so two identical pieces stay distinct
+     while being placed. Passing those through unstripped made every build/order drill
+     unwinnable — the grader compared "私" against "私\0" — while the on-screen sentence,
+     which does strip the key, looked perfect. This pins the contract: the grader takes raw
+     chunks and the caller must strip. */
+  const s = "私は学生です";
+  const d = buildDrill(s, { en: "I am a student", known: ["私", "学生"], seed: 1 });
+  const NUL = String.fromCharCode(0);
+  const keyed = d.answer.map((t, i) => t + NUL + i);
+  if (gradeDrill(d, keyed).ok) throw new Error("keyed tiles should not pass — strip them first");
+  const stripped = keyed.map((k) => k.split(NUL)[0]);
+  if (!gradeDrill(d, stripped).ok) throw new Error("stripping the key should make it pass");
+});
+
+
 console.log(`\n${fail ? `${fail} of ${run} FAILED` : `all ${run} production and i+1 tests passed`}`);
 process.exit(fail ? 1 : 0);

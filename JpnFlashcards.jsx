@@ -3880,7 +3880,12 @@ function ProductionBlock({ drills, onDone }) {
   if (!d) return null;
 
   const check = () => {
-    const given = d.type === "fill" ? typed : built;
+    /* built holds KEYED tiles (text + NUL + index) so two identical pieces stay distinct
+       while placing them. The grader compares against the raw chunk list, so the key has
+       to come off first — passing the keyed strings made every build/order drill grade as
+       wrong no matter what was assembled, while the display (which does strip the key)
+       showed a perfectly correct sentence. */
+    const given = d.type === "fill" ? typed : built.map((b) => b.split(String.fromCharCode(0))[0]);
     setResult(gradeDrill(d, given));
   };
   const next = () => {
