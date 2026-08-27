@@ -38,8 +38,14 @@ function grab(name, kind) {
   return src.slice(start, i) + ";";
 }
 
+/* INPUT_VERDICTS now lives in src/data/input-catalog.js. It is read through a real import
+   and re-emitted into the synthetic module, rather than sliced out of the app source. The
+   functions under test still live in JpnFlashcards.jsx so the grab() machinery stays, but
+   nothing that has a module to import from should be recovered by string search. */
+const { INPUT_VERDICTS } = await import("../src/data/input-catalog.js");
+
 const code = [
-  grab("INPUT_VERDICTS", "const"),
+  "const INPUT_VERDICTS = " + JSON.stringify(INPUT_VERDICTS) + ";",
   "const clamp100 = (n) => Math.max(0, Math.min(100, n));",
   grab("evidenceWeight", "function"),
   grab("learningRate", "function"),

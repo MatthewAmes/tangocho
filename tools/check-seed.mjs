@@ -4,17 +4,11 @@
 // 方|43|6-3 collision this check was added for), the merge silently collapses them into one
 // card again. Catch that at build time instead of by a corrupted deck in the wild.
 // Run from tools/build.mjs.
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const src = fs.readFileSync(path.join(ROOT, "JpnFlashcards.jsx"), "utf8");
-
-const start = src.indexOf("const SEED = [");
-if (start === -1) throw new Error("could not find `const SEED = [` in JpnFlashcards.jsx");
-const end = src.indexOf("\nconst ", start + 20);
-const seed = eval(src.slice(start + "const SEED = ".length, end).replace(/;\s*$/, ""));
+// SEED is imported rather than sliced out of the app source and eval'd. The old version
+// searched for the literal text "const SEED = [" and broke the moment the array moved to
+// its own module -- a build-time check that depends on where a declaration sits is a check
+// that fails for the wrong reason.
+import { SEED as seed } from "../src/data/seed.js";
 
 const byKey = new Map();
 seed.forEach((s, i) => {

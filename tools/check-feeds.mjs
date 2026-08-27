@@ -8,7 +8,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const app = fs.readFileSync(path.join(ROOT, "JpnFlashcards.jsx"), "utf8");
+// The app side is imported; only the Worker is still read as text, because cf/src/index.js
+// cannot be imported without a Workers env. Slicing app source to find a constant breaks
+// the moment that constant moves file, which is exactly what happened when it did.
+const { FEED_SOURCES, INPUT_CATALOG } = await import("../src/data/input-catalog.js");
 const worker = fs.readFileSync(path.join(ROOT, "cf/src/index.js"), "utf8");
 
 const block = (src, start, open, close) => {
@@ -22,10 +25,10 @@ const block = (src, start, open, close) => {
   return src.slice(a, i);
 };
 
-const appIds = new Set(Array.from(block(app, "const FEED_SOURCES = new Set(", "[", "]").matchAll(/"([\w-]+)"/g)).map((m) => m[1]));
+const appIds = new Set(FEED_SOURCES);
 const workerIds = new Set(Array.from(block(worker, "const FEEDS = {", "{", "}").matchAll(/"([\w-]+)":\s*"http/g)).map((m) => m[1]));
 // every source the app offers at all, so a feed can't point at an id that no longer exists
-const catalogIds = new Set(Array.from(app.matchAll(/\{\s*id:\s*"([\w-]+)",\s*title:/g)).map((m) => m[1]));
+const catalogIds = new Set(INPUT_CATALOG.map((s) => s.id));
 
 const problems = [];
 for (const id of appIds) if (!workerIds.has(id)) problems.push(`app expects a feed for "${id}" but the Worker has none`);
