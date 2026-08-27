@@ -21,6 +21,7 @@ import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
 import { contrastSet } from "./tools/contrast.mjs";
+import { posOf, shortGloss } from "./tools/pos.mjs";
 import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -2892,7 +2893,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        only a stand-in for that, used when there is no confusion history yet. */
     const known = (confusion.get(card.id) || [])
       .map((id) => pool.find((c) => c.id === id)).filter(Boolean);
-    const near = pool.filter((c) => c.kind === card.kind);
+    /* Group by PART OF SPEECH. This line used to filter on `kind`, which is the writing
+       system (hiragana/katakana/kanji) — so "same kind" matched orthography and did nothing
+       for plausibility. Asking for 急ぎます against {to hurry, Who is it that cleaned up?,
+       Vietnamese (language), break} is not a vocabulary question: one option is a verb and
+       the prompt visibly ends in ます, so it is answerable from grammar alone.
+       Falls back to the whole pool when a category is too thin to fill four slots. */
+    const myPos = posOf(card);
+    const samePos = pool.filter((c) => posOf(c) === myPos);
+    const near = samePos.length >= 12 ? samePos : pool.filter((c) => c.kind === card.kind);
     const bag = (near.length >= 12 ? near : pool);
     const seed = String(card.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0) + (card._step || 0);
     const picked = [];
@@ -3521,7 +3530,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               return (
                 <button key={c.id} type="button" className={"tc-mcopt" + cls}
                         disabled={!!verdict} onClick={() => answerChoice(c)}>
-                  {c.meaning}
+                  {/* Trimmed of grammar annotations while the question is live. A gloss like
+                      "to hurry (u-verb; past: 急いだ)" among three bare nouns is the longest
+                      and most decorated option on screen, which is a second way to pick the
+                      answer without knowing the word. The full gloss returns once answered. */}
+                  {verdict ? c.meaning : shortGloss(c.meaning)}
                 </button>
               );
             })}
