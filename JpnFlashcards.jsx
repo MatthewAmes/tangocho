@@ -49,6 +49,7 @@ import { GODAN_ROWS, conjugate, CONJ_FORMS } from "./src/lib/conjugate.js";
 import { unpackVideos, evidenceWeight, learningRate, applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, recommend, COVERAGE_LEADING_PARTICLES, COVERAGE_SAFE_SUFFIXES, COVERAGE_SAFE_SET, coverageAgainstDeck, band, bandName, relDots, agoLabel, blankInput } from "./src/lib/input-engine.js";
 import { SESSION_KEY, USER_EMAIL_KEY, loadSession, saveSession } from "./src/lib/session.js";
 import { TTS_OK, pickJpVoice, ttsUnlock, prefetchJa, speakJa, stopJa } from "./src/lib/tts.js";
+import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, dueness, statReview, boundMs, reviewOutcome, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryWarmth, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -374,20 +375,19 @@ async function pullAndMergeCloud() {
    little extra recall. 0.90 is the researched default and where the review-count curve
    starts climbing steeply. */
 const RETENTION_KEY = "jpn101:retention";
-let retentionTarget = 0.9;
 try {
   const r = Number(window.localStorage.getItem(RETENTION_KEY));
-  if (r >= 0.7 && r <= 0.97) retentionTarget = r;
+  if (r >= 0.7 && r <= 0.97) retention.target = r;
 } catch (e) {}
 function setRetention(r) {
-  retentionTarget = Math.min(0.97, Math.max(0.7, r));
-  sSet(RETENTION_KEY, String(retentionTarget));   // async, fire-and-forget; schedules a push like any other setting
+  retention.target = Math.min(0.97, Math.max(0.7, r));
+  sSet(RETENTION_KEY, String(retention.target));   // async, fire-and-forget; schedules a push like any other setting
 }
 // read once at module load, so a target changed on another device needs this to take effect
 onAfterPull(() => {
   try {
     const r = Number(window.localStorage.getItem(RETENTION_KEY));
-    if (r >= 0.7 && r <= 0.97) retentionTarget = r;
+    if (r >= 0.7 && r <= 0.97) retention.target = r;
   } catch (e) {}
 });
 
@@ -967,10 +967,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        point of having a number you can trust would be gone. */
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
                                   exclude: heldOut });
-    // retentionTarget: not a dep in the usual sense (it's a module `let`, not props/state) but
-    // isLeech/dueness read it live, and the retention chip's onClick bumps `retention` state
+    // retention.target: not a dep in the usual sense (it's a module `let`, not props/state) but
+    // isLeech/dueness read it live, and the retention chip's onClick bumps `retentionPref`
     // right alongside it — so this recomputes on the same render that value changes.
-  }, [cards, foreign, plan, clozeIndex, heldOut, retentionTarget]);
+  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -1027,7 +1027,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const dueCount = useMemo(() => {
     const now = Date.now();
     return cards.filter((c) => (c.seen || 0) > 0 && dueness(c, now) >= 1).length;
-  }, [cards, retentionTarget]);
+  }, [cards, retention.target]);
   const masteredPct = useMemo(() => {
     if (!cards.length) return 0;
     return Math.round(cards.filter((c) => (c.level || 0) >= 4).length / cards.length * 100);
@@ -1046,10 +1046,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const todayKey = localDayKey();
   const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
   const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
-  const [retention, setRetentionState] = useState(retentionTarget);
-  // module-level retentionTarget is refreshed by its own onAfterPull above, which is
+  const [retentionPref, setRetentionState] = useState(retention.target);
+  // module-level retention.target is refreshed by its own onAfterPull above, which is
   // registered first (at module load) and so has already run when this callback fires
-  useEffect(() => onAfterPull(() => setRetentionState(retentionTarget)), []);
+  useEffect(() => onAfterPull(() => setRetentionState(retention.target)), []);
   /* What the memory model actually predicts. Shown because a scheduler you can't inspect
      is a scheduler you don't trust — and because "34 words are fading" is a far better
      reason to open the app than "you have 392 due". */
@@ -1060,13 +1060,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       if (!((c.seen || 0) > 0)) continue;
       const r = recallChance(c, now);
       if (r == null) continue;
-      if (r < retentionTarget) fading++;
-      if (r >= retentionTarget) solid++;
+      if (r < retention.target) fading++;
+      if (r >= retention.target) solid++;
       const st = c.fsrs || seedFromHistory(c);
       if (st && st.due && st.due - now < 7 * 86400000) week++;
     }
     return { fading, solid, week };
-  }, [cards, retentionTarget]);
+  }, [cards, retention.target]);
   const buddy = useMemo(() => {
     const state = mascotState({ studiedToday: todayRev > 0, dueCount, streak });
     // One honest sentence, matched to the state. No fake enthusiasm when the numbers
@@ -1545,13 +1545,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             <span className="tc-retlabel">Aim to remember</span>
             <div className="tc-kanaseg">
               {[[0.85, "85%"], [0.9, "90%"], [0.95, "95%"]].map(([v, label]) => (
-                <button key={v} className={"tc-fchip" + (Math.abs(retention - v) < 0.001 ? " is-on" : "")}
+                <button key={v} className={"tc-fchip" + (Math.abs(retentionPref - v) < 0.001 ? " is-on" : "")}
                   onClick={() => { setRetention(v); setRetentionState(v); }}>{label}</button>
               ))}
             </div>
             <p className="tc-smarthint">
-              {retention <= 0.85 ? "Fewer reviews, more forgetting. Good when you're buried."
-                : retention >= 0.95 ? "Many more reviews for a little more recall. Use before an exam."
+              {retentionPref <= 0.85 ? "Fewer reviews, more forgetting. Good when you're buried."
+                : retentionPref >= 0.95 ? "Many more reviews for a little more recall. Use before an exam."
                 : "The researched default — reviews land just as a word starts to slip."}
             </p>
           </div>
@@ -2709,43 +2709,21 @@ function weakness(c) {
   if (seen === 0) return 1.0;                 // unseen first
   return 1 - (c.correct || 0) / seen;          // lower accuracy = weaker
 }
-function isWeak(c) {
-  const seen = c.seen || 0;
-  return seen >= 1 && (c.correct || 0) / seen < 0.5;  // missed more often than not
-}
-function masteryScore(c) {            // higher = stronger; seen cards only
-  const seen = c.seen || 0;
-  if (seen === 0) return -1;
-  return (c.level || 0) + (c.correct || 0) / seen;   // level dominates, accuracy breaks ties
-}
 
-// ── spaced repetition ──
-const DAY = 86400000;
-const REVIEW_INTERVALS = [0.007 * DAY, 1 * DAY, 3 * DAY, 7 * DAY, 16 * DAY, 35 * DAY]; // per mastery level (L0…L5)
+
+
+
+ // per mastery level (L0…L5)
 /* Production (EN→JP) unlocks once recognition is solid — stability of a week or more.
    Asking you to produce a word you can't yet recognise is just failure with extra steps;
    asking only ever to recognise leaves you able to read Japanese and unable to speak it.
    Recognition reliably precedes production in L2 acquisition, so this gates on the
    recognition state and then starts building the harder direction on top. */
-const PROD_UNLOCK_STABILITY = 7;    // days
-function recallUnlocked(c) {
-  if (!((c.seen || 0) > 0)) return false;
-  const st = c.fsrs || seedFromHistory(c);
-  return !!(st && st.S >= PROD_UNLOCK_STABILITY);
-}
-function effLevel(c) {                // true strength = weakest direction once recall unlocks
-  const lvl = Math.min(5, c.level || 0);
-  return recallUnlocked(c) ? Math.min(lvl, Math.min(5, c.rlevel || 0)) : lvl;
-}
-function totalMisses(c) {
-  return ((c.seen || 0) + (c.rseen || 0)) - ((c.correct || 0) + (c.rcorrect || 0));
-}
-function isLeech(c) {                 // stuck word: keeps failing despite reps
-  const t = (c.seen || 0) + (c.rseen || 0);
-  if (t < 8) return false;
-  const acc = ((c.correct || 0) + (c.rcorrect || 0)) / t;
-  return totalMisses(c) >= 6 && acc < 0.6;
-}
+    // days
+
+
+
+
 /* >= 1 means due. Under FSRS this is "has recall probability fallen to the target yet",
    which is a real question about your memory rather than a position on a fixed ladder.
    Contract: due is the scheduler's truth — dueness(c, now) >= 1 iff now >= c.fsrs.due. review()
@@ -2754,19 +2732,7 @@ function isLeech(c) {                 // stuck word: keeps failing despite reps
    (due in 10 minutes) wasn't offered again for days, and the retention chip didn't actually
    change when anything was due. Seeded/legacy states with no stored due fall back to
    recomputing from S with the CURRENT target. */
-function dueness(c, now) {
-  const seen = c.seen || 0;
-  if (seen === 0) return 0;
-  const st = c.fsrs || seedFromHistory(c);
-  if (st && st.S > 0) {
-    const last = st.last || 0;
-    const due = st.due > last ? st.due : last + Math.max(1, intervalFor(st.S, retentionTarget)) * 86400000;
-    const span = Math.max(60000, due - last);   // never divide by ~0 (relearning = 10 min)
-    return (now - last) / span;
-  }
-  const interval = REVIEW_INTERVALS[effLevel(c)] * (c.ease || 1);   // pre-FSRS fallback
-  return (now - (c.last || 0)) / interval;
-}
+
 /* ── shared FSRS plumbing for the mini-decks ──
    Kana, the conjugation drill and the 10k deck each grew their own scheduler: a hand-tuned
    priority score over level, accuracy, streak and days-since. They work, but there is no
@@ -2774,14 +2740,11 @@ function dueness(c, now) {
    near-identical scorers is three places to fix anything. These two functions put every
    deck in the app on the same memory model. The stat records keep their existing shape —
    an `fsrs` field is simply added alongside. */
-function statReview(st, ok, ms, now = Date.now()) {
-  const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
-  return fsrsReview(prior, gradeFromLatency(ok, ms, { streak: st && st.streak }), now, retentionTarget);
-}
+
 /* Latency bounds shared by every writer: under 250ms is a misfire, over three minutes is
    a card someone walked away from. Both are noise, and both used to be re-spelled at each
    call site. */
-function boundMs(ms) { return ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0; }
+
 /* What this answer does to the card memory, in one place.
 
    The learning-gain metric is a change in stability, so it needs the stability either
@@ -2792,31 +2755,8 @@ function boundMs(ms) { return ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0
 
    Recognition and production carry separate stability (fsrs vs rfsrs): being able to
    read 火曜日 says very little about producing it from "Tuesday". */
-function reviewOutcome(card, { got, ms, dir, area, foreign, now = Date.now() }) {
-  if (foreign) {                       // kana / kanji / 10k decks go through statReview
-    const prior = card && card.fsrs ? card.fsrs : (card && (card.seen || 0) > 0 ? seedFromHistory(card) : null);
-    const next = statReview(card, got, ms, now);
-    return { prior, next, t: ms, isProd: false, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
-  }
-  const t = boundMs(ms);
-  const isProd = dir === "prod";
-  const grade = gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
-    isProd ? "type" : "recall", latencyNormsRef.current, (card && card.streak) || 0);
-  const prior = isProd ? ((card && card.rfsrs) || null) : ((card && card.fsrs) || seedFromHistory(card || {}));
-  const next = fsrsReview(prior, grade, now, retentionTarget);
-  return { grade, prior, next, t, isProd, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
-}
-/** Higher = drill this sooner. Driven by how far recall has decayed below the target. */
-function statNeed(st, now = Date.now()) {
-  const seen = st && st.seen || 0;
-  if (!seen) return 6;                                    // never drilled → straight to the front
-  const f = st.fsrs || seedFromHistory(st);
-  if (!f || !(f.S > 0)) return 5;
-  const r = retrievability(Math.max(0, (now - (f.last || 0)) / 86400000), f.S);
-  // 1 - r is "how much of this memory has decayed". A card at 50% recall outranks one at
-  // 95% no matter how many times each has been seen, which is the whole point.
-  return (1 - r) * 8 + (st.streak ? 0 : 0.6);
-}
+
+
 
 /* Production is scheduled on its own clock. This matters more than it looks: a card only
    unlocks production once recognition is STABLE, and a stable card is by definition not due
@@ -2824,11 +2764,7 @@ function statNeed(st, now = Date.now()) {
    production almost never — the feature would have looked wired up and quietly done nothing.
    A card is production-due if it has earned the direction and either has never been asked
    backwards, or its production memory has decayed to the target. */
-function prodDue(c, now) {
-  if (!recallUnlocked(c)) return false;
-  if (!c.rfsrs || !(c.rfsrs.S > 0)) return true;
-  return (c.rfsrs.due || 0) <= now;
-}
+
 
 /* ── the study plan ──
    Straight out of the notes Matthew's JPN 101 professor left for continued study: start
@@ -2879,10 +2815,8 @@ const EVIDENCE_CAP = 4000;
 /* The current latency norms, kept at module level because the card writer lives outside
    the component that reads the evidence log. Recomputed whenever the log changes; an
    empty object simply means "no norm yet", and the grader falls back. */
-const latencyNormsRef = { current: {} };
-function refreshLatencyNorms(list) {
-  try { latencyNormsRef.current = latencyNorms(list || []); } catch (e) { latencyNormsRef.current = {}; }
-}
+
+
 let _evidence = null;
 async function loadEvidence() {
   if (_evidence) return _evidence;
@@ -2914,12 +2848,7 @@ async function logEvidence(rec) {
    grade comes from where this answer sits in THIS learner's own distribution for THAT
    kind of question. Below that, the old thresholds still apply — a norm built from three
    samples would be worse than the constant it replaced. */
-function gradeAgainstNorm(ok, ms, skill, format, norms, streak) {
-  if (!ok) return AGAIN;
-  const verdict = latencyVerdict(ms, skill, format, norms);
-  if (!verdict) return gradeFromLatency(ok, ms, { streak });      // no norm yet: fall back
-  return verdict === "fast" ? EASY : verdict === "slow" ? HARD : GOOD;
-}
+
 /* ── outcome feedback ──
    The last review's sharpest point: failure classification existed and changed nothing.
    These write the two signals the next intervention actually reads — a rolling recent
@@ -3177,55 +3106,18 @@ function remapStats(stats, src) {
    ramp would leave everything past the first week looking identical. The log curve spends
    its resolution where the learning actually happens: 1d reads clearly different from 14d,
    while 200d and 300d both just read "solid". */
-const MASTERY_CEIL = 365;                 // matches session.mjs ceilingDays
+                 // matches session.mjs ceilingDays
 /* Interpolated in RGB, not HSL: a hue sweep from slate-blue to gold runs through green on
    the short arc and through violet/red on the long one. Straight RGB gives a desaturated
    middle, which reads honestly as "in progress" and stays out of the way of the text. */
-const MASTERY_STOPS = [
-  [0.00, [107, 122, 148]],   // steel blue — new, or actively falling apart
-  [0.45, [150, 138, 132]],   // warm grey — finding its feet
-  [0.75, [201, 156, 92]],    // amber — holding for weeks
-  [1.00, [232, 191, 90]],    // gold — holding for months
-];
-function masteryWarmth(c) {
-  const st = (c && c.fsrs) || (c ? seedFromHistory(c) : null);
-  const S = st && st.S > 0 ? st.S : 0;
-  if (!S) return 0;
-  return Math.max(0, Math.min(1, Math.log(1 + S) / Math.log(1 + MASTERY_CEIL)));
-}
-function masteryColor(w) {
-  const x = Math.max(0, Math.min(1, w || 0));
-  let lo = MASTERY_STOPS[0], hi = MASTERY_STOPS[MASTERY_STOPS.length - 1];
-  for (let i = 0; i < MASTERY_STOPS.length - 1; i++) {
-    if (x >= MASTERY_STOPS[i][0] && x <= MASTERY_STOPS[i + 1][0]) { lo = MASTERY_STOPS[i]; hi = MASTERY_STOPS[i + 1]; break; }
-  }
-  const span = hi[0] - lo[0];
-  const t = span > 0 ? (x - lo[0]) / span : 0;
-  const ch = (i) => Math.round(lo[1][i] + (hi[1][i] - lo[1][i]) * t);
-  return ch(0) + "," + ch(1) + "," + ch(2);      // bare triplet, so CSS can vary the alpha
-}
+
+
+
 /* Everything the card needs, as custom properties. Returned as a style object so the value
    rides on the element and CSS does the rest — no extra class permutations. */
-function masteryStyle(c) {
-  const w = masteryWarmth(c);
-  return { "--mastery": masteryColor(w), "--mastery-w": w.toFixed(3) };
-}
-function recallChance(c, now) {
-  const st = c.fsrs || seedFromHistory(c);
-  if (!st || !(st.S > 0)) return null;
-  return retrievability(Math.max(0, (now - (st.last || 0)) / 86400000), st.S);
-}
-function needScore(c, now) {          // higher = needs review more (seen cards only)
-  const seen = c.seen || 0;
-  if (seen === 0) return -1;
-  const acc = (c.correct || 0) / seen;
-  const masteryGap = (5 - effLevel(c)) / 5;            // weak words (weakest direction)
-  const accGap = 1 - acc;                              // often-missed words
-  const overdue = Math.min(3, Math.max(0, dueness(c, now))); // spaced-repetition due
-  const fewReps = 1 / (1 + seen);                      // least-exercised words
-  const recallGap = recallUnlocked(c) ? Math.max(0, (c.level || 0) - (c.rlevel || 0)) / 5 : 0; // knows it, can't produce it
-  return masteryGap * 2 + accGap * 2 + overdue * 1.6 + fewReps * 1 + recallGap * 1.5;
-}
+
+
+
 
 
 

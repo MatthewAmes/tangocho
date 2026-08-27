@@ -107,6 +107,45 @@ t("input-engine: seedLevelsFromDeck returns both skills", () => {
   ok(typeof l.listening === "number" && typeof l.reading === "number");
 });
 
+const sched = await import("../src/lib/schedule.js");
+const aCard = () => ({
+  id: "x", seen: 5, correct: 4, level: 3, streak: 2,
+  last: Date.now() - 5 * 86400000,
+  fsrs: { S: 9, D: 5, last: Date.now() - 5 * 86400000, due: Date.now() + 86400000 },
+});
+t("schedule: every entry point runs standalone", () => {
+  const c = aCard(), now = Date.now();
+  for (const fn of ["masteryScore", "isWeak", "isLeech", "masteryWarmth", "effLevel", "recallUnlocked", "statNeed"])
+    ok(sched[fn](c) !== undefined, fn + " returned undefined");
+  for (const fn of ["dueness", "recallChance", "needScore", "prodDue"])
+    ok(sched[fn](c, now) !== undefined, fn + " returned undefined");
+});
+t("schedule: a correct review raises stability", () => {
+  const before = aCard().fsrs.S;
+  ok(sched.statReview(aCard(), true, 2000).S > before);
+});
+t("schedule: reviewOutcome reports the stability either side", () => {
+  const r = sched.reviewOutcome(aCard(), { got: true, ms: 2000, area: "vocabulary" });
+  ok(typeof r.s0 === "number" && typeof r.s1 === "number", JSON.stringify(r));
+  ok(r.s1 > r.s0, "a correct review should raise S: " + r.s0 + " -> " + r.s1);
+});
+t("schedule: the retention target is a live holder, not a copied value", () => {
+  // A bare `export let` cannot be reassigned across a module boundary, so the target is a
+  // property on an exported object. The setting has to reach the scheduler when the learner
+  // moves the slider or another device pushes a change — a snapshot would silently stop.
+  const was = sched.retention.target;
+  try {
+    // A card that already carries a due date takes it as given; the target only decides
+    // the interval when one has to be computed, so the probe card deliberately has none.
+    const noDue = () => { const c = aCard(); delete c.fsrs.due; return c; };
+    sched.retention.target = 0.8;
+    const loose = sched.dueness(noDue(), Date.now());
+    sched.retention.target = 0.97;
+    const tight = sched.dueness(noDue(), Date.now());
+    ok(loose !== tight, "changing the target must change what is due (" + loose + " vs " + tight + ")");
+  } finally { sched.retention.target = was; }
+});
+
 // These two touch the browser, so what is asserted here is that they degrade rather than
 // throw when there is no window — which is also what a first paint on a cold page needs.
 const session = await import("../src/lib/session.js");
