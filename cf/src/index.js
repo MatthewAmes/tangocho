@@ -405,12 +405,12 @@ async function handleFeed(req, env) {
 const CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client",   // the app is one inline <script>
-  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",     // React's <style>{CSS}</style> + head <style> + GIS button styles
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style https://fonts.googleapis.com", // React's <style>{CSS}</style> + head <style> + GIS button styles + the webfont @import
   "img-src 'self' data:",                                                       // mascot GIF data URIs, SVG-noise background
   "media-src 'self' blob:",                                                     // TTS: same-origin clips + object URLs
   "connect-src 'self' https://accounts.google.com/gsi/",
   "frame-src https://accounts.google.com/gsi/",
-  "font-src 'self'",
+  "font-src 'self' https://fonts.gstatic.com",                                  // Inter + Noto Sans; the stack falls back to system faces if this is blocked
   "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
 ].join("; ");
 const SECURITY_HEADERS = {
