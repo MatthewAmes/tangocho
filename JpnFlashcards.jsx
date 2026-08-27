@@ -3267,7 +3267,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
 
   if (done) {
-    const pct = poolSize ? Math.round((firstTry.size / poolSize) * 100) : 0;
+    /* Scored over what was actually ANSWERED, not over what was planned. poolSize is the
+       size of the queue at the start, and a session can legitimately end before reaching
+       all of it — the adaptive stop does exactly that, and a correct answer drops that
+       card's later copies. Dividing by the plan meant a session where every single answer
+       was right still reported 80%, with no misses listed to explain the missing 20%. */
+    const answered = new Set([...passed, ...struggled]);
+    const asked = answered.size || poolSize;
+    const pct = asked ? Math.round((firstTry.size / asked) * 100) : 0;
     const missedCards = cards.filter((c) => struggled.has(c.id));
     return (
       <div className="tc-done">
@@ -3276,7 +3283,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             session being cut short or as a telling-off for getting tired. */}
         {stopped && <p className="tc-stopnote">{stopped.note}</p>}
         <div className="tc-bignum">{pct}<span>%</span></div>
-        <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {poolSize} cards</p>
+        <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {asked} card{asked === 1 ? "" : "s"}{asked < poolSize ? ` of ${poolSize}` : ""}</p>
         {/* What MOVED. A percentage says how the answering went; these say what happened to
             the memory, which is the thing the session was actually for. */}
         {(() => {
