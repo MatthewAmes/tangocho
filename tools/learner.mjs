@@ -1,3 +1,4 @@
+import { inflectionMatch } from "./conjugation.mjs";
 /* ── the learner model ──
    The engine below this file answers "which item, and when". This file answers the
    question the reviews kept pointing at: *what can this person actually do with the word*,
@@ -86,7 +87,7 @@ export function cueHint(reading, cue) {
    "Wrong" is the least useful thing an app can record. Someone who reads 火曜日, knows it
    means Tuesday, and cannot dredge up かようび has a reading-retrieval problem, not a
    vocabulary problem, and the next intervention should differ. */
-export const FAILURES = ["meaning", "reading", "listening", "production", "orthography", "context", "blank"];
+export const FAILURES = ["meaning", "reading", "listening", "production", "orthography", "context", "blank", "conjugation"];
 
 export function editDistance(a, b) {
   a = String(a || ""); b = String(b || "");
@@ -111,6 +112,12 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
   if (format === "cloze") return "context";
   if (format === "type") {
     if (!g.trim()) return "blank";                   // nothing retrieved at all
+    /* Right word, wrong shape. たべました for たべる is not a vocabulary failure — the
+       lexical item was retrieved and the transformation was wrong, which needs the
+       conjugation drilled, not the word re-taught. Edit distance cannot see this: the
+       two strings are far apart, so it used to land on "production" and demote a word
+       the learner actually knows. Checked before the distance rules for that reason. */
+    if (inflectionMatch(e, g).sameLemma) return "conjugation";
     const d = editDistance(e, g);
     // Close enough that the word was clearly retrieved and the reading fumbled.
     if (e.length && d <= Math.max(1, Math.floor(e.length / 3))) return "reading";
@@ -673,6 +680,7 @@ export const FAILURE_PLAN = {
   orthography: { skill: "production",  cue: CUE.PARTIAL, note: "the form needs work" },
   listening:   { skill: "listening",   cue: CUE.CHOOSE,  note: "hear it again with options" },
   context:     { skill: "production",  cue: CUE.FREE,    note: "secure the word before using it" },
+  conjugation: { skill: "production",  cue: CUE.PARTIAL, note: "the word is there — the form slipped" },
 };
 
 /* ── scoring what actually predicts retention ──
@@ -772,6 +780,9 @@ export const RECOVERY_LADDERS = {
   orthography: [{ skill: "production",  cue: CUE.PARTIAL }, { skill: "production", cue: CUE.FREE }],
   listening:   [{ skill: "listening",   cue: CUE.CHOOSE }, { skill: "listening",   cue: CUE.FREE }],
   context:     [{ skill: "recognition", cue: CUE.CHOOSE }, { skill: "context",     cue: CUE.CONTEXT }],
+  /* No trip back to meaning: the learner demonstrably had the word. Give the form back
+     with support, then ask for it clean. */
+  conjugation: [{ skill: "production",  cue: CUE.PARTIAL }, { skill: "production", cue: CUE.FREE }],
 };
 /* Shown above each rescue step. Deliberately not "wrong" or "try again": the framing is
    that the system is helping you crack this one, because that is what it is doing. */
@@ -783,6 +794,7 @@ export const RECOVERY_NOTE = {
   orthography: "Close. Let's nail the form.",
   listening:   "Listen again, with options this time.",
   context:     "Secure the word, then use it.",
+  conjugation: "You had the word — it was the form. Let's rebuild it.",
 };
 
 /** Stages for rescuing one miss. `caps` drops rungs the item cannot support (no audio, no

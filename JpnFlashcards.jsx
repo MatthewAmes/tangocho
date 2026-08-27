@@ -3324,6 +3324,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           const FAIL_LABEL = {
             reading: "recalling readings", meaning: "meanings", listening: "catching it by ear",
             production: "producing it", orthography: "spelling", context: "using it in context",
+            conjugation: "conjugating it",
             blank: "drawing a blank",
           };
           return (
