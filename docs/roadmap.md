@@ -93,7 +93,14 @@ Score what predicts retention, not raw correctness. Every signal is already logg
 - Adaptive stopping — end at 7 questions when learning value is low
 - Boss conversations *(blocked on the Anthropic API key)*
 - Morphology graph: 食べる -> 食べました as a *transformation* weakness, not a new word
-- **Learning gain per minute** as the north-star metric
+- **Learning gain per minute** as the north-star metric — *built*. `tools/gain.mjs`.
+  Measured in DOUBLINGS of stability, not days: summing ΔS in days would rank one easy
+  review of a mature card (+140) forty times above learning a new word (+3), so a
+  days-based north star points at the least useful session available. Lapses floor at
+  zero rather than going negative, and re-answering a card seen seconds ago earns ~0
+  because FSRS grants almost no stability at retrievability 1 — so it cannot be farmed
+  by cramming either. Surfaced in Plan (rate, which formats earn their minutes, and the
+  fade point) and on the done screen against the learner's own recent rate.
 
 ---
 
