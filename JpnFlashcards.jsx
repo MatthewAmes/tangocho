@@ -2219,6 +2219,33 @@ export default function JpnFlashcards() {
   // could push a blank/local-only deck over it.
   useEffect(() => initGoogleAuth(loadCardsAndSync), [loadCardsAndSync]);
 
+  /* The tab strip scrolls sideways rather than wrapping (13 tabs would otherwise take two
+     rows). Scrolling is only usable if you can SEE that there is more — the scrollbar is
+     hidden, so without an edge fade the strip just looks cut off, which is exactly how it
+     read. These flags drive a mask on whichever side still has content. */
+  const tabsRef = useRef(null);
+  const [tabEdges, setTabEdges] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const sync = () => {
+      const more = el.scrollWidth - el.clientWidth;
+      setTabEdges({ left: el.scrollLeft > 4, right: more > 4 && el.scrollLeft < more - 4 });
+    };
+    sync();
+    el.addEventListener("scroll", sync, { passive: true });
+    window.addEventListener("resize", sync);
+    return () => { el.removeEventListener("scroll", sync); window.removeEventListener("resize", sync); };
+  }, []);
+  /* Keep the active tab reachable: selecting one off-screen (or landing on a stored tab)
+     should bring it into view rather than leaving the strip parked at the start. */
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const on = el.querySelector('[aria-selected="true"]');
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tab]);
+
   const persist = useCallback((next) => {
     setCards(next);
     sSet(STORE_KEY, JSON.stringify(next));
@@ -2355,7 +2382,9 @@ export default function JpnFlashcards() {
               <p className="tc-sub">JPN 101 · flashcards · <span className="tc-count">{cards.length} words</span></p>
             </div>
           </div>
-          <nav className="tc-tabs" role="tablist" aria-label="Sections">
+          <nav ref={tabsRef}
+               className={"tc-tabs" + (tabEdges.left ? " has-left" : "") + (tabEdges.right ? " has-right" : "")}
+               role="tablist" aria-label="Sections">
             {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["freq", "10k"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["spell", "Spelling"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
@@ -10036,6 +10065,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
   overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;
   scroll-snap-type:x proximity;}
 .tc-tabs::-webkit-scrollbar{display:none;}
+/* Fade whichever edge still has tabs behind it. mask-image rather than an overlay element so
+   it works over the strip's own translucent background without painting a hard rectangle. */
+.tc-tabs.has-right{-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%);
+                           mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%);}
+.tc-tabs.has-left{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 34px,#000 100%);
+                          mask-image:linear-gradient(90deg,transparent 0,#000 34px,#000 100%);}
+.tc-tabs.has-left.has-right{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 34px,#000 calc(100% - 34px),transparent 100%);
+                                    mask-image:linear-gradient(90deg,transparent 0,#000 34px,#000 calc(100% - 34px),transparent 100%);}
 .tc-tab{scroll-snap-align:center;flex:0 0 auto;}
 .tc-tab{appearance:none;border:0;background:transparent;color:var(--mut-2);
   font:inherit;font-size:13.5px;font-weight:600;letter-spacing:.01em;min-height:42px;padding:8px 15px;border-radius:999px;cursor:pointer;transition:background .15s,color .15s,transform .1s;white-space:nowrap;}
