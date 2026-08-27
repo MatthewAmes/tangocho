@@ -47,6 +47,8 @@ import { CSS } from "./src/styles.js";
 import { KANA_MAP, YOON_MAP, kataToHira, kanaToRomaji, canonR, fillMatch } from "./src/lib/kana.js";
 import { GODAN_ROWS, conjugate, CONJ_FORMS } from "./src/lib/conjugate.js";
 import { unpackVideos, evidenceWeight, learningRate, applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, recommend, COVERAGE_LEADING_PARTICLES, COVERAGE_SAFE_SUFFIXES, COVERAGE_SAFE_SET, coverageAgainstDeck, band, bandName, relDots, agoLabel, blankInput } from "./src/lib/input-engine.js";
+import { SESSION_KEY, USER_EMAIL_KEY, loadSession, saveSession } from "./src/lib/session.js";
+import { TTS_OK, pickJpVoice, ttsUnlock, prefetchJa, speakJa, stopJa } from "./src/lib/tts.js";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -143,17 +145,10 @@ function collectLocalSnapshot() {
 // "asks me to log in again every time"). Signed-out devices stay local-only —
 // there is no anonymous fallback (see SYNC_ENDPOINT comment above).
 const GOOGLE_CLIENT_ID = "249268364314-fkmn7ol1jtkv12sme6fjp70fj2cpr6l3.apps.googleusercontent.com";
-const SESSION_KEY = "jpn101:session";
-const USER_EMAIL_KEY = "jpn101:userEmail";
-function loadSession() {
-  try { return window.localStorage.getItem(SESSION_KEY); } catch (e) { return null; }
-}
-function saveSession(session, email) {
-  try {
-    window.localStorage.setItem(SESSION_KEY, session);
-    if (email) window.localStorage.setItem(USER_EMAIL_KEY, email);
-  } catch (e) {}
-}
+
+
+
+
 function clearSessionStorage() {
   try { window.localStorage.removeItem(SESSION_KEY); window.localStorage.removeItem(USER_EMAIL_KEY); } catch (e) {}
   _googleEmail = null;
@@ -4063,107 +4058,23 @@ function Kana() {
 
 
 
-/* ── Japanese text-to-speech ── */
-// Primary: Google Cloud TTS (Neural2 voices) via our own Netlify Function —
-// far more natural and pitch-accent-accurate than the browser's built-in
-// voices. Falls back to browser speechSynthesis if the network call fails
-// (offline, function not yet configured, etc).
-const TTS_ENDPOINT = "/.netlify/functions/tts";
-const TTS_OK = typeof window !== "undefined" && !!window.speechSynthesis;
-let JP_VOICE = null;
-function pickJpVoice() {
-  if (!TTS_OK) return null;
-  const vs = window.speechSynthesis.getVoices() || [];
-  JP_VOICE = vs.find((v) => /^ja([-_]|$)/i.test(v.lang)) || null;
-  return JP_VOICE;
-}
+
+
+
+
 if (TTS_OK) {
   pickJpVoice();
   try { window.speechSynthesis.onvoiceschanged = pickJpVoice; } catch (e) {}
 }
-function ttsUnlock() {           // iOS: first speak must happen inside a user tap
-  if (!TTS_OK) return;
-  try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (e) {}
-}
-function speakJaFallback(text, rate) {
-  if (!TTS_OK || !text) return;
-  try {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "ja-JP";
-    if (JP_VOICE) u.voice = JP_VOICE;
-    u.rate = rate || 0.9;
-    u.pitch = 1;
-    window.speechSynthesis.speak(u);
-  } catch (e) {}
-}
-function prefetchJa(text, rate, voice) {
-  // Fire-and-forget: warms the browser's own HTTP cache for this exact URL (TTS responses
-  // are served with a long immutable max-age) so that when speakJa() actually plays this
-  // same card/line later, it's served instantly from disk — no network round-trip at all.
-  // Plain unauthenticated GET on purpose: on a cache hit this is free and instant; on a
-  // cache miss it just 401s harmlessly (never forces a real Google TTS generation call).
-  if (typeof text !== "string" && typeof text !== "number") return;   // see speakJa
-  if (!text) return;
-  const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
-  try { fetch(url, { cache: "force-cache" }).catch(() => {}); } catch (e) {}
-}
-let _ttsAudioEl = null;
-let _ttsObjectUrl = null;
-let _ttsToken = 0;   // invalidates stale/superseded calls so a slow fallback can't play over a newer request
-function speakJa(text, rate, voice) {
-  // Anything that isn't a string or number is a caller that forgot to resolve a
-  // prop-dependent line into text. encodeURIComponent below stringifies whatever it is
-  // given, so a stray function reaches the TTS service as its own source and gets read
-  // aloud — which is how the oral exam started reciting JavaScript. Refuse it instead.
-  if (typeof text !== "string" && typeof text !== "number") return;
-  if (!text) return;
-  const myToken = ++_ttsToken;
-  const url = TTS_ENDPOINT + "?text=" + encodeURIComponent(text) + "&rate=" + (rate || 0.9) + (voice === "m" ? "&voice=m" : "");
-  let fallbackFired = false;   // onerror and play().catch() can BOTH fire for one call — only escalate once
-  const escalate = () => {
-    if (fallbackFired || myToken !== _ttsToken) return;
-    fallbackFired = true;
-    speakJaAuthed(url, text, rate, myToken);
-  };
-  try {
-    if (!_ttsAudioEl) _ttsAudioEl = new Audio();
-    // Cached clips play instantly and need no auth. A cache miss (brand-new
-    // word) 401s here — retry it authenticated, since generating new audio
-    // costs real Google API usage and is gated to a signed-in session.
-    _ttsAudioEl.onerror = escalate;
-    _ttsAudioEl.src = url;
-    const p = _ttsAudioEl.play();
-    if (p && p.catch) p.catch(escalate);
-  } catch (e) {
-    escalate();
-  }
-}
-async function speakJaAuthed(url, text, rate, myToken) {
-  const stillCurrent = () => myToken === _ttsToken;
-  const session = loadSession();
-  if (!session) { if (stillCurrent()) speakJaFallback(text, rate); return; }
-  try {
-    const res = await fetch(url, { headers: { authorization: "Bearer " + session }, cache: "no-store" });
-    if (!stillCurrent()) return;
-    if (!res.ok) { speakJaFallback(text, rate); return; }
-    const blob = await res.blob();
-    if (!stillCurrent()) return;
-    if (_ttsObjectUrl) URL.revokeObjectURL(_ttsObjectUrl);
-    _ttsObjectUrl = URL.createObjectURL(blob);
-    if (!_ttsAudioEl) _ttsAudioEl = new Audio();
-    _ttsAudioEl.onerror = null;
-    _ttsAudioEl.src = _ttsObjectUrl;
-    _ttsAudioEl.play().catch(() => { if (stillCurrent()) speakJaFallback(text, rate); });
-  } catch (e) {
-    if (stillCurrent()) speakJaFallback(text, rate);
-  }
-}
-function stopJa() {
-  _ttsToken++;   // invalidate any in-flight fallback chain from the call being stopped
-  try { if (_ttsAudioEl) _ttsAudioEl.pause(); } catch (e) {}
-  if (TTS_OK) { try { window.speechSynthesis.cancel(); } catch (e) {} }
-}
+
+
+
+
+
+   // invalidates stale/superseded calls so a slow fallback can't play over a newer request
+
+
+
 
 function SpeakBtn({ text, slow }) {
   if (!text) return null;

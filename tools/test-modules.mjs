@@ -107,5 +107,23 @@ t("input-engine: seedLevelsFromDeck returns both skills", () => {
   ok(typeof l.listening === "number" && typeof l.reading === "number");
 });
 
+// These two touch the browser, so what is asserted here is that they degrade rather than
+// throw when there is no window — which is also what a first paint on a cold page needs.
+const session = await import("../src/lib/session.js");
+t("session: reads as null with no storage rather than throwing", () => {
+  ok(session.loadSession() === null, "got " + session.loadSession());
+});
+const tts = await import("../src/lib/tts.js");
+t("tts: imports with no window, and knows speech is unavailable", () => {
+  ok(tts.TTS_OK === false, "TTS_OK should be false off-browser, got " + tts.TTS_OK);
+  ok(typeof tts.speakJa === "function" && typeof tts.stopJa === "function");
+});
+t("tts: stopJa is safe to call with nothing playing", () => { tts.stopJa(); ok(true); });
+t("tts: the audio singletons stay private to the module", () => {
+  // If these ever became exports, the app could reassign them and the player would end up
+  // with a second audio element that the stop path does not know about.
+  ok(!("_ttsAudioEl" in tts) && !("_ttsToken" in tts), "TTS internals must not be exported");
+});
+
 console.log(`\nall ${run} module tests ${fail ? `— ${fail} FAILED` : "passed"}`);
 process.exit(fail ? 1 : 0);

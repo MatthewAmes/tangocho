@@ -37,11 +37,19 @@ function closeGroup(t, from, open, close) {
   throw new Error("unbalanced " + open);
 }
 function extentOf(name) {
-  let at = text.indexOf("\nfunction " + name + "("), isFn = at >= 0;
-  if (!isFn) { at = text.indexOf("\nconst " + name + " ="); if (at < 0) throw new Error("not found: " + name); }
+  let at = text.indexOf("\nfunction " + name + "(");
+  if (at < 0) at = text.indexOf("\nasync function " + name + "(");
+  let isFn = at >= 0;
+  if (!isFn) {
+    // A module-level `let` moves too. The TTS singletons are mutable, but only from inside
+    // the functions that move with them, so the group is what has to stay together — split
+    // them and the audio element the player reuses becomes two different variables.
+    for (const kw of ["const", "let"]) { at = text.indexOf("\n" + kw + " " + name + " ="); if (at >= 0) break; }
+    if (at < 0) throw new Error("not found: " + name);
+  }
   const start = at + 1;
   if (isFn) return [start, closeGroup(text, closeGroup(text, start, "(", ")"), "{", "}")];
-  // a const: balance whatever it opens, then run to the terminating semicolon
+  // a const/let: balance whatever it opens, then run to the terminating semicolon
   let i = start, d = 0, opened = false;
   for (; i < text.length; i++) {
     const s = skip(text, i); if (s >= 0) { i = s - 1; continue; }
@@ -65,7 +73,8 @@ for (let i = 1; i < blocks.length; i++) if (blocks[i].s < blocks[i - 1].e) throw
 
 const body = blocks.map((b) => {
   const t = text.slice(b.s, b.e);
-  return t.replace("function " + b.n, "export function " + b.n).replace("const " + b.n + " =", "export const " + b.n + " =");
+  return t.replace("async function " + b.n, "export async function " + b.n)
+           .replace(/^function /m, "export function ").replace("const " + b.n + " =", "export const " + b.n + " =");
 }).join("\n\n");
 fs.writeFileSync(path.join(ROOT, outFile), (header ? "/* " + header + " */\n\n" : "") + body + "\n");
 
