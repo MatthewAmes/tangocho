@@ -16,3 +16,12 @@ tools/.yt-raw.json
 tools/.kanji-cache.json
 tools/.jmdict-cache.gz
 tools/.freqlist-cache.txt
+
+# Secrets never belong in the repo — they live in Cloudflare's secret store
+# (`wrangler secret put`), which is encrypted and not readable back. These patterns are a
+# backstop for the times a key gets pasted into a file "just for a second".
+*api*key*.txt
+*api*key*.json
+*.key
+secrets.*
+**/apikey*
