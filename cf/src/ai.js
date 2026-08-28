@@ -186,40 +186,88 @@ export async function handleAi(req, env) {
      down cleanly — the test suite started exiting 127 on a libuv teardown assertion once the
      Gemini tests raised the call count. Cleared in a finally instead. The signal now covers
      the fetch but not the body read, which is fine: these replies are a few hundred bytes. */
-  /* GEMINI 3 — thinking. Flash models think by default and thinking tokens are billed
-     against maxOutputTokens, so a 300-token hook budget can be spent entirely on thinking
-     and come back with finishReason MAX_TOKENS and no text at all. These are one-sentence
-     generations that gain nothing from it, so it is switched off.
+  /* GEMINI 3 — request shape, as a ladder rather than a guess.
 
-     `withThinking` exists because the field is model-specific and this codebase has already
-     been bitten once by assuming what a model accepts. If the API rejects the request for a
-     field it does not know, the call is retried without it rather than the whole feature
-     failing over a knob that was only ever an optimisation. */
-  const call = async (maxTokens, withThinking = true) => {
+     Every optional thing this request carries is model-specific, and Gemini's rejection for
+     all of them is the same opaque 400: "Request contains an invalid argument", naming no
+     field. Guessing which one costs a deploy per guess, and each guess is indistinguishable
+     from the last from the outside.
+
+     So the request degrades instead. Rung 0 asks for everything; each rung down drops the
+     most likely offender and keeps what actually matters, and the last rung is a shape so
+     plain that any generateContent model should accept it. Which rung answered is logged, so
+     the ladder is also the diagnosis — the log says what this model would not take.
+
+     - thinkingConfig: pure optimisation. Flash models think by default and thinking tokens
+       bill against maxOutputTokens, so a 300-token budget can be spent entirely on thinking
+       and return no text. Worth asking for, never worth failing over.
+     - propertyOrdering: only stabilises key order in the reply.
+     - responseSchema: worth two rungs, because it is what makes the reply parseable without
+       guessing. Below it, responseMimeType alone plus the prompt still asks for JSON, and
+       the fence-stripping parser below has always handled that.
+     - systemInstruction: folded into the user turn on the last rung, for any model that
+       does not accept a separate system role. */
+  const strip = (x) => {                       // recursive clone without propertyOrdering
+    if (Array.isArray(x)) return x.map(strip);
+    if (x && typeof x === "object") {
+      const out = {};
+      for (const k of Object.keys(x)) if (k !== "propertyOrdering") out[k] = strip(x[k]);
+      return out;
+    }
+    return x;
+  };
+  const SHAPES = [
+    { name: "full", thinking: true, ordering: true, schema: true, systemRole: true },
+    { name: "no-thinking", thinking: false, ordering: true, schema: true, systemRole: true },
+    { name: "no-ordering", thinking: false, ordering: false, schema: true, systemRole: true },
+    { name: "no-schema", thinking: false, ordering: false, schema: false, systemRole: true },
+    { name: "bare", thinking: false, ordering: false, schema: false, systemRole: false },
+  ];
+
+  const call = async (maxTokens, shape) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
-    const generationConfig = {
-      maxOutputTokens: maxTokens,
-      responseMimeType: "application/json",
-      responseSchema: task.schema,
-      temperature: 0.7,
-    };
-    if (withThinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    const generationConfig = { maxOutputTokens: maxTokens, temperature: 0.7, responseMimeType: "application/json" };
+    if (shape.schema) generationConfig.responseSchema = shape.ordering ? task.schema : strip(task.schema);
+    if (shape.thinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    const userText = shape.systemRole
+      ? task.user(body.input)
+      : task.system + "\n\nReply with ONLY a JSON object.\n\n" + task.user(body.input);
+    const payload = { contents: [{ role: "user", parts: [{ text: userText }] }], generationConfig };
+    if (shape.systemRole) payload.systemInstruction = { parts: [{ text: task.system }] };
     try {
       return await fetch(`${GEMINI_API}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: task.system }] },
-          contents: [{ role: "user", parts: [{ text: task.user(body.input) }] }],
-          generationConfig,
-        }),
+        body: JSON.stringify(payload),
         signal: ctrl.signal,
       });
     } finally { clearTimeout(timer); }
   };
-  // A complaint about a field we sent, rather than about the request being wrong.
-  const isUnknownField = (msg) => /unknown name|not supported|invalid json payload|cannot find field/i.test(msg || "");
+
+  /* Not every 400 is about the request's shape. A rejected key, an exhausted quota, a
+     retired model name — those fail identically on every rung, and walking the ladder for
+     them turns one wasted call into five. Google names all of them in the message even when
+     it will not name a bad field. */
+  const isShapeProblem = (msg) =>
+    !/api[ _-]?key|permission|denied|quota|billing|not found|does not exist|no longer available|unregistered/i.test(msg || "");
+
+  const callWithFallback = async (maxTokens) => {
+    let last = null, lastMsg = "";
+    for (const shape of SHAPES) {
+      const r = await call(maxTokens, shape);
+      if (r.ok) {
+        if (shape !== SHAPES[0]) console.warn(JSON.stringify({ ev: "ai_shape_fallback", model, shape: shape.name, rejected: lastMsg.slice(0, 200) }));
+        return { r, shape };
+      }
+      last = r;
+      if (r.status !== 400) return { r, shape };
+      try { lastMsg = ((await r.clone().json()).error || {}).message || ""; } catch (e) { lastMsg = ""; }
+      if (!isShapeProblem(lastMsg)) return { r, shape };
+    }
+    console.warn(JSON.stringify({ ev: "ai_all_shapes_rejected", model, detail: lastMsg.slice(0, 300) }));
+    return { r: last, shape: SHAPES[SHAPES.length - 1] };
+  };
 
   const textOf = (d) => {
     const c = d && d.candidates && d.candidates[0];
@@ -230,16 +278,7 @@ export async function handleAi(req, env) {
 
   let data;
   try {
-    let r = await call(task.max_tokens);
-    // A model that does not know thinkingConfig should not cost us the whole feature.
-    if (r.status === 400) {
-      let msg = "";
-      try { msg = ((await r.clone().json()).error || {}).message || ""; } catch (e) {}
-      if (isUnknownField(msg)) {
-        console.warn(JSON.stringify({ ev: "ai_retry_no_thinking", model, detail: msg.slice(0, 200) }));
-        r = await call(task.max_tokens, false);
-      }
-    }
+    let { r, shape } = await callWithFallback(task.max_tokens);
     if (!r.ok) {
       // The body carries Google's actual complaint (bad key, disabled API, bad schema) and
       // it is worth having in the log — a bare 400 here is unfixable from the outside.
@@ -255,9 +294,10 @@ export async function handleAi(req, env) {
     data = await r.json();
     // Truncated: retry once with more room, same as the Anthropic version did.
     if (reasonOf(data) === "MAX_TOKENS" || !textOf(data)) {
-      r = await call(Math.round(task.max_tokens * 1.5));
-      if (!r.ok) return json({ error: "upstream " + r.status }, 502);
-      data = await r.json();
+      // Same shape that just worked — the budget was the problem, not the request.
+      const again = await call(Math.round(task.max_tokens * 1.5), shape);
+      if (!again.ok) return json({ error: "upstream " + again.status }, 502);
+      data = await again.json();
     }
   } catch (e) {
     console.warn(JSON.stringify({ ev: "ai_fetch_fail", task: body.task, msg: String(e && e.message) }));

@@ -304,28 +304,53 @@ async function main() {
       eq(lines.length, 60, "vocabulary must be capped server-side");
     } finally { globalThis.fetch = realFetch; }
   });
-  await t("a model that rejects thinkingConfig is retried without it", async () => {
-    // gemini-2.5-flash was retired between one deploy and the next ("no longer available to
-    // new users"). thinkingConfig is only an optimisation, so a model that does not know the
-    // field must not take the whole feature down with it.
-    const token = await signSession("test-secret", "sub-think2", null);
+  await t("the request degrades a rung at a time until the model accepts it", async () => {
+    // Gemini answers every unsupported optional field with the same opaque 400 — "Request
+    // contains an invalid argument", naming nothing. Guessing which field costs a deploy per
+    // guess, so the request drops them in order of how little they matter instead.
+    const token = await signSession("test-secret", "sub-ladder", null);
     const realFetch = globalThis.fetch;
     const bodies = [];
     globalThis.fetch = async (url, opts) => {
-      bodies.push(JSON.parse(opts.body));
-      if (bodies.length === 1) {
-        return new Response(JSON.stringify({ error: { message: "Unknown name \"thinkingConfig\": Cannot find field." } }), { status: 400 });
-      }
-      return new Response(JSON.stringify(geminiSays('{"hook":"retried cleanly"}')), { status: 200 });
+      const b = JSON.parse(opts.body); bodies.push(b);
+      // this model tolerates neither thinkingConfig nor propertyOrdering
+      const bad = b.generationConfig.thinkingConfig
+        || JSON.stringify(b.generationConfig.responseSchema || {}).includes("propertyOrdering");
+      return bad
+        ? new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 })
+        : new Response(JSON.stringify(geminiSays('{"hook":"third rung"}')), { status: 200 });
     };
     try {
-      const res = await handleAi(aiReq({ task: "hook", input: { term: "思" } }, token), aiEnv());
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "階" } }, token), aiEnv());
       eq(res.status, 200);
-      eq((await res.json()).result.hook, "retried cleanly");
-      eq(bodies.length, 2);
-      ok(bodies[0].generationConfig.thinkingConfig, "first attempt sends it");
-      eq(bodies[1].generationConfig.thinkingConfig, undefined, "retry must drop it");
-      eq(bodies[1].generationConfig.responseSchema !== undefined, true, "but keep the schema");
+      eq((await res.json()).result.hook, "third rung");
+      eq(bodies.length, 3, "should have stopped at the first rung that worked");
+      ok(bodies[0].generationConfig.thinkingConfig, "rung 0 asks for everything");
+      eq(bodies[2].generationConfig.thinkingConfig, undefined, "rung 2 dropped thinking");
+      eq(JSON.stringify(bodies[2].generationConfig.responseSchema).includes("propertyOrdering"), false, "and ordering");
+      ok(bodies[2].generationConfig.responseSchema, "but the schema survives — it is what makes the reply parseable");
+      ok(bodies[2].systemInstruction, "and the system role survives too");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("the last rung is plain enough for any generateContent model", async () => {
+    const token = await signSession("test-secret", "sub-bare", null);
+    const realFetch = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const b = JSON.parse(opts.body); bodies.push(b);
+      // rejects everything except the barest possible request
+      const fancy = b.generationConfig.thinkingConfig || b.generationConfig.responseSchema || b.systemInstruction;
+      return fancy
+        ? new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 })
+        : new Response(JSON.stringify(geminiSays('```json\n{"hook":"bare"}\n```')), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "裸" } }, token), aiEnv());
+      eq(res.status, 200, "the ladder must bottom out somewhere that works");
+      eq((await res.json()).result.hook, "bare");
+      const last = bodies[bodies.length - 1];
+      eq(last.systemInstruction, undefined, "system prompt folds into the user turn");
+      ok(last.contents[0].parts[0].text.includes("JPN 101"), "…and is still actually sent");
     } finally { globalThis.fetch = realFetch; }
   });
   await t("a 400 that is NOT about a field we sent is not retried", async () => {
