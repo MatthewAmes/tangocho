@@ -3205,7 +3205,14 @@ async function callAI(task, input) {
       headers: { "content-type": "application/json", authorization: "Bearer " + session },
       body: JSON.stringify({ task, input, v: 1 }),
     });
-    if (!res.ok) throw new AIError(res.status, aiMessage(res.status));
+    if (!res.ok) {
+      /* Carry the server's explanation through. Without it every failure collapsed into
+         "Couldn't reach the AI", which is true of a dead key, a bad schema and a network
+         blip alike — three problems with nothing in common except the message. */
+      let detail = "";
+      try { detail = ((await res.json()) || {}).detail || ""; } catch (e) {}
+      throw new AIError(res.status, aiMessage(res.status) + (detail ? " (" + detail + ")" : ""));
+    }
     const data = await res.json();
     if (!data || !data.result) throw new AIError(502, aiMessage(502));
     return data;   // { result, cached }
@@ -3225,8 +3232,11 @@ async function callAI(task, input) {
    Weighted toward words that are actually in play: anything seen at least once, so the
    sentence is built from HIS vocabulary rather than whatever sorts first. */
 function vocabSample(cards, n = 40) {
+  /* Studied words ONLY — never padded out with unseen ones to reach n. A sentence built
+     from words you have not met is unanswerable however natural it reads, so a short
+     vocabulary of known words beats a full one that smuggles in strangers. */
   const seen = cards.filter((c) => (c.seen || 0) > 0);
-  const pool = seen.length >= n ? seen : cards;
+  const pool = seen.length ? seen : cards;
   const picked = pool.slice();
   for (let i = picked.length - 1; i > 0; i--) {          // Fisher-Yates, fresh each press
     const j = Math.floor(Math.random() * (i + 1));
@@ -3237,13 +3247,25 @@ function vocabSample(cards, n = 40) {
 
 const NOUN_SET = new Set(["猫", "犬", "学校", "食べ物", "仕事", "写真", "子供", "睡眠", "健康"]);
 function shortMeaning(m) { return (m || "").split(/[;(（,]/)[0].trim(); }
+/* Pick a word to be asked to PRODUCE.
+
+   Only from words actually studied. This sorted the entire deck weakest-first and took from
+   the weakest half — and since an unseen card scores lower than any seen one, "weakest" meant
+   "never shown to you". With 1,590 unstudied words in the deck the tab was, essentially
+   always, asking for a word it had never taught. That is not a hard question, it is an
+   unanswerable one, and the honest complaint was "how would I know that".
+
+   Weak-first is still right, but only WITHIN what has been met at least once. */
 function pickTarget(cards) {
-  const sorted = cards.slice().sort((a, b) => masteryScore(a) - masteryScore(b)); // weak/unseen first
+  const studied = cards.filter((c) => (c.seen || 0) > 0);
+  if (!studied.length) return null;                    // caller shows the nudge instead
+  const sorted = studied.sort((a, b) => masteryScore(a) - masteryScore(b));
   const pool = sorted.slice(0, Math.max(5, Math.ceil(sorted.length / 2)));
-  return pool[Math.floor(Math.random() * pool.length)] || cards[Math.floor(Math.random() * cards.length)];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 function localFill(cards) {
   const c = pickTarget(cards);
+  if (!c) throw new Error("no studied words yet");
   if (NOUN_SET.has(c.term)) {
     return {
       tokens: [{ t: "＿＿＿" }, { t: "がすきです。" }],
@@ -3263,6 +3285,7 @@ function localFill(cards) {
 }
 function localTrans(cards) {
   const c = pickTarget(cards);
+  if (!c) throw new Error("no studied words yet");
   if (NOUN_SET.has(c.term)) {
     return {
       english: "I like " + shortMeaning(c.meaning) + ".",
@@ -3351,6 +3374,17 @@ function Sentences({ cards, onResult }) {
 
   if (cards.length < 3) {
     return <div className="tc-empty"><p>Add a few more words first — sentence practice needs some vocabulary to work with.</p></div>;
+  }
+  /* Sentence practice asks you to PRODUCE Japanese, which only works for words you have
+     actually met. Saying so beats generating an exercise from words the app has never
+     shown you and letting you conclude you should have known them. */
+  if (cards.filter((c) => (c.seen || 0) > 0).length < 5) {
+    return (
+      <div className="tc-empty">
+        <p>Study a few words first — sentence practice only uses vocabulary you've already seen,
+        so it needs a handful under your belt before it can ask you to write anything.</p>
+      </div>
+    );
   }
 
   return (

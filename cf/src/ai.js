@@ -222,8 +222,12 @@ export async function handleAi(req, env) {
       // it is worth having in the log — a bare 400 here is unfixable from the outside.
       let detail = "";
       try { detail = ((await r.json()).error || {}).message || ""; } catch (e) {}
-      console.warn(JSON.stringify({ ev: "ai_upstream_fail", task: body.task, status: r.status, detail: detail.slice(0, 200) }));
-      return json({ error: "upstream " + r.status }, 502);
+      console.warn(JSON.stringify({ ev: "ai_upstream_fail", task: body.task, status: r.status, detail: detail.slice(0, 300) }));
+      /* Google's complaint goes back to the caller, not just the log. This branch is past
+         session verification, so the only person who sees it is the signed-in owner — and
+         "upstream 400" with the reason hidden in a log nobody tails is how a dead feature
+         stays dead. Truncated, because the detail can be long. */
+      return json({ error: "upstream " + r.status, detail: detail.slice(0, 300) }, 502);
     }
     data = await r.json();
     // Truncated: retry once with more room, same as the Anthropic version did.
