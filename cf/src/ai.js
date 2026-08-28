@@ -12,9 +12,15 @@
 import { verifySession, sha256Hex, json, bumpQuota } from "./index.js";
 
 const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
-// Overridable without a code change; Flash is the cheap fast tier and every task here is
-// short. Thinking is disabled below, which matters more than the model choice.
-const DEFAULT_MODEL = "gemini-2.5-flash";
+/* Flash is the cheap fast tier and every task here is short.
+
+   This was gemini-2.5-flash for exactly one deploy, which failed with "no longer available
+   to new users — please update your code to use models/gemini-3.6-flash". A hardcoded model
+   name is a dependency on someone else's deprecation schedule, and when it lapses EVERY AI
+   feature goes dark at once with a 400 that says nothing useful from the outside. So:
+   env.GEMINI_MODEL overrides this without a deploy, and the next time this happens the fix
+   is one `wrangler secret put` rather than a code change. */
+const DEFAULT_MODEL = "gemini-3.6-flash";
 const AI_DAILY_PER_USER = 80, AI_DAILY_GLOBAL = 600;
 const INPUT_MAX = 4000;                     // JSON.stringify(input).length
 
@@ -180,9 +186,25 @@ export async function handleAi(req, env) {
      down cleanly — the test suite started exiting 127 on a libuv teardown assertion once the
      Gemini tests raised the call count. Cleared in a finally instead. The signal now covers
      the fetch but not the body read, which is fine: these replies are a few hundred bytes. */
-  const call = async (maxTokens) => {
+  /* GEMINI 3 — thinking. Flash models think by default and thinking tokens are billed
+     against maxOutputTokens, so a 300-token hook budget can be spent entirely on thinking
+     and come back with finishReason MAX_TOKENS and no text at all. These are one-sentence
+     generations that gain nothing from it, so it is switched off.
+
+     `withThinking` exists because the field is model-specific and this codebase has already
+     been bitten once by assuming what a model accepts. If the API rejects the request for a
+     field it does not know, the call is retried without it rather than the whole feature
+     failing over a knob that was only ever an optimisation. */
+  const call = async (maxTokens, withThinking = true) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
+    const generationConfig = {
+      maxOutputTokens: maxTokens,
+      responseMimeType: "application/json",
+      responseSchema: task.schema,
+      temperature: 0.7,
+    };
+    if (withThinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
     try {
       return await fetch(`${GEMINI_API}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
         method: "POST",
@@ -190,22 +212,14 @@ export async function handleAi(req, env) {
         body: JSON.stringify({
           system_instruction: { parts: [{ text: task.system }] },
           contents: [{ role: "user", parts: [{ text: task.user(body.input) }] }],
-          generationConfig: {
-            maxOutputTokens: maxTokens,
-            responseMimeType: "application/json",
-            responseSchema: task.schema,
-            temperature: 0.7,
-        /* GEMINI 3 — 2.5-series models think by default, and thinking tokens are billed
-           against maxOutputTokens. A 300-token budget can be spent entirely on thinking,
-           returning a candidate with no text at all and finishReason MAX_TOKENS. These
-           tasks are one-sentence generations that gain nothing from it, so it is off. */
-            thinkingConfig: { thinkingBudget: 0 },
-          },
+          generationConfig,
         }),
         signal: ctrl.signal,
       });
     } finally { clearTimeout(timer); }
   };
+  // A complaint about a field we sent, rather than about the request being wrong.
+  const isUnknownField = (msg) => /unknown name|not supported|invalid json payload|cannot find field/i.test(msg || "");
 
   const textOf = (d) => {
     const c = d && d.candidates && d.candidates[0];
@@ -217,6 +231,15 @@ export async function handleAi(req, env) {
   let data;
   try {
     let r = await call(task.max_tokens);
+    // A model that does not know thinkingConfig should not cost us the whole feature.
+    if (r.status === 400) {
+      let msg = "";
+      try { msg = ((await r.clone().json()).error || {}).message || ""; } catch (e) {}
+      if (isUnknownField(msg)) {
+        console.warn(JSON.stringify({ ev: "ai_retry_no_thinking", model, detail: msg.slice(0, 200) }));
+        r = await call(task.max_tokens, false);
+      }
+    }
     if (!r.ok) {
       // The body carries Google's actual complaint (bad key, disabled API, bad schema) and
       // it is worth having in the log — a bare 400 here is unfixable from the outside.

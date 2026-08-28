@@ -304,6 +304,62 @@ async function main() {
       eq(lines.length, 60, "vocabulary must be capped server-side");
     } finally { globalThis.fetch = realFetch; }
   });
+  await t("a model that rejects thinkingConfig is retried without it", async () => {
+    // gemini-2.5-flash was retired between one deploy and the next ("no longer available to
+    // new users"). thinkingConfig is only an optimisation, so a model that does not know the
+    // field must not take the whole feature down with it.
+    const token = await signSession("test-secret", "sub-think2", null);
+    const realFetch = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      bodies.push(JSON.parse(opts.body));
+      if (bodies.length === 1) {
+        return new Response(JSON.stringify({ error: { message: "Unknown name \"thinkingConfig\": Cannot find field." } }), { status: 400 });
+      }
+      return new Response(JSON.stringify(geminiSays('{"hook":"retried cleanly"}')), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "思" } }, token), aiEnv());
+      eq(res.status, 200);
+      eq((await res.json()).result.hook, "retried cleanly");
+      eq(bodies.length, 2);
+      ok(bodies[0].generationConfig.thinkingConfig, "first attempt sends it");
+      eq(bodies[1].generationConfig.thinkingConfig, undefined, "retry must drop it");
+      eq(bodies[1].generationConfig.responseSchema !== undefined, true, "but keep the schema");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a 400 that is NOT about a field we sent is not retried", async () => {
+    const token = await signSession("test-secret", "sub-400", null);
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(JSON.stringify({ error: { message: "API key not valid. Please pass a valid API key." } }), { status: 400 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "鍵" } }, token), aiEnv());
+      eq(res.status, 502);
+      eq(calls, 1, "a bad key must not be retried — it will fail identically");
+      ok((await res.json()).detail.includes("API key not valid"), "the reason reaches the caller");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("the model is overridable without a deploy", async () => {
+    const token = await signSession("test-secret", "sub-model", null);
+    const realFetch = globalThis.fetch;
+    let seenUrl = "";
+    globalThis.fetch = async (url, opts) => {
+      seenUrl = String(url);
+      return new Response(JSON.stringify(geminiSays('{"hook":"ok"}')), { status: 200 });
+    };
+    try {
+      const env = aiEnv(); env.GEMINI_MODEL = "gemini-experimental-9";
+      await handleAi(aiReq({ task: "hook", input: { term: "型" } }, token), env);
+      ok(seenUrl.includes("gemini-experimental-9"), "GEMINI_MODEL must win: " + seenUrl);
+      seenUrl = "";
+      await handleAi(aiReq({ task: "hook", input: { term: "既" } }, token), aiEnv());
+      ok(seenUrl.includes("gemini-3.6-flash"), "default otherwise: " + seenUrl);
+    } finally { globalThis.fetch = realFetch; }
+  });
   await t("503 when the AI key isn't configured", async () => {
     const token = await signSession("test-secret", "sub-4", null);
     const env = aiEnv(); env.GEMINI_API_KEY = undefined;

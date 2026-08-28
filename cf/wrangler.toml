@@ -45,4 +45,7 @@ head_sampling_rate = 1
 #   It must be the long-lived key, which starts "AIzaSy". A value starting "AQ." is an
 #   ephemeral Live-API token: it authenticates for about half an hour and then every AI
 #   feature starts returning 502, which looks like a code bug and is not one.
-#   Optional: GEMINI_MODEL overrides the model (default gemini-2.5-flash) without a deploy.
+#   Optional: GEMINI_MODEL overrides the model (default gemini-3.6-flash) without a deploy.
+#   Google retires model names on their own schedule — 2.5-flash went "no longer available
+#   to new users" mid-project and took every AI feature down with it. When that happens the
+#   error names the replacement; set it here and no deploy is needed.
