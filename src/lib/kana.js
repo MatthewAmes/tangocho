@@ -42,15 +42,42 @@ export function canonR(s) {
     .replace(/(.)\1+/g, "$1");
 }
 
+/* The blanked word's own kana, recovered from the exercise rather than trusted.
+
+   A fill exercise carries the sentence twice: `tokens` with the blank in it, `fullTokens`
+   complete. The token that appears in one and not the other IS the answer, and it carries
+   its own furigana. That is strictly better evidence than the separate `reading` field,
+   which is whatever the generator decided to put there — and which came back holding the
+   reading of the WHOLE SENTENCE, so someone who typed the right word was marked wrong.
+
+   Derive what can be derived; trust the model only for what cannot. */
+export function blankReading(ex) {
+  const full = Array.isArray(ex && ex.fullTokens) ? ex.fullTokens : null;
+  const blanked = Array.isArray(ex && ex.tokens) ? ex.tokens : null;
+  if (!full || !blanked) return null;
+  const isBlank = (t) => /^[_＿]+$/.test((t && t.t) || "");
+  const i = blanked.findIndex(isBlank);
+  if (i < 0) return null;
+  // Same position in the complete sentence, when the two line up token for token.
+  const hit = full.length === blanked.length ? full[i] : full.find((t, j) => !blanked[j] || blanked[j].t !== t.t);
+  if (!hit) return null;
+  return { kana: hit.r || hit.t || "", text: hit.t || "" };
+}
+
 export function fillMatch(ex, answer) {
   const u = (answer || "").trim();
   if (!u) return false;
+  const derived = blankReading(ex);
   const cu = canonR(u);
   if (cu) {
-    const romajiForms = [ex.romaji, kanaToRomaji(ex.reading), kanaToRomaji(ex.answer)];
+    const romajiForms = [
+      ex.romaji, kanaToRomaji(ex.reading), kanaToRomaji(ex.answer),
+      derived && kanaToRomaji(derived.kana),          // the blank's own reading, not the sentence's
+    ];
     if (romajiForms.some((r) => r && canonR(r) === cu)) return true;
   }
   const stripJ = (x) => (x || "").replace(/[\s。、．,.!?！？・]/g, "");
   const ju = stripJ(u);
-  return [ex.reading, ex.answer].some((j) => j && stripJ(j) === ju);
+  return [ex.reading, ex.answer, derived && derived.kana, derived && derived.text]
+    .some((j) => j && stripJ(j) === ju);
 }

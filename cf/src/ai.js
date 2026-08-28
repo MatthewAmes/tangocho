@@ -24,7 +24,13 @@ const DEFAULT_MODEL = "gemini-3.6-flash";
 const AI_DAILY_PER_USER = 80, AI_DAILY_GLOBAL = 600;
 const INPUT_MAX = 4000;                     // JSON.stringify(input).length
 
-function str() { return { type: "string" }; }
+/* A description is not decoration: responseSchema descriptions are instructions the model
+   follows per field, and they are where an ambiguity like "reading — of what?" gets settled.
+   sentence_fill shipped without them and came back with the reading and romaji of the whole
+   SENTENCE where the blanked word was wanted, so a learner typing the right answer was told
+   they were wrong. The system prompt said "answer must be the removed word" and said nothing
+   about the two fields next to it. */
+function str(description) { return description ? { type: "string", description } : { type: "string" }; }
 function arr(items) { return { type: "array", items }; }
 /* GEMINI 1 — responseSchema is a SUBSET of OpenAPI 3.0, and `additionalProperties` is not
    in it: sending one makes the whole request 400. The Anthropic version set it to false on
@@ -102,11 +108,17 @@ const TASKS = {
       + "each {t, r}, with r ONLY when t contains kanji (r is that kanji's kana reading) and "
       + "omitted for kana, particles and punctuation. The blank is the single token {t:\"___\"}. "
       + "`tokens` is the sentence WITH the blank; `fullTokens` is the complete sentence. "
-      + "`answer` must be the removed word exactly as its vocabulary term is written.",
+      + "`answer`, `reading` and `romaji` all describe the REMOVED WORD ALONE, never the "
+      + "sentence: for 何時 they are 何時, なんじ and nanji. `translation` is of the whole sentence.",
     user: (i) => "Vocabulary:\n" + vocabLines(i.vocab),
     schema: obj({
-      tokens: arr(tok()), fullTokens: arr(tok()), answer: str(), reading: str(),
-      romaji: str(), translation: str(), hint: str(),
+      tokens: arr(tok()),
+      fullTokens: arr(tok()),
+      answer: str("The removed word ONLY, written exactly as its vocabulary term is. Not the sentence."),
+      reading: str("Kana reading of the removed word ONLY — e.g. なんじ for 何時. NOT the reading of the whole sentence."),
+      romaji: str("Romaji of the removed word ONLY — e.g. nanji for 何時. NOT the romaji of the whole sentence."),
+      translation: str("Natural English translation of the complete sentence."),
+      hint: str("A short English hint about the missing word, without giving it away."),
     }, ["tokens", "fullTokens", "answer", "reading", "romaji", "translation", "hint"]),
   },
   sentence_trans: {

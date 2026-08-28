@@ -80,6 +80,36 @@ t("kana: fillMatch accepts the reading", () => { ok(kana.fillMatch({ reading: "�
 t("kana: fillMatch accepts the romaji spelling of the same word", () => { ok(kana.fillMatch({ reading: "かようび", answer: "火曜日", romaji: "kayoubi" }, "kayoubi")); });
 t("kana: fillMatch rejects a different word", () => { ok(!kana.fillMatch({ reading: "ねこ", answer: "猫", romaji: "neko" }, "いぬ")); });
 
+// The reported case: the generator put the reading of the WHOLE SENTENCE in `reading`, so
+// typing the right word was marked wrong. The blanked token carries its own furigana, so
+// the answer is derivable and does not have to be trusted.
+const fillEx = () => ({
+  tokens: [{ t: "次", r: "つぎ" }, { t: "の" }, { t: "土曜日", r: "どようび" }, { t: "は" }, { t: "＿＿＿" }, { t: "ですか。" }],
+  fullTokens: [{ t: "次", r: "つぎ" }, { t: "の" }, { t: "土曜日", r: "どようび" }, { t: "は" }, { t: "何時", r: "なんじ" }, { t: "ですか。" }],
+  answer: "何時",
+  reading: "つぎのどようびはなんじですか。",          // wrong: the whole sentence
+  romaji: "tsugi no doyōbi wa nanji desu ka?",       // wrong: the whole sentence
+});
+t("kana: the blanked word is recovered from the token diff", () => {
+  const b = kana.blankReading(fillEx());
+  ok(b && b.kana === "なんじ" && b.text === "何時", JSON.stringify(b));
+});
+t("kana: 'nanji' is accepted even when the reading field holds the whole sentence", () => {
+  for (const typed of ["nanji", "なんじ", "何時", "NANJI", " nanji "]) {
+    ok(kana.fillMatch(fillEx(), typed), "should accept " + JSON.stringify(typed));
+  }
+});
+t("kana: another word from the same sentence is still wrong", () => {
+  // The guard against over-forgiving: the sentence-wide reading must not make everything match.
+  for (const typed of ["doyoubi", "つぎ", "いぬ", ""]) {
+    ok(!kana.fillMatch(fillEx(), typed), "should reject " + JSON.stringify(typed));
+  }
+});
+t("kana: blankReading is safe on an exercise with no blank or no tokens", () => {
+  ok(kana.blankReading({}) === null);
+  ok(kana.blankReading({ tokens: [{ t: "あ" }], fullTokens: [{ t: "あ" }] }) === null);
+});
+
 const conj = await import("../src/lib/conjugate.js");
 t("conjugate: a godan verb inflects", () => {
   const r = conj.conjugate("のむ", "godan");
