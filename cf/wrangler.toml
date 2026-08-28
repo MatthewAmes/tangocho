@@ -49,3 +49,7 @@ head_sampling_rate = 1
 #   Google retires model names on their own schedule — 2.5-flash went "no longer available
 #   to new users" mid-project and took every AI feature down with it. When that happens the
 #   error names the replacement; set it here and no deploy is needed.
+#   GEMINI_MODEL also accepts a COMMA-SEPARATED list, tried in order. One Flash model is a
+#   single shared pool: when it is busy every AI feature stops until it clears. A second
+#   name is a way through, and costs nothing while the first is healthy. Example:
+#     npx wrangler secret put GEMINI_MODEL   ->   gemini-3.6-flash,gemini-3.6-flash-lite

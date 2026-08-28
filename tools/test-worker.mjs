@@ -332,6 +332,44 @@ async function main() {
       ok(bodies[2].systemInstruction, "and the system role survives too");
     } finally { globalThis.fetch = realFetch; }
   });
+  await t("a busy model is waited out, not reported as broken", async () => {
+    // "This model is currently experiencing high demand" is a real answer to a well-formed
+    // request. There is nothing to fix and nothing to degrade — the shape ladder must not
+    // run, because every rung would get the same reply.
+    const token = await signSession("test-secret", "sub-busy", null);
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls < 3) return new Response(JSON.stringify({ error: { message: "This model is currently experiencing high demand. Spikes in demand are usually temporary." } }), { status: 503 });
+      return new Response(JSON.stringify(geminiSays('{"hook":"got through"}')), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "混" } }, token), aiEnv());
+      eq(res.status, 200);
+      eq((await res.json()).result.hook, "got through");
+      eq(calls, 3, "one call per attempt — the shape ladder must not fire on congestion");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a second configured model is tried when the first stays busy", async () => {
+    const token = await signSession("test-secret", "sub-2nd", null);
+    const realFetch = globalThis.fetch;
+    const seen = [];
+    globalThis.fetch = async (url) => {
+      const m = String(url).match(/models\/([^:]+):/)[1];
+      seen.push(m);
+      if (m === "busy-model") return new Response(JSON.stringify({ error: { message: "high demand" } }), { status: 503 });
+      return new Response(JSON.stringify(geminiSays('{"hook":"second model"}')), { status: 200 });
+    };
+    try {
+      const env = aiEnv(); env.GEMINI_MODEL = "busy-model, spare-model";
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "予" } }, token), env);
+      eq(res.status, 200);
+      eq((await res.json()).result.hook, "second model");
+      eq(seen.filter((m) => m === "busy-model").length, 3, "exhausts attempts on the first");
+      eq(seen[seen.length - 1], "spare-model", "then moves on");
+    } finally { globalThis.fetch = realFetch; }
+  });
   await t("the last rung is plain enough for any generateContent model", async () => {
     const token = await signSession("test-secret", "sub-bare", null);
     const realFetch = globalThis.fetch;

@@ -167,10 +167,17 @@ export async function handleAi(req, env) {
   const inputStr = stableStringify(body.input);
   if (inputStr.length > INPUT_MAX) return json({ error: "input too large" }, 413);
 
-  const model = env.GEMINI_MODEL || DEFAULT_MODEL;
-  // The model is part of the cache key: a reply cached from a different model is a different
-  // answer, and "why is this hook still the old bad one" is a miserable thing to debug.
-  const key = `ai:v2:${model}:${body.task}:${await sha256Hex(inputStr)}`;
+  /* GEMINI_MODEL may be a comma-separated list, tried in order. A single Flash model is one
+     shared pool: when it is busy it answers "This model is currently experiencing high
+     demand", and with one name configured that is the end of the feature until it clears.
+     A second name is a way through that costs nothing when the first is healthy. */
+  const models = (env.GEMINI_MODEL || DEFAULT_MODEL).split(",").map((s) => s.trim()).filter(Boolean);
+  const model = models[0];
+  /* The configured list is part of the cache key, not the model that happened to answer:
+     a reply cached under one name and read back under another is how "why is this hook
+     still the old bad one" starts. Changing the setting invalidates the cache, which is
+     the behaviour you want when you change models. */
+  const key = `ai:v2:${models.join("|")}:${body.task}:${await sha256Hex(inputStr)}`;
   const hit = await env.TTS.get(key, { type: "json" });
   if (hit) return json({ result: hit, cached: true, remaining: null });
 
@@ -224,7 +231,7 @@ export async function handleAi(req, env) {
     { name: "bare", thinking: false, ordering: false, schema: false, systemRole: false },
   ];
 
-  const call = async (maxTokens, shape) => {
+  const call = async (maxTokens, shape, which = model) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
     const generationConfig = { maxOutputTokens: maxTokens, temperature: 0.7, responseMimeType: "application/json" };
@@ -236,7 +243,7 @@ export async function handleAi(req, env) {
     const payload = { contents: [{ role: "user", parts: [{ text: userText }] }], generationConfig };
     if (shape.systemRole) payload.systemInstruction = { parts: [{ text: task.system }] };
     try {
-      return await fetch(`${GEMINI_API}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
+      return await fetch(`${GEMINI_API}/${which}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
@@ -252,12 +259,12 @@ export async function handleAi(req, env) {
   const isShapeProblem = (msg) =>
     !/api[ _-]?key|permission|denied|quota|billing|not found|does not exist|no longer available|unregistered/i.test(msg || "");
 
-  const callWithFallback = async (maxTokens) => {
+  const callWithFallback = async (maxTokens, which) => {
     let last = null, lastMsg = "";
     for (const shape of SHAPES) {
-      const r = await call(maxTokens, shape);
+      const r = await call(maxTokens, shape, which);
       if (r.ok) {
-        if (shape !== SHAPES[0]) console.warn(JSON.stringify({ ev: "ai_shape_fallback", model, shape: shape.name, rejected: lastMsg.slice(0, 200) }));
+        if (shape !== SHAPES[0]) console.warn(JSON.stringify({ ev: "ai_shape_fallback", model: which, shape: shape.name, rejected: lastMsg.slice(0, 200) }));
         return { r, shape };
       }
       last = r;
@@ -265,8 +272,36 @@ export async function handleAi(req, env) {
       try { lastMsg = ((await r.clone().json()).error || {}).message || ""; } catch (e) { lastMsg = ""; }
       if (!isShapeProblem(lastMsg)) return { r, shape };
     }
-    console.warn(JSON.stringify({ ev: "ai_all_shapes_rejected", model, detail: lastMsg.slice(0, 300) }));
+    console.warn(JSON.stringify({ ev: "ai_all_shapes_rejected", model: which, detail: lastMsg.slice(0, 300) }));
     return { r: last, shape: SHAPES[SHAPES.length - 1] };
+  };
+
+  /* Congestion, which is not a bug and not permanent. Google answers a busy pool with "This
+     model is currently experiencing high demand" — a real answer to a well-formed request,
+     so there is nothing to fix and nothing to fall back to shape-wise. Wait a moment, try
+     again, and if the model stays busy move to the next configured one. Two short waits fit
+     inside the client's 35s budget; beyond that the honest answer is "busy, try later". */
+  const isBusy = (status, msg) =>
+    status === 429 || status === 503 || /high demand|overloaded|try again later|unavailable/i.test(msg || "");
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+  const callResilient = async (maxTokens) => {
+    let last = null, lastShape = SHAPES[0], lastMsg = "";
+    for (const which of models) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { r, shape } = await callWithFallback(maxTokens, which);
+        if (r.ok) {
+          if (which !== models[0] || attempt > 0) console.warn(JSON.stringify({ ev: "ai_recovered", model: which, attempt }));
+          return { r, shape };
+        }
+        last = r; lastShape = shape;
+        try { lastMsg = ((await r.clone().json()).error || {}).message || ""; } catch (e) { lastMsg = ""; }
+        if (!isBusy(r.status, lastMsg)) return { r, shape };      // a real failure: stop
+        if (attempt < 2) await sleep(attempt === 0 ? 700 : 1800);
+      }
+      console.warn(JSON.stringify({ ev: "ai_model_busy", model: which, detail: lastMsg.slice(0, 200) }));
+    }
+    return { r: last, shape: lastShape };
   };
 
   const textOf = (d) => {
@@ -278,7 +313,7 @@ export async function handleAi(req, env) {
 
   let data;
   try {
-    let { r, shape } = await callWithFallback(task.max_tokens);
+    let { r, shape } = await callResilient(task.max_tokens);
     if (!r.ok) {
       // The body carries Google's actual complaint (bad key, disabled API, bad schema) and
       // it is worth having in the log — a bare 400 here is unfixable from the outside.

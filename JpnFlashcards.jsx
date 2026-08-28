@@ -3192,7 +3192,9 @@ function aiMessage(status) {
     : status === 429 ? "Daily AI limit reached — try again tomorrow."
     : status === 503 ? "The AI helper isn't set up on this server yet."
     : status === 504 ? "The AI took too long — try again."
-    : "Couldn't reach the AI — try again later.";
+    // Name the provider. "The AI" was ambiguous enough that a Gemini capacity message read
+    // as the app still calling Anthropic — it never did; only the Worker talks to Google.
+    : "Couldn't reach Gemini — try again later.";
 }
 async function callAI(task, input) {
   const session = loadSession();
@@ -3211,6 +3213,12 @@ async function callAI(task, input) {
          blip alike — three problems with nothing in common except the message. */
       let detail = "";
       try { detail = ((await res.json()) || {}).detail || ""; } catch (e) {}
+      /* Congestion is not a fault and should not read like one. The Worker already waited
+         and retried across every configured model before giving up, so by the time this
+         reaches the learner the only useful thing to say is "later, not now". */
+      if (/high demand|overloaded|unavailable|try again later/i.test(detail)) {
+        throw new AIError(res.status, "Gemini is busy right now — the exercise below is built from your own deck instead.");
+      }
       throw new AIError(res.status, aiMessage(res.status) + (detail ? " (" + detail + ")" : ""));
     }
     const data = await res.json();
