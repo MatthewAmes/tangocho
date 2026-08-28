@@ -373,6 +373,50 @@ async function main() {
       }
     } finally { globalThis.fetch = realFetch; }
   });
+  await t("the working rung is remembered, so the ladder is paid for once not every time", async () => {
+    // gemini-3.6-flash rejects thinkingConfig, so rung 0 fails on EVERY request — two
+    // upstream calls and a wasted round trip per generation until the answer is remembered.
+    const token = await signSession("test-secret", "sub-memo", null);
+    const realFetch = globalThis.fetch;
+    const env = aiEnv();
+    let calls = 0;
+    globalThis.fetch = async (url, opts) => {
+      calls++;
+      const b = JSON.parse(opts.body);
+      return b.generationConfig.thinkingConfig
+        ? new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 })
+        : new Response(JSON.stringify(geminiSays('{"hook":"ok"}')), { status: 200 });
+    };
+    try {
+      const first = await handleAi(aiReq({ task: "hook", input: { term: "一" } }, token), env);
+      eq(first.status, 200);
+      eq(calls, 2, "first request pays for the ladder");
+      calls = 0;
+      const second = await handleAi(aiReq({ task: "hook", input: { term: "二" } }, token), env);
+      eq(second.status, 200);
+      eq(calls, 1, "the second must start at the rung that worked");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a remembered rung that stops working still falls through", async () => {
+    const token = await signSession("test-secret", "sub-memo2", null);
+    const realFetch = globalThis.fetch;
+    const env = aiEnv();
+    await env.TTS.put("ai:shape:gemini-3.6-flash", "no-thinking");
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const b = JSON.parse(opts.body); bodies.push(b);
+      // now even the remembered rung is refused; only a schema-less request works
+      return b.generationConfig.responseSchema
+        ? new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 })
+        : new Response(JSON.stringify(geminiSays('{"hook":"lower still"}')), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "下" } }, token), env);
+      eq(res.status, 200, "a stale note must not trap the request");
+      eq((await res.json()).result.hook, "lower still");
+      eq(bodies[0].generationConfig.thinkingConfig, undefined, "started at the remembered rung");
+    } finally { globalThis.fetch = realFetch; }
+  });
   await t("a busy model is waited out, not reported as broken", async () => {
     // "This model is currently experiencing high demand" is a real answer to a well-formed
     // request. There is nothing to fix and nothing to degrade — the shape ladder must not

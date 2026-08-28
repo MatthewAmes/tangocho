@@ -264,9 +264,17 @@ export async function handleAi(req, env) {
   const isShapeProblem = (msg) =>
     !/api[ _-]?key|permission|denied|quota|billing|not found|does not exist|no longer available|unregistered/i.test(msg || "");
 
-  const callWithFallback = async (maxTokens, which) => {
+  /* Start the ladder where it finished last time.
+
+     gemini-3.6-flash rejects thinkingConfig, so rung 0 fails on EVERY request and each
+     generation costs two upstream calls and the latency of a wasted round trip. The rung
+     that worked is remembered per model, so the ladder is paid for once rather than once
+     per request. It is a hint, not a decision: if the remembered rung stops working the
+     ladder simply carries on down from it, and a model that starts accepting more is
+     rediscovered the next time the note expires. */
+  const callWithFallback = async (maxTokens, which, startAt = 0) => {
     let last = null, lastMsg = "";
-    for (const shape of SHAPES) {
+    for (const shape of SHAPES.slice(startAt)) {
       const r = await call(maxTokens, shape, which);
       if (r.ok) {
         if (shape !== SHAPES[0]) console.warn(JSON.stringify({ ev: "ai_shape_fallback", model: which, shape: shape.name, rejected: lastMsg.slice(0, 200) }));
@@ -290,13 +298,28 @@ export async function handleAi(req, env) {
     status === 429 || status === 503 || /high demand|overloaded|try again later|unavailable/i.test(msg || "");
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
+  const shapeNoteKey = (m) => "ai:shape:" + m;
+  const rememberedRung = async (m) => {
+    try {
+      const name = await env.TTS.get(shapeNoteKey(m));
+      const i = SHAPES.findIndex((s) => s.name === name);
+      return i > 0 ? i : 0;
+    } catch (e) { return 0; }
+  };
+
   const callResilient = async (maxTokens) => {
     let last = null, lastShape = SHAPES[0], lastMsg = "";
     for (const which of models) {
+      const startAt = await rememberedRung(which);
       for (let attempt = 0; attempt < 3; attempt++) {
-        const { r, shape } = await callWithFallback(maxTokens, which);
+        const { r, shape } = await callWithFallback(maxTokens, which, startAt);
         if (r.ok) {
           if (which !== models[0] || attempt > 0) console.warn(JSON.stringify({ ev: "ai_recovered", model: which, attempt }));
+          // Remember for a day. Short enough that a model quietly regaining a capability is
+          // rediscovered on its own, long enough to stop paying for the ladder every time.
+          if (SHAPES.indexOf(shape) !== startAt) {
+            try { await env.TTS.put(shapeNoteKey(which), shape.name, { expirationTtl: 86400 }); } catch (e) {}
+          }
           return { r, shape };
         }
         last = r; lastShape = shape;
