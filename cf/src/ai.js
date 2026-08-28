@@ -234,7 +234,12 @@ export async function handleAi(req, env) {
   const call = async (maxTokens, shape, which = model) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
-    const generationConfig = { maxOutputTokens: maxTokens, temperature: 0.7, responseMimeType: "application/json" };
+    /* If thinkingConfig had to be dropped, the model thinks anyway and those tokens come out
+       of maxOutputTokens — a 300-token hook budget then buys some reasoning and no answer,
+       and the reply comes back with no text at all. Turning thinking off is the cheap fix;
+       when the model will not accept that, paying for headroom is the other one. */
+    const budget = shape.thinking ? maxTokens : Math.max(maxTokens * 4, 2048);
+    const generationConfig = { maxOutputTokens: budget, temperature: 0.7, responseMimeType: "application/json" };
     if (shape.schema) generationConfig.responseSchema = shape.ordering ? task.schema : strip(task.schema);
     if (shape.thinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
     const userText = shape.systemRole
@@ -311,9 +316,10 @@ export async function handleAi(req, env) {
   };
   const reasonOf = (d) => (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || "";
 
-  let data;
+  let data, shape = SHAPES[0];        // hoisted: the failure paths below name the shape that answered
   try {
-    let { r, shape } = await callResilient(task.max_tokens);
+    const res0 = await callResilient(task.max_tokens);
+    const r = res0.r; shape = res0.shape;
     if (!r.ok) {
       // The body carries Google's actual complaint (bad key, disabled API, bad schema) and
       // it is worth having in the log — a bare 400 here is unfixable from the outside.
@@ -327,16 +333,16 @@ export async function handleAi(req, env) {
       return json({ error: "upstream " + r.status, detail: detail.slice(0, 300) }, 502);
     }
     data = await r.json();
-    // Truncated: retry once with more room, same as the Anthropic version did.
+    // Truncated or silent: retry once with more room. The shape that just worked is reused —
+    // the budget was the problem, not the request.
     if (reasonOf(data) === "MAX_TOKENS" || !textOf(data)) {
-      // Same shape that just worked — the budget was the problem, not the request.
       const again = await call(Math.round(task.max_tokens * 1.5), shape);
-      if (!again.ok) return json({ error: "upstream " + again.status }, 502);
+      if (!again.ok) return json({ error: "upstream " + again.status, detail: "retry for more room came back " + again.status }, 502);
       data = await again.json();
     }
   } catch (e) {
     console.warn(JSON.stringify({ ev: "ai_fetch_fail", task: body.task, msg: String(e && e.message) }));
-    return json({ error: "upstream request failed" }, 502);
+    return json({ error: "upstream request failed", detail: String((e && e.message) || e).slice(0, 200) }, 502);
   }
 
   // A blocked prompt has no candidates at all; a blocked reply has a finishReason instead.
@@ -344,11 +350,19 @@ export async function handleAi(req, env) {
   const reason = reasonOf(data);
   if (blocked || reason === "SAFETY" || reason === "RECITATION" || reason === "PROHIBITED_CONTENT") {
     console.warn(JSON.stringify({ ev: "ai_refused", task: body.task, reason: blocked || reason }));
-    return json({ error: "refused" }, 502);
+    return json({ error: "refused", detail: "the model declined this one (" + (blocked || reason) + ")" }, 502);
   }
 
+  /* Every failure below here has to describe itself. A 502 whose body says only
+     "empty reply" reaches the learner as an unadorned "Couldn't reach Gemini", which is
+     indistinguishable from the network being down and sends the next hour in the wrong
+     direction. What the model actually returned is the whole diagnosis. */
+  const shapeNote = " [" + shape.name + ", " + model + ", finish=" + (reason || "none") + "]";
   const text = textOf(data);
-  if (!text) return json({ error: "empty reply" }, 502);
+  if (!text) {
+    console.warn(JSON.stringify({ ev: "ai_empty", task: body.task, model, shape: shape.name, reason, usage: data && data.usageMetadata }));
+    return json({ error: "empty reply", detail: "the model returned no text" + shapeNote }, 502);
+  }
 
   let result;
   try { result = JSON.parse(text); }
@@ -358,7 +372,10 @@ export async function handleAi(req, env) {
     const s = t.indexOf("{"), en = t.lastIndexOf("}");
     if (s !== -1 && en !== -1 && en > s) t = t.slice(s, en + 1);
     try { result = JSON.parse(t); }
-    catch (e2) { return json({ error: "unparseable reply" }, 502); }
+    catch (e2) {
+      console.warn(JSON.stringify({ ev: "ai_unparseable", task: body.task, model, shape: shape.name, head: text.slice(0, 200) }));
+      return json({ error: "unparseable reply", detail: "reply was not JSON" + shapeNote + ": " + text.slice(0, 120) }, 502);
+    }
   }
 
   await env.TTS.put(key, JSON.stringify(result), task.ttl ? { expirationTtl: task.ttl } : undefined);

@@ -332,6 +332,47 @@ async function main() {
       ok(bodies[2].systemInstruction, "and the system role survives too");
     } finally { globalThis.fetch = realFetch; }
   });
+  await t("dropping thinkingConfig buys the budget headroom to survive it", async () => {
+    // Turning thinking off is the cheap fix for it eating maxOutputTokens. When the model
+    // refuses that knob, the tokens still get spent — so the budget has to grow instead, or
+    // the reply comes back with no text and the feature dies on a knob it never wanted.
+    const token = await signSession("test-secret", "sub-headroom", null);
+    const realFetch = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const b = JSON.parse(opts.body); bodies.push(b);
+      if (b.generationConfig.thinkingConfig) {
+        return new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 });
+      }
+      return new Response(JSON.stringify(geminiSays('{"hook":"had room to answer"}')), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "余" } }, token), aiEnv());
+      eq(res.status, 200);
+      const withThinking = bodies.find((b) => b.generationConfig.thinkingConfig);
+      const without = bodies.find((b) => !b.generationConfig.thinkingConfig);
+      eq(withThinking.generationConfig.maxOutputTokens, 300, "hook's own budget when thinking is off");
+      ok(without.generationConfig.maxOutputTokens > 300 * 3,
+         "…and far more when it cannot be, got " + without.generationConfig.maxOutputTokens);
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("every failure explains itself — a bare 502 is unfixable from outside", async () => {
+    const token = await signSession("test-secret", "sub-detail", null);
+    const realFetch = globalThis.fetch;
+    const cases = [
+      ["no text at all", { candidates: [{ content: { role: "model", parts: [] }, finishReason: "STOP" }] }],
+      ["not JSON", geminiSays("I'm afraid I can't do that.")],
+    ];
+    try {
+      for (const [label, reply] of cases) {
+        globalThis.fetch = async () => new Response(JSON.stringify(reply), { status: 200 });
+        const res = await handleAi(aiReq({ task: "hook", input: { term: label } }, token), aiEnv());
+        eq(res.status, 502, label);
+        const b = await res.json();
+        ok(b.detail && b.detail.length > 10, label + ": needs a usable detail, got " + JSON.stringify(b.detail));
+      }
+    } finally { globalThis.fetch = realFetch; }
+  });
   await t("a busy model is waited out, not reported as broken", async () => {
     // "This model is currently experiencing high demand" is a real answer to a well-formed
     // request. There is nothing to fix and nothing to degrade — the shape ladder must not
