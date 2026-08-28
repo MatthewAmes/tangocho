@@ -93,6 +93,34 @@ const TASKS = {
     schema: obj({ lines: arr(obj({ speaker: str(), tokens: arr(tok()), romaji: str(), en: str() }, ["speaker", "tokens", "romaji", "en"])) }, ["lines"]),
   },
 
+  /* ── the context rung of the cue ladder ──
+     The intervention model's top rung asks a word to be used in a sentence, and the sentences
+     come from the textbook scripts. That covers 265 of 1,632 cards: for the other 84% a word
+     climbs the ladder and finds nothing at the top, so the hardest and most useful rung is
+     unreachable for most of the deck.
+
+     One sentence per word, and a word's sentence never changes — so this caches forever and
+     the input is the word alone. No vocabulary sample: including one would vary the cache key
+     per call and turn a once-ever generation into a per-session cost. */
+  context_sentence: {
+    max_tokens: 400, ttl: 0,
+    system: "You are a Japanese tutor writing practice material for a JLPT N5 beginner. Write "
+      + "ONE short, natural Japanese sentence (6-12 characters of content, です/ます style) that "
+      + "uses the given word in an ordinary, everyday way. Keep the rest of the sentence to "
+      + "very basic vocabulary and particles a first-semester student would know. The sentence "
+      + "MUST contain the given word written EXACTLY as given — do not conjugate it, do not "
+      + "substitute kana for kanji or kanji for kana. Also give a natural English translation.",
+    user: (i) => `Word: ${i.term} (${i.reading || ""}) = ${i.meaning || ""}`,
+    schema: obj({
+      sentence: str("The Japanese sentence, containing the given word verbatim."),
+      en: str("Natural English translation of that sentence."),
+    }, ["sentence", "en"]),
+    /* The one thing this task must get right is the thing a language model is least reliable
+       about: reproducing a string exactly. A sentence that conjugated the word, or wrote it in
+       kana, cannot be blanked — there would be nothing to remove. Checked rather than hoped. */
+    validate: (r, input) => !!(r && typeof r.sentence === "string" && r.sentence.includes(input.term)),
+  },
+
   /* ── Sentences tab ──
      These three used to live in the CLIENT, which posted the whole prompt to /api/ai as
      {prompt}. The endpoint stopped accepting free-form prompts when it was hardened — that
@@ -411,6 +439,16 @@ export async function handleAi(req, env) {
       console.warn(JSON.stringify({ ev: "ai_unparseable", task: body.task, model, shape: shape.name, head: text.slice(0, 200) }));
       return json({ error: "unparseable reply", detail: "reply was not JSON" + shapeNote + ": " + text.slice(0, 120) }, 502);
     }
+  }
+
+  /* A task may declare what a usable answer looks like. Structured output guarantees the
+     SHAPE of a reply, never its content — and a context sentence that quietly conjugated the
+     word it was supposed to contain is well-formed and useless, because there is then nothing
+     to blank out. Caching an answer like that would make one bad generation permanent, so the
+     check runs before the write, not after. */
+  if (typeof task.validate === "function" && !task.validate(result, body.input)) {
+    console.warn(JSON.stringify({ ev: "ai_invalid", task: body.task, model, result: JSON.stringify(result).slice(0, 200) }));
+    return json({ error: "unusable reply", detail: "the model's answer did not satisfy this task's requirements" }, 502);
   }
 
   await env.TTS.put(key, JSON.stringify(result), task.ttl ? { expirationTtl: task.ttl } : undefined);

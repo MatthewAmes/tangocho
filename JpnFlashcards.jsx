@@ -811,6 +811,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      screen is the same learner's own recent rate to compare it against. Snapshotted at
      the start so the session being summarised is not also inside its own baseline. */
   const baselineRef = useRef(null);
+  // Bumped when a generated sentence lands, so the exercise picks it up without a reload.
+  const [contextTick, setContextTick] = useState(0);
   const hooksRef = useRef(null);                       // term -> memory hook (cached forever)
   const [hook, setHook] = useState(null);              // {term, text|"...", err}
   const [debrief, setDebrief] = useState(null);        // {text} | {err} | {busy:true}
@@ -909,6 +911,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      question. Both are learner-specific and neither can be guessed. */
   const [evidence, setEvidence] = useState([]);
   useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
+  /* Generated sentences have to be in memory before the first session is built: capsFor
+     reads them synchronously to decide whether a word can reach the context rung, and an
+     unloaded store answers "no" for every word — the sentences would be sitting in storage,
+     paid for, and never used. */
+  const [contextReady, setContextReady] = useState(false);
+  useEffect(() => { loadContext().then(() => setContextReady(true)).catch(() => setContextReady(true)); }, []);
   const confusion = useMemo(() => confusionFrom(evidence), [evidence]);
   const norms = useMemo(() => latencyNorms(evidence), [evidence]);
   const [foreign, setForeign] = useState([]);
@@ -944,7 +952,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const source = [
       { deck: "vocab", items, stats: Object.fromEntries(cards.map((c) => [c.id, c])),
         weight: deckWeight(plan, "class"),
-        capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term), context: hasContext(clozeIndex, it.id) }) },
+        /* context is claimed only when a sentence is already in hand — a textbook one or a
+           generated one already fetched. Promising the rung and then having to go and get the
+           sentence is how a card renders blank mid-session. */
+        capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term),
+                            context: hasContext(clozeIndex, it.id) || !!contextFor(it.id) }) },
       ...foreign.map((s) => ({
         ...s,
         weight: deckWeight(plan, s.deck),
@@ -968,7 +980,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     // retention.target: not a dep in the usual sense (it's a module `let`, not props/state) but
     // isLeech/dueness read it live, and the retention chip's onClick bumps `retentionPref`
     // right alongside it — so this recomputes on the same render that value changes.
-  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target]);
+  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target, contextReady]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -1161,7 +1173,38 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       const g = gainPerMinute((list || []).filter((r) => r && r.at > Date.now() - 30 * 86400000));
       baselineRef.current = g.rate != null && g.n >= MIN_ROWS ? g : null;
     }).catch(() => {});
+    warmContext(ordered);
   }, [cards, coverage]);
+
+  /* Fetch sentences for words that are ABOUT to need one, not the ones in front of you.
+     A word becomes context-capable only once its sentence has landed, so this runs a session
+     ahead: the words strong enough to reach the top rung soon get their sentence written now,
+     and the rung is simply there when they arrive. A few per session, because the point is to
+     accumulate quietly rather than to spend a minute of study time on API calls.
+
+     Silent on failure by design — not signed in, offline, out of quota and "the model was
+     busy" all mean the same thing here, which is that this word keeps its old exercises for
+     now and nothing is worse than it was. */
+  const warmContext = useCallback(async (pool) => {
+    if (!AI_ENABLED || !loadSession()) return;
+    try { await loadContext(); } catch (e) { return; }
+    const need = (pool || [])
+      .filter((c) => c && c.term && c.reading
+        && !hasContext(clozeIndex, c.id) && !contextFor(c.id)
+        && recallUnlocked(c))                        // has earned production; the rung is in reach
+      .slice(0, 3);
+    for (const c of need) {
+      try {
+        const { result } = await callAI("context_sentence", {
+          term: c.term, reading: c.reading, meaning: c.meaning,
+        });
+        if (result && result.sentence) {
+          saveContext(c.id, result);
+          setContextTick((n) => n + 1);
+        }
+      } catch (e) { return; }                        // one failure means stop, not retry 3x
+    }
+  }, [clozeIndex]);
 
   const card = queue[pos];
   /* The scheduler picks the exercise; prodSet is the older mechanism and still stands in
@@ -1211,9 +1254,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Multiple choice needs wrong answers that are actually tempting. Same kind and similar
      length beats random: picking "Tuesday" out of {Tuesday, to swim, expensive, library}
      tests nothing, because three options are obviously not days. */
+  /* A textbook sentence first — it is real material the learner has met — and a generated
+     one only where there is none. */
   const clozeEx = useMemo(
-    () => (card && fmt === "cloze" ? clozeFor(clozeIndex, card) : null),
-    [card, fmt, clozeIndex],
+    () => (card && fmt === "cloze"
+      ? (clozeFor(clozeIndex, card) || clozeFromSentence(card, contextFor(card.id)))
+      : null),
+    [card, fmt, clozeIndex, contextTick],
   );
   const choices = useMemo(() => {
     if (!card || (fmt !== "mc" && fmt !== "listen")) return [];
@@ -1858,11 +1905,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               );
             })}
           </div>
-          {verdict && <p className="tc-clozesrc">from your {clozeEx.source} script</p>}
+          {verdict && (
+            <p className="tc-clozesrc">
+              {clozeEx.source === "generated"
+                ? "written for this word"
+                : "from your " + clozeEx.source + " script"}
+            </p>
+          )}
         </div>
       )}
 
-      {(fmt === "mc" || fmt === "listen") && (
+      {/* A cloze with no sentence renders nothing at all — an empty card with buttons under
+          it. The capability gate is meant to make that impossible, but the gate reads a
+          store that could be mid-load or hold an entry whose word no longer appears in its
+          sentence, and "impossible" is not a good enough reason to leave a blank screen as
+          the failure mode. Falls through to multiple choice, which every word can do. */}
+      {((fmt === "mc" || fmt === "listen") || (fmt === "cloze" && !clozeEx)) && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className={"tc-kindchip " + (fmt === "listen" ? "tc-listenchip" : "tc-mcchip")}>
             {fmt === "listen" ? "listen" : "which one?"}
@@ -2806,6 +2864,55 @@ async function loadRuns() {
   catch (e) { return []; }
 }
 async function saveRuns(list) { await sSet(BENCH_KEY, JSON.stringify(list)); }
+
+/* ── generated context sentences ──
+
+   The cue ladder's top rung asks a word to be USED, not translated, and the sentences come
+   from the textbook scripts — which cover 265 of 1,632 cards. For the other 84% a word could
+   climb the whole ladder and find nothing at the top, so the hardest and most useful rung
+   was unreachable for most of the deck. That is also why sentence practice ended up as its
+   own tab: the capability existed, it just could not reach most words.
+
+   A generated sentence fills the gap and is written once per word, ever. Cached locally and
+   synced like any other progress, so the cost is one call per word across all devices and
+   all time — and the Worker caches it again server-side.
+
+   The capability is claimed ONLY when the sentence is already in hand. The scheduler asking
+   for a cloze that then has to be fetched is how you get a blank card in the middle of a
+   session; instead, sentences are fetched ahead of time for words approaching the rung, and
+   a word becomes context-capable the moment its sentence lands. */
+const CONTEXT_KEY = "jpn101:context";
+let _context = null;
+async function loadContext() {
+  if (_context) return _context;
+  try { const r = await sGet(CONTEXT_KEY); _context = r ? JSON.parse(r) : {}; }
+  catch (e) { _context = {}; }
+  if (!_context || typeof _context !== "object" || Array.isArray(_context)) _context = {};
+  return _context;
+}
+function contextFor(id) { return (_context && _context[id]) || null; }
+function saveContext(id, entry) {
+  if (!_context) _context = {};
+  _context[id] = { sentence: entry.sentence, en: entry.en, at: Date.now() };
+  sSet(CONTEXT_KEY, JSON.stringify(_context));
+}
+/* Same shape clozeFor returns, so the renderer cannot tell the two apart — a generated
+   sentence is a cloze or it is nothing. Returns null when the word is not in the sentence
+   verbatim, which the Worker already refuses to cache, but a stale local entry could still
+   hold: without the word present there is no blank to make. */
+function clozeFromSentence(card, entry) {
+  const s = entry && entry.sentence;
+  if (!s || !card || !card.term) return null;
+  const at = s.indexOf(card.term);
+  if (at < 0) return null;
+  const blank = "＿".repeat(Math.max(2, card.term.length));
+  return {
+    id: card.id, term: card.term, reading: card.reading || "",
+    before: s.slice(0, at), after: s.slice(at + card.term.length),
+    blank, sentence: s.slice(0, at) + blank + s.slice(at + card.term.length),
+    en: entry.en || "", source: "generated",
+  };
+}
 
 const EVIDENCE_KEY = "jpn101:evidence";
 const EVIDENCE_CAP = 4000;

@@ -125,6 +125,8 @@ async function main() {
         return opts && opts.type === "json" ? JSON.parse(v) : v;
       },
       put: async (k, v) => { store.set(k, typeof v === "string" ? v : String(v)); },
+      // exposed so a test can assert what was NOT written, not just what was
+      _keys: () => [...store.keys()],
     };
   }
   const aiEnv = () => ({ SESSION_SECRET: "test-secret", GEMINI_API_KEY: "test-key", TTS: fakeKV2() });
@@ -415,6 +417,35 @@ async function main() {
       eq(res.status, 200, "a stale note must not trap the request");
       eq((await res.json()).result.hook, "lower still");
       eq(bodies[0].generationConfig.thinkingConfig, undefined, "started at the remembered rung");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a context sentence that does not contain the word is refused, not cached", async () => {
+    // Structured output guarantees the shape of a reply, never its content. A sentence that
+    // conjugated the word away is well-formed and useless — there is nothing left to blank —
+    // and caching it forever would make one bad generation permanent.
+    const token = await signSession("test-secret", "sub-ctx", null);
+    const realFetch = globalThis.fetch;
+    const env = aiEnv();
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(geminiSays('{"sentence":"毎日たべます。","en":"I eat every day."}')), { status: 200 });
+    try {
+      const res = await handleAi(aiReq({ task: "context_sentence", input: { term: "食べ物", reading: "たべもの", meaning: "food" } }, token), env);
+      eq(res.status, 502, "たべます does not contain 食べ物");
+      // and nothing was written, so a later good answer is not shadowed by the bad one
+      const cached = env.TTS._keys().filter((k) => k.includes("context_sentence"));
+      eq(cached.length, 0, "must not cache a rejected answer, got " + JSON.stringify(cached));
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a context sentence containing the word verbatim is accepted", async () => {
+    const token = await signSession("test-secret", "sub-ctx2", null);
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify(geminiSays('{"sentence":"食べ物がおいしいです。","en":"The food is delicious."}')), { status: 200 });
+    try {
+      const res = await handleAi(aiReq({ task: "context_sentence", input: { term: "食べ物", reading: "たべもの", meaning: "food" } }, token), aiEnv());
+      eq(res.status, 200);
+      const r = (await res.json()).result;
+      ok(r.sentence.includes("食べ物") && r.en, JSON.stringify(r));
     } finally { globalThis.fetch = realFetch; }
   });
   await t("a busy model is waited out, not reported as broken", async () => {
