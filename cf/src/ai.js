@@ -1,20 +1,33 @@
-// cf/src/ai.js — session-gated proxy to the Anthropic Messages API.
+// cf/src/ai.js — session-gated proxy to the Google Gemini API.
 //
 // Prompts live HERE, not in the client. The client sends task data only (a term, a list of
 // missed cards, a dialogue transcript) — never a free-form prompt string. That's the whole
 // abuse guard: a signed-in session can trigger one of a fixed handful of cheap, cached,
 // server-authored prompts, never an arbitrary one. Without this an endpoint that accepts
 // {prompt} is just an open LLM proxy behind a session token.
+//
+// Provider note: this spoke the Anthropic Messages API until 2026-08-27. The client never
+// knew — it posts {task, input} to /api/ai and reads {result} — so the swap is confined to
+// this file. The three things that actually differ are marked GEMINI below.
 import { verifySession, sha256Hex, json, bumpQuota } from "./index.js";
 
-const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-haiku-4-5";           // every task here is short, cacheable, and cheap
+const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
+// Overridable without a code change; Flash is the cheap fast tier and every task here is
+// short. Thinking is disabled below, which matters more than the model choice.
+const DEFAULT_MODEL = "gemini-2.5-flash";
 const AI_DAILY_PER_USER = 80, AI_DAILY_GLOBAL = 600;
 const INPUT_MAX = 4000;                     // JSON.stringify(input).length
 
 function str() { return { type: "string" }; }
 function arr(items) { return { type: "array", items }; }
-function obj(props, required) { return { type: "object", properties: props, required, additionalProperties: false }; }
+/* GEMINI 1 — responseSchema is a SUBSET of OpenAPI 3.0, and `additionalProperties` is not
+   in it: sending one makes the whole request 400. The Anthropic version set it to false on
+   every object. `propertyOrdering` replaces nothing but is worth setting — without it the
+   key order in the reply can drift between calls, which would give two identical inputs
+   two different cache entries. */
+function obj(props, required) {
+  return { type: "object", properties: props, required, propertyOrdering: Object.keys(props) };
+}
 
 // Recursive key-sort so the cache key ignores property order (two logically-identical
 // inputs with keys in a different order must hash to the same cache entry).
@@ -62,7 +75,21 @@ const TASKS = {
 
 export async function handleAi(req, env) {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
-  if (!env.SESSION_SECRET || !env.ANTHROPIC_API_KEY) return json({ error: "AI not configured" }, 503);
+  /* Which binding is missing goes to the log, not to the client — the 503 fires before auth,
+     so the response is public. "AI not configured" with the secret visibly present in
+     `wrangler secret list` cost a debugging round: a secret set from a prompt that never
+     received the paste EXISTS and is empty, which lists identically to a good one and is
+     falsy here. `wrangler tail` now says which it is. */
+  if (!env.SESSION_SECRET || !env.GEMINI_API_KEY) {
+    console.warn(JSON.stringify({
+      ev: "ai_not_configured",
+      session_secret: env.SESSION_SECRET ? "present" : "MISSING",
+      gemini_key: env.GEMINI_API_KEY === undefined ? "MISSING (no such secret)"
+        : env.GEMINI_API_KEY === "" ? "EMPTY (secret exists, value is blank — re-run wrangler secret put)"
+        : "present",
+    }));
+    return json({ error: "AI not configured", provider: "gemini" }, 503);
+  }
   const auth = req.headers.get("authorization") || "";
   const session = auth.startsWith("Bearer ") ? await verifySession(env.SESSION_SECRET, auth.slice(7)) : null;
   if (!session) return json({ error: "sign-in required" }, 401);
@@ -76,7 +103,10 @@ export async function handleAi(req, env) {
   const inputStr = stableStringify(body.input);
   if (inputStr.length > INPUT_MAX) return json({ error: "input too large" }, 413);
 
-  const key = `ai:v1:${body.task}:${await sha256Hex(inputStr)}`;
+  const model = env.GEMINI_MODEL || DEFAULT_MODEL;
+  // The model is part of the cache key: a reply cached from a different model is a different
+  // answer, and "why is this hook still the old bad one" is a miserable thing to debug.
+  const key = `ai:v2:${model}:${body.task}:${await sha256Hex(inputStr)}`;
   const hit = await env.TTS.get(key, { type: "json" });
   if (hit) return json({ result: hit, cached: true, remaining: null });
 
@@ -84,23 +114,50 @@ export async function handleAi(req, env) {
     return json({ error: "daily AI limit reached — try again tomorrow", remaining: 0 }, 429, { "retry-after": "3600" });
   }
 
-  const call = (maxTokens) => fetch(ANTHROPIC_API, {
+  /* GEMINI 2 — the key goes in the query string, not a header, and the prompt splits into
+     system_instruction + contents rather than system + messages. */
+  const call = (maxTokens) => fetch(`${GEMINI_API}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: MODEL, max_tokens: maxTokens, system: task.system,
-      messages: [{ role: "user", content: task.user(body.input) }],
-      output_config: { format: { type: "json_schema", schema: task.schema } },
+      system_instruction: { parts: [{ text: task.system }] },
+      contents: [{ role: "user", parts: [{ text: task.user(body.input) }] }],
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        responseMimeType: "application/json",
+        responseSchema: task.schema,
+        temperature: 0.7,
+        /* GEMINI 3 — 2.5-series models think by default, and thinking tokens are billed
+           against maxOutputTokens. A 300-token budget can be spent entirely on thinking,
+           returning a candidate with no text at all and finishReason MAX_TOKENS. These
+           tasks are one-sentence generations that gain nothing from it, so it is off. */
+        thinkingConfig: { thinkingBudget: 0 },
+      },
     }),
     signal: AbortSignal.timeout(30000),
   });
 
-  let r, data;
+  const textOf = (d) => {
+    const c = d && d.candidates && d.candidates[0];
+    if (!c || !c.content || !Array.isArray(c.content.parts)) return "";
+    return c.content.parts.map((p) => p.text || "").join("");
+  };
+  const reasonOf = (d) => (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || "";
+
+  let data;
   try {
-    r = await call(task.max_tokens);
-    if (!r.ok) { console.warn(JSON.stringify({ ev: "ai_upstream_fail", task: body.task, status: r.status })); return json({ error: "upstream " + r.status }, 502); }
+    let r = await call(task.max_tokens);
+    if (!r.ok) {
+      // The body carries Google's actual complaint (bad key, disabled API, bad schema) and
+      // it is worth having in the log — a bare 400 here is unfixable from the outside.
+      let detail = "";
+      try { detail = ((await r.json()).error || {}).message || ""; } catch (e) {}
+      console.warn(JSON.stringify({ ev: "ai_upstream_fail", task: body.task, status: r.status, detail: detail.slice(0, 200) }));
+      return json({ error: "upstream " + r.status }, 502);
+    }
     data = await r.json();
-    if (data.stop_reason === "max_tokens") {
+    // Truncated: retry once with more room, same as the Anthropic version did.
+    if (reasonOf(data) === "MAX_TOKENS" || !textOf(data)) {
       r = await call(Math.round(task.max_tokens * 1.5));
       if (!r.ok) return json({ error: "upstream " + r.status }, 502);
       data = await r.json();
@@ -109,13 +166,22 @@ export async function handleAi(req, env) {
     console.warn(JSON.stringify({ ev: "ai_fetch_fail", task: body.task, msg: String(e && e.message) }));
     return json({ error: "upstream request failed" }, 502);
   }
-  if (data.stop_reason === "refusal") return json({ error: "refused" }, 502);
 
-  const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  // A blocked prompt has no candidates at all; a blocked reply has a finishReason instead.
+  const blocked = data && data.promptFeedback && data.promptFeedback.blockReason;
+  const reason = reasonOf(data);
+  if (blocked || reason === "SAFETY" || reason === "RECITATION" || reason === "PROHIBITED_CONTENT") {
+    console.warn(JSON.stringify({ ev: "ai_refused", task: body.task, reason: blocked || reason }));
+    return json({ error: "refused" }, 502);
+  }
+
+  const text = textOf(data);
+  if (!text) return json({ error: "empty reply" }, 502);
+
   let result;
   try { result = JSON.parse(text); }
   catch (e) {
-    // tolerate fence-wrapped or prose-wrapped JSON; structured output should make this rare
+    // tolerate fence-wrapped or prose-wrapped JSON; responseMimeType should make this rare
     let t = text.replace(/```json|```/g, "").trim();
     const s = t.indexOf("{"), en = t.lastIndexOf("}");
     if (s !== -1 && en !== -1 && en > s) t = t.slice(s, en + 1);
@@ -124,6 +190,6 @@ export async function handleAi(req, env) {
   }
 
   await env.TTS.put(key, JSON.stringify(result), task.ttl ? { expirationTtl: task.ttl } : undefined);
-  console.log(JSON.stringify({ ev: "ai_gen", task: body.task }));
+  console.log(JSON.stringify({ ev: "ai_gen", task: body.task, model }));
   return json({ result, cached: false });
 }

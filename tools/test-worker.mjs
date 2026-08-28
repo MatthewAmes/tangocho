@@ -127,7 +127,11 @@ async function main() {
       put: async (k, v) => { store.set(k, typeof v === "string" ? v : String(v)); },
     };
   }
-  const aiEnv = () => ({ SESSION_SECRET: "test-secret", ANTHROPIC_API_KEY: "test-key", TTS: fakeKV2() });
+  const aiEnv = () => ({ SESSION_SECRET: "test-secret", GEMINI_API_KEY: "test-key", TTS: fakeKV2() });
+  // A Gemini reply: text lives under candidates[0].content.parts[], not content[].
+  const geminiSays = (text, finishReason = "STOP") => ({
+    candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason }],
+  });
   const aiReq = (body, token) => new Request("http://x/api/ai", {
     method: "POST",
     headers: { "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) },
@@ -154,7 +158,7 @@ async function main() {
     const env = aiEnv();
     let fetchCalls = 0;
     const realFetch = globalThis.fetch;
-    globalThis.fetch = async (...args) => { fetchCalls++; return cannedFetch({ stop_reason: "end_turn", content: [{ type: "text", text: '{"hook":"猫 sounds like \'neko\', imagine a cat saying nyeh-ko."}' }] })(...args); };
+    globalThis.fetch = async (...args) => { fetchCalls++; return cannedFetch(geminiSays('{"hook":"猫 sounds like \'neko\', imagine a cat saying nyeh-ko."}'))(...args); };
     try {
       const res1 = await handleAi(aiReq({ task: "hook", input: { term: "猫", reading: "ねこ" } }, token), env);
       eq(res1.status, 200);
@@ -181,7 +185,7 @@ async function main() {
   await t("upstream refusal maps to 502", async () => {
     const token = await signSession("test-secret", "sub-2", null);
     const realFetch = globalThis.fetch;
-    globalThis.fetch = cannedFetch({ stop_reason: "refusal", content: [] });
+    globalThis.fetch = cannedFetch({ candidates: [{ finishReason: "SAFETY" }] });
     try {
       const res = await handleAi(aiReq({ task: "hook", input: { term: "違う語" } }, token), aiEnv());
       eq(res.status, 502);
@@ -190,7 +194,7 @@ async function main() {
   await t("a fence-wrapped JSON reply still parses", async () => {
     const token = await signSession("test-secret", "sub-3", null);
     const realFetch = globalThis.fetch;
-    globalThis.fetch = cannedFetch({ stop_reason: "end_turn", content: [{ type: "text", text: "```json\n{\"hook\":\"wrapped\"}\n```" }] });
+    globalThis.fetch = cannedFetch(geminiSays("```json\n{\"hook\":\"wrapped\"}\n```"));
     try {
       const res = await handleAi(aiReq({ task: "hook", input: { term: "fence" } }, token), aiEnv());
       eq(res.status, 200);
@@ -198,9 +202,79 @@ async function main() {
       eq(body.result.hook, "wrapped");
     } finally { globalThis.fetch = realFetch; }
   });
+  await t("a reply that spent its whole budget thinking is retried, not returned empty", async () => {
+    // The 2.5 models think by default and thinking tokens count against maxOutputTokens, so
+    // a short budget can come back with finishReason MAX_TOKENS and NO text at all. The code
+    // disables thinking, but a model change could bring it back — so the retry is tested.
+    const token = await signSession("test-secret", "sub-think", null);
+    const realFetch = globalThis.fetch;
+    let n = 0;
+    globalThis.fetch = async () => {
+      n++;
+      const body = n === 1
+        ? { candidates: [{ content: { role: "model", parts: [] }, finishReason: "MAX_TOKENS" }] }
+        : geminiSays('{"hook":"second try had room to answer"}');
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "考" } }, token), aiEnv());
+      eq(res.status, 200);
+      eq((await res.json()).result.hook, "second try had room to answer");
+      eq(n, 2, "an empty first reply must be retried with a bigger budget");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a blocked prompt (no candidates at all) maps to 502", async () => {
+    const token = await signSession("test-secret", "sub-block", null);
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = cannedFetch({ promptFeedback: { blockReason: "SAFETY" } });
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "x" } }, token), aiEnv());
+      eq(res.status, 502);
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("the key travels in the query string and never in a header", async () => {
+    // Gemini authenticates with ?key=. Sending it as a header instead is silently ignored
+    // and every call comes back 400 — and a key in a header is the shape that ends up in
+    // proxy logs, so this asserts both the mechanism and that nothing leaks sideways.
+    const token = await signSession("test-secret", "sub-url", null);
+    const realFetch = globalThis.fetch;
+    let seenUrl = "", seenHeaders = {};
+    globalThis.fetch = async (url, opts) => {
+      seenUrl = String(url); seenHeaders = (opts && opts.headers) || {};
+      return new Response(JSON.stringify(geminiSays('{"hook":"ok"}')), { status: 200 });
+    };
+    try {
+      await handleAi(aiReq({ task: "hook", input: { term: "鍵" } }, token), aiEnv());
+      ok(seenUrl.includes("key=test-key"), "key must be in the query string: " + seenUrl);
+      ok(seenUrl.includes("generativelanguage.googleapis.com"), "wrong host: " + seenUrl);
+      eq(JSON.stringify(seenHeaders).includes("test-key"), false, "the key must not be in a header");
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("no schema sends additionalProperties, which Gemini rejects outright", async () => {
+    const token = await signSession("test-secret", "sub-schema", null);
+    const realFetch = globalThis.fetch;
+    const sent = [];
+    globalThis.fetch = async (url, opts) => {
+      sent.push(JSON.parse(opts.body));
+      return new Response(JSON.stringify(geminiSays('{"hook":"ok"}')), { status: 200 });
+    };
+    try {
+      for (const task of ["hook", "debrief", "annotate"]) {
+        const input = task === "hook" ? { term: "x" } : task === "debrief" ? { missed: [] } : { raw: "あ" };
+        await handleAi(aiReq({ task, input }, token), aiEnv());
+      }
+      for (const b of sent) {
+        const schema = JSON.stringify(b.generationConfig.responseSchema);
+        eq(schema.includes("additionalProperties"), false, "responseSchema must not carry additionalProperties");
+        eq(b.generationConfig.responseMimeType, "application/json");
+        eq(b.generationConfig.thinkingConfig.thinkingBudget, 0, "thinking must stay off");
+      }
+      eq(sent.length, 3);
+    } finally { globalThis.fetch = realFetch; }
+  });
   await t("503 when the AI key isn't configured", async () => {
     const token = await signSession("test-secret", "sub-4", null);
-    const env = aiEnv(); env.ANTHROPIC_API_KEY = undefined;
+    const env = aiEnv(); env.GEMINI_API_KEY = undefined;
     const res = await handleAi(aiReq({ task: "hook", input: { term: "x" } }, token), env);
     eq(res.status, 503);
   });
