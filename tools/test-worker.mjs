@@ -259,8 +259,13 @@ async function main() {
       return new Response(JSON.stringify(geminiSays('{"hook":"ok"}')), { status: 200 });
     };
     try {
-      for (const task of ["hook", "debrief", "annotate"]) {
-        const input = task === "hook" ? { term: "x" } : task === "debrief" ? { missed: [] } : { raw: "あ" };
+      const inputs = {
+        hook: { term: "x" }, debrief: { missed: [] }, annotate: { raw: "あ" },
+        sentence_fill: { vocab: [{ term: "猫", reading: "ねこ", meaning: "cat" }] },
+        sentence_trans: { vocab: [{ term: "猫", reading: "ねこ", meaning: "cat" }] },
+        sentence_grade: { english: "I like cats.", model: "猫が好きです。", answer: "ねこがすきです" },
+      };
+      for (const [task, input] of Object.entries(inputs)) {
         await handleAi(aiReq({ task, input }, token), aiEnv());
       }
       for (const b of sent) {
@@ -269,7 +274,34 @@ async function main() {
         eq(b.generationConfig.responseMimeType, "application/json");
         eq(b.generationConfig.thinkingConfig.thinkingBudget, 0, "thinking must stay off");
       }
-      eq(sent.length, 3);
+      eq(sent.length, 6);
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("the Sentences tasks exist — the tab used to post a free-form prompt and 400", async () => {
+    // The old client posted {prompt} and got "unknown task", then fell back to offline
+    // practice without ever surfacing an error. That fallback looked like a working feature.
+    const token = await signSession("test-secret", "sub-sent", null);
+    const res = await handleAi(aiReq({ task: "hook", input: {}, prompt: "write me anything" }, token), aiEnv());
+    ok(res.status !== 400, "a stray prompt field must not break a valid task");
+    const bad = await handleAi(aiReq({ prompt: "write me anything" }, token), aiEnv());
+    eq(bad.status, 400, "a bare {prompt} must still be rejected — that is the abuse guard");
+  });
+  await t("a big deck is capped before it reaches the prompt", async () => {
+    const token = await signSession("test-secret", "sub-vocab", null);
+    const realFetch = globalThis.fetch;
+    let sentBody = null;
+    globalThis.fetch = async (url, opts) => {
+      sentBody = JSON.parse(opts.body);
+      return new Response(JSON.stringify(geminiSays('{"english":"a","model":"b","modelTokens":[],"reading":"c","romaji":"d","notes":"e"}')), { status: 200 });
+    };
+    try {
+      // Under INPUT_MAX (which would 413 first, and does — that ceiling is checked above)
+      // but well over the 60-line cap, so it is the cap being exercised and not the ceiling.
+      const vocab = Array.from({ length: 90 }, (_, i) => ({ term: "語" + i, reading: "ご", meaning: "w" }));
+      const res = await handleAi(aiReq({ task: "sentence_trans", input: { vocab } }, token), aiEnv());
+      eq(res.status, 200);
+      const lines = sentBody.contents[0].parts[0].text.split("\n").filter((l) => l.startsWith("語"));
+      eq(lines.length, 60, "vocabulary must be capped server-side");
     } finally { globalThis.fetch = realFetch; }
   });
   await t("503 when the AI key isn't configured", async () => {
@@ -280,7 +312,10 @@ async function main() {
   });
 
   console.log(fail ? `\n${fail} of ${run} FAILED` : `\nall ${run} worker tests passed`);
-  process.exit(fail ? 1 : 0);
+  // Set the code and let Node wind down on its own. Forcing process.exit() here tripped a
+  // libuv teardown assertion on Windows (exit 127, AFTER every test had reported passing)
+  // once the Gemini tests raised the number of in-flight fetch stubs.
+  process.exitCode = fail ? 1 : 0;
 }
 
 main();

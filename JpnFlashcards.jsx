@@ -3215,78 +3215,24 @@ async function callAI(task, input) {
     throw new AIError(0, aiMessage(0));
   } finally { clearTimeout(timer); }
 }
-// callClaude: legacy free-prompt transport, kept only for the unmounted Sentences component
-// (see TODO-127 — not wired to a tab). Do not add new call sites; use callAI instead.
-async function callClaude(prompt) {
-  if (!AI_ENABLED) throw new Error("AI helper not available");
-  const req = syncRequestOptions({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
-  if (!req) throw new Error("sign in to use AI helpers");
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-  try {
-    const res = await fetch(AI_ENDPOINT, { ...req.opts, signal: ctrl.signal });
-    if (!res.ok) throw new Error("server " + res.status);
-    const data = await res.json();
-    const text = typeof data.text === "string" ? data.text : "";
-    if (!text.trim()) throw new Error("empty reply");
-    return text;
-  } catch (e) {
-    if (e.name === "AbortError") throw new Error("timed out");
-    throw e;
-  } finally { clearTimeout(timer); }
-}
-function parseJSON(text) {
-  let t = text.replace(/```json|```/g, "").trim();
-  const s = t.indexOf("{"), e = t.lastIndexOf("}");      // tolerate prose around the JSON
-  if (s !== -1 && e !== -1 && e > s) t = t.slice(s, e + 1);
-  return JSON.parse(t);
-}
-function norm(s) {
-  return (s || "").toString().trim().toLowerCase()
-    .replace(/[。、．,.!?！？\s]/g, "")
-    .replace(/ō/g, "o").replace(/ū/g, "u").replace(/ā/g, "a").replace(/ē/g, "e").replace(/ī/g, "i")
-    .replace(/ou/g, "o").replace(/oo/g, "o").replace(/uu/g, "u");
-}
+/* The vocabulary the sentence tasks build from.
 
+   Sampled, not sent whole: the deck is 1,632 words and the old client-side prompt pasted
+   every one of them into the request. A sample also means each call hashes to a different
+   cache key, which is what you want here — a cached sentence exercise would hand back the
+   same sentence every time you pressed Generate.
 
-
-
-
-
-
-function vocabList(cards) {
-  return cards.map((c) => `${c.term} (${c.reading}) = ${c.meaning}`).join("\n");
-}
-function fillPrompt(cards) {
-  return `You are a Japanese tutor for a beginner (JLPT N5) student. Using ONLY the vocabulary below (plus basic particles は が を に の と へ and basic です/ます forms), write ONE short, natural, beginner Japanese sentence (5–10 words), then blank out exactly ONE of the vocabulary words from it.
-
-Vocabulary:
-${vocabList(cards)}
-
-Return the Japanese as an array of tokens so kana can be shown above kanji. Each token is {"t":"<text>","r":"<kana reading>"}. Include "r" ONLY when "t" contains kanji (set it to the kana reading of that kanji); omit "r" for kana, particles, and punctuation. Represent the blank as a single token {"t":"___"}.
-
-Reply with ONLY a JSON object, no markdown:
-{"tokens":[ <the sentence with the blank, as tokens> ],"fullTokens":[ <the complete sentence, as tokens> ],"answer":"<removed word EXACTLY as its vocab term>","reading":"<kana reading of answer>","romaji":"<romaji of answer>","translation":"<natural English translation>","hint":"<short English hint about the missing word>"}`;
-}
-function transPrompt(cards) {
-  return `You are a Japanese tutor for a beginner (JLPT N5) student. Using mainly the vocabulary below (plus basic particles and です/ます), create ONE short, simple English sentence for the student to translate INTO Japanese. It must be expressible with this vocabulary.
-
-Vocabulary:
-${vocabList(cards)}
-
-For the model Japanese answer, also return it as tokens so kana can be shown above kanji: each token {"t":"<text>","r":"<kana>"} with "r" ONLY for kanji tokens.
-
-Reply with ONLY a JSON object, no markdown:
-{"english":"<English sentence to translate>","model":"<plain Japanese translation>","modelTokens":[ <the model answer as tokens> ],"reading":"<full kana reading>","romaji":"<romaji>","notes":"<one short grammar or usage note>"}`;
-}
-function gradePrompt(ex, answer) {
-  return `You are a kind Japanese tutor grading a beginner.
-English: "${ex.english}"
-A correct model translation: "${ex.model}"
-Student's attempt: "${answer}"
-
-Decide if the student's Japanese conveys the English meaning. Minor kana/spacing/politeness differences are fine. Reply with ONLY a JSON object, no markdown:
-{"rating":"correct"|"close"|"off","feedback":"<1–2 short, encouraging sentences: what's right, what to fix>","corrected":"<the student's sentence corrected>"}`;
+   Weighted toward words that are actually in play: anything seen at least once, so the
+   sentence is built from HIS vocabulary rather than whatever sorts first. */
+function vocabSample(cards, n = 40) {
+  const seen = cards.filter((c) => (c.seen || 0) > 0);
+  const pool = seen.length >= n ? seen : cards;
+  const picked = pool.slice();
+  for (let i = picked.length - 1; i > 0; i--) {          // Fisher-Yates, fresh each press
+    const j = Math.floor(Math.random() * (i + 1));
+    [picked[i], picked[j]] = [picked[j], picked[i]];
+  }
+  return picked.slice(0, n).map((c) => ({ term: c.term, reading: c.reading, meaning: c.meaning }));
 }
 
 const NOUN_SET = new Set(["猫", "犬", "学校", "食べ物", "仕事", "写真", "子供", "睡眠", "健康"]);
@@ -3358,12 +3304,17 @@ function Sentences({ cards, onResult }) {
     setLoading(true); setError(""); setOffline(false); setEx(null); setChecked(false);
     setAnswer(""); setResult(null); setShowHint(false);
     try {
-      const text = await callClaude(mode === "fill" ? fillPrompt(cards) : transPrompt(cards));
-      setEx(parseJSON(text));
+      const { result } = await callAI(mode === "fill" ? "sentence_fill" : "sentence_trans",
+                                      { vocab: vocabSample(cards) });
+      setEx(result);
     } catch (e) {
       try {                                  // live generator unreachable → build one locally from the deck
         setEx(mode === "fill" ? localFill(cards) : localTrans(cards));
-        setOffline(true);
+        /* Say WHY, not just that it fell back. "Isn't reachable right now" reads as a server
+           problem, so a signed-out session looked identical to an outage — and that ambiguity
+           hid a genuinely broken endpoint for as long as it took someone to notice the tab
+           had never once produced a live sentence. */
+        setOffline(e && e.message ? e.message : "");
       } catch (e2) {
         setError("Couldn't generate (" + (e.message || "error") + "). Tap “Generate” to retry.");
       }
@@ -3391,8 +3342,8 @@ function Sentences({ cards, onResult }) {
     if (ex._local) { setResult({}); setChecked(true); return; }   // offline item: just reveal the model answer
     setGrading(true); setError("");
     try {
-      const text = await callClaude(gradePrompt(ex, answer));
-      setResult(parseJSON(text));
+      const { result } = await callAI("sentence_grade", { english: ex.english, model: ex.model, answer });
+      setResult(result);
     } catch (e) {
       setResult({ feedback: "(Couldn't reach the grader — compare with the model answer below.)" });
     } finally { setGrading(false); setChecked(true); }
@@ -3410,7 +3361,11 @@ function Sentences({ cards, onResult }) {
       </div>
 
       {error && <div className="tc-senterr">{error}</div>}
-      {offline && ex && <p className="tc-offnote">Offline practice — built from your deck. (Live sentence generator isn't reachable here right now.)</p>}
+      {offline && ex && (
+        <p className="tc-offnote">
+          Offline practice — built from your deck.{typeof offline === "string" && offline ? " " + offline : ""}
+        </p>
+      )}
 
       {!ex && !loading && (
         <div className="tc-sentempty">

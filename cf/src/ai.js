@@ -28,6 +28,15 @@ function arr(items) { return { type: "array", items }; }
 function obj(props, required) {
   return { type: "object", properties: props, required, propertyOrdering: Object.keys(props) };
 }
+// A furigana token: the text, plus a kana reading only when the text contains kanji.
+function tok() { return obj({ t: str(), r: str() }, ["t"]); }
+// Vocabulary the client sampled from the deck. Defensive: this is the one task input that
+// is a list rather than a scalar, so it is capped and flattened here as well as client-side
+// — INPUT_MAX would otherwise be the only thing between a 1,632-word deck and the prompt.
+function vocabLines(vocab) {
+  return (Array.isArray(vocab) ? vocab : []).slice(0, 60)
+    .map((c) => `${c.term} (${c.reading || ""}) = ${c.meaning || ""}`).join("\n");
+}
 
 // Recursive key-sort so the cache key ignores property order (two logically-identical
 // inputs with keys in a different order must hash to the same cache entry).
@@ -69,7 +78,56 @@ const TASKS = {
       + "translation. The concatenation of every token's t must equal the original line text "
       + "exactly.",
     user: (i) => "Dialogue:\n" + i.raw,
-    schema: obj({ lines: arr(obj({ speaker: str(), tokens: arr(obj({ t: str(), r: str() }, ["t"])), romaji: str(), en: str() }, ["speaker", "tokens", "romaji", "en"])) }, ["lines"]),
+    schema: obj({ lines: arr(obj({ speaker: str(), tokens: arr(tok()), romaji: str(), en: str() }, ["speaker", "tokens", "romaji", "en"])) }, ["lines"]),
+  },
+
+  /* ── Sentences tab ──
+     These three used to live in the CLIENT, which posted the whole prompt to /api/ai as
+     {prompt}. The endpoint stopped accepting free-form prompts when it was hardened — that
+     is the entire abuse guard — so every call had been 400ing and silently falling back to
+     "Offline practice" ever since. Moving the prompts here is what the other tasks already
+     did; the client now sends a vocabulary sample and gets a structured exercise back. */
+  sentence_fill: {
+    max_tokens: 800, ttl: 0,
+    system: "You are a Japanese tutor for a beginner (JLPT N5) student. Using ONLY the "
+      + "vocabulary given (plus basic particles は が を に の と へ and basic です/ます forms), "
+      + "write ONE short, natural, beginner Japanese sentence of 5-10 words, then blank out "
+      + "exactly ONE of the vocabulary words from it. Give the Japanese as furigana tokens: "
+      + "each {t, r}, with r ONLY when t contains kanji (r is that kanji's kana reading) and "
+      + "omitted for kana, particles and punctuation. The blank is the single token {t:\"___\"}. "
+      + "`tokens` is the sentence WITH the blank; `fullTokens` is the complete sentence. "
+      + "`answer` must be the removed word exactly as its vocabulary term is written.",
+    user: (i) => "Vocabulary:\n" + vocabLines(i.vocab),
+    schema: obj({
+      tokens: arr(tok()), fullTokens: arr(tok()), answer: str(), reading: str(),
+      romaji: str(), translation: str(), hint: str(),
+    }, ["tokens", "fullTokens", "answer", "reading", "romaji", "translation", "hint"]),
+  },
+  sentence_trans: {
+    max_tokens: 800, ttl: 0,
+    system: "You are a Japanese tutor for a beginner (JLPT N5) student. Using mainly the "
+      + "vocabulary given (plus basic particles and です/ます), create ONE short, simple "
+      + "English sentence for the student to translate INTO Japanese. It must be expressible "
+      + "with this vocabulary. Give the model Japanese answer as furigana tokens too: each "
+      + "{t, r} with r ONLY for kanji tokens. Keep `notes` to one short grammar or usage point.",
+    user: (i) => "Vocabulary:\n" + vocabLines(i.vocab),
+    schema: obj({
+      english: str(), model: str(), modelTokens: arr(tok()), reading: str(), romaji: str(), notes: str(),
+    }, ["english", "model", "modelTokens", "reading", "romaji", "notes"]),
+  },
+  sentence_grade: {
+    max_tokens: 500, ttl: 30 * 86400,   // the same attempt at the same sentence grades the same
+    system: "You are a kind Japanese tutor grading a beginner. Decide whether the student's "
+      + "Japanese conveys the English meaning. Minor kana, spacing and politeness differences "
+      + "are fine — rate those `correct`. Use `close` when the meaning survives but something "
+      + "is wrong, and `off` when it does not. Feedback is 1-2 short encouraging sentences: "
+      + "what is right, then what to fix. `corrected` is the student's own sentence repaired, "
+      + "not a replacement written from scratch.",
+    user: (i) => `English: "${i.english}"\nModel translation: "${i.model}"\nStudent's attempt: "${i.answer}"`,
+    schema: obj({
+      rating: { type: "string", enum: ["correct", "close", "off"] },
+      feedback: str(), corrected: str(),
+    }, ["rating", "feedback", "corrected"]),
   },
 };
 
@@ -116,26 +174,38 @@ export async function handleAi(req, env) {
 
   /* GEMINI 2 — the key goes in the query string, not a header, and the prompt splits into
      system_instruction + contents rather than system + messages. */
-  const call = (maxTokens) => fetch(`${GEMINI_API}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: task.system }] },
-      contents: [{ role: "user", parts: [{ text: task.user(body.input) }] }],
-      generationConfig: {
-        maxOutputTokens: maxTokens,
-        responseMimeType: "application/json",
-        responseSchema: task.schema,
-        temperature: 0.7,
+  /* An explicit controller rather than AbortSignal.timeout: that helper starts a 30-second
+     timer per call which cannot be cancelled, so every request left one alive long after it
+     had answered. Harmless-looking, but enough of them and Node's event loop will not shut
+     down cleanly — the test suite started exiting 127 on a libuv teardown assertion once the
+     Gemini tests raised the call count. Cleared in a finally instead. The signal now covers
+     the fetch but not the body read, which is fine: these replies are a few hundred bytes. */
+  const call = async (maxTokens) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    try {
+      return await fetch(`${GEMINI_API}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: task.system }] },
+          contents: [{ role: "user", parts: [{ text: task.user(body.input) }] }],
+          generationConfig: {
+            maxOutputTokens: maxTokens,
+            responseMimeType: "application/json",
+            responseSchema: task.schema,
+            temperature: 0.7,
         /* GEMINI 3 — 2.5-series models think by default, and thinking tokens are billed
            against maxOutputTokens. A 300-token budget can be spent entirely on thinking,
            returning a candidate with no text at all and finishReason MAX_TOKENS. These
            tasks are one-sentence generations that gain nothing from it, so it is off. */
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+        signal: ctrl.signal,
+      });
+    } finally { clearTimeout(timer); }
+  };
 
   const textOf = (d) => {
     const c = d && d.candidates && d.candidates[0];

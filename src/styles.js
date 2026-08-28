@@ -714,8 +714,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sentans ruby rt{font-size:.5em;color:var(--shu);font-weight:600;}
 .tc-blank{display:inline-block;min-width:3.2em;border-bottom:2px solid var(--shu);text-align:center;color:var(--shu);}
 .tc-sentfull{font-size:24px;}
-.tc-sentinput{width:100%;box-sizing:border-box;background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:12px 14px;font:inherit;font-size:18px;color:var(--sumi);}
-.tc-sentinput:focus-visible{outline:2px solid var(--shu);outline-offset:1px;}
+/* A white box with near-black text — the one rule the dark retheme missed, because it
+   hardcoded #fff instead of going through a token. It is on nine inputs across Sentences,
+   Scripts and Input, so all of them were glowing white slabs in a dark app. */
+.tc-sentinput{width:100%;box-sizing:border-box;background:var(--surface-2);
+  border:1px solid var(--outline-2);border-radius:var(--r-s);padding:12px 14px;
+  font:inherit;font-size:18px;color:var(--washi);}
+.tc-sentinput::placeholder{color:var(--mut-2);}
+.tc-sentinput:focus-visible{outline:2px solid var(--info);outline-offset:1px;border-color:var(--info);}
 .tc-sentbtns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
 .tc-idk{border-color:rgba(216,72,47,.45);color:var(--shu-soft);}
 .tc-idk:hover{background:rgba(216,72,47,.12);}
