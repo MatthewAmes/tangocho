@@ -32,6 +32,8 @@ import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from 
 import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
 import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
          LISTEN_FORMATS, LISTEN_LABEL, LISTEN_DECK } from "./tools/listening.mjs";
+import { playableScripts, buildDialogue, gradeTurn, downshift, turnEvidence, scoreTurn,
+         dialogueSummary, nextStep, TURN, STEP, DIALOGUE_DECK } from "./tools/dialogue.mjs";
 import { currentAct, volumeOfAct, VOLUME_ACTS } from "./tools/curriculum.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
@@ -4714,6 +4716,341 @@ function ScriptListen({ scripts, cards, onExit }) {
   );
 }
 
+/* ───────────────────────────── DIALOGUE MODE ─────────────────────────────
+   MP-16, spec §9 and §23; roadmap Slice 5's "boss conversation" without the boss fight.
+   The learner takes one speaker's part in a real textbook dialogue. The other side plays
+   through the speaker; on every one of their own turns they choose the line they actually
+   say, from among lines other people in the book actually said.
+
+   Nothing here decides anything. tools/dialogue.mjs sequences the beats, builds the
+   choices out of MP-15's responseSelect, grades, downshifts, scores and summarises; this
+   component plays audio, renders what it is handed and writes to the two logs the rest of
+   the app already writes to.
+
+   ── the one presentation decision worth stating ──
+
+   The other side's Japanese is SHOWN as well as spoken, and only its English is withheld
+   until the turn resolves. That is the opposite of what MP-14's Listen mode does, on
+   purpose:
+
+     • What is graded here is the reply, not the hearing. If the cue were hidden, a miss
+       could mean "I did not catch it" or "I did not know what to say", and nothing in this
+       mode can tell those apart — so every row would be logging a comprehension failure it
+       had not actually established. Listen mode exists precisely to own the audio-first
+       channel, and it files under `listening` for that reason.
+     • Listen mode also learned that audio is not guaranteed — it ships an escape hatch for
+       devices with no voices, and answers given through it are dropped from the log. A
+       conversation that cannot proceed without sound would be the dead end this mode is
+       required not to have.
+     • Withholding the ENGLISH is what keeps the comprehension claim honest: the learner
+       has to understand what was just said to them, in Japanese, before choosing a reply.
+
+   No hearts, no lives — the roadmap rejects them outright. The reward is the session
+   engine's own XP and its degrading combo, and the fact that the conversation completes. */
+
+// The whole conversation. There is no session length to pick: the run is one dialogue, and
+// stopping halfway would give up the only thing this mode has that the others do not.
+function ScriptDialogue({ scripts, onExit }) {
+  // Bumped by "Play it again", so a second run draws different wrong answers.
+  const [seed, setSeed] = useState(() => Math.floor(Date.now() / 1000));
+  const [chosen, setChosen] = useState(null);       // {id, part} — null = still choosing
+  const [at, setAt] = useState(0);                  // which beat
+  const [step, setStep] = useState(STEP.ASK);
+  const [picks, setPicks] = useState([]);           // wrong options taken on THIS turn
+  const [rows, setRows] = useState([]);             // one per resolved learner turn
+  const [xp, setXp] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [slow, setSlow] = useState(false);
+  const shownAtRef = useRef(Date.now());
+
+  const catalog = useMemo(() => playableScripts(scripts), [scripts]);
+  const row = useMemo(() => catalog.find((r) => r.id === (chosen && chosen.id)) || null, [catalog, chosen]);
+  const dialogue = useMemo(() => {
+    if (!row) return null;
+    return buildDialogue(row.script, { scripts, seed, part: chosen.part });
+  }, [row, scripts, seed, chosen]);
+
+  const beat = dialogue ? dialogue.beats[at] : null;
+  const turn = beat ? beat.turn : null;
+  const done = !!dialogue && at >= dialogue.beats.length;
+  // The cue is the last thing said before the learner's turn: the line the reply answers.
+  const cueLine = beat && beat.npc.length ? beat.npc[beat.npc.length - 1] : null;
+  const resolved = step === STEP.DONE || step === STEP.REVEAL;
+
+  useEffect(() => { shownAtRef.current = Date.now(); }, [at, seed]);
+
+  /* Speak the cue as the beat opens. Only the cue: speakJa owns one audio element, so a
+     second call cancels the first and a beat with two incoming lines would play the second
+     over the first. Every line keeps its own 🔊 for that case. */
+  useEffect(() => {
+    if (!cueLine || !voiceOn) return;
+    speakJa(cueLine.text, slow ? 0.68 : 0.9);
+    return stopJa;
+  }, [cueLine, voiceOn, slow]);
+
+  const speak = (text) => { ttsUnlock(); speakJa(text, slow ? 0.68 : 0.9); };
+
+  const start = (r, part) => {
+    ttsUnlock();
+    setChosen({ id: r.id, part });
+    setAt(0); setStep(STEP.ASK); setPicks([]); setRows([]);
+    setXp(0); setCombo(0); setBestCombo(0);
+  };
+
+  const answer = (choice) => {
+    if (!turn || turn.kind !== TURN.CHOICE || resolved) return;
+    const g = gradeTurn(turn, choice);
+    const first = step === STEP.ASK;
+    /* Evidence is written once, on the FIRST attempt only. A turn won after the rōmaji
+       appeared is a different event from one won cold, and logging both would report a
+       comprehension figure the learner did not earn. What the help cost is on the end
+       screen instead, as cue usage. */
+    if (first) {
+      const ms = boundMs(Date.now() - shownAtRef.current);
+      logEvidence(makeEvidence(turnEvidence(turn, g, ms)));
+      /* The area the exercise actually worked. Not speaking — nothing was said aloud and
+         nothing was produced; the learner read a cue and chose a line. */
+      logDay({ ok: g.ok, ms, deck: DIALOGUE_DECK, area: areaForDeck(DIALOGUE_DECK) });
+      /* No latency verdict: the "fast" bonus is measured against this learner's own median
+         for the skill+format, and those norms live in the study session. A dialogue turn
+         earns the attempt and the answer, which is the honest part. */
+      const sc = scoreTurn(g);
+      setXp((n) => n + sc.points);
+      if (g.ok) setCombo((n) => { const v = n + 1; setBestCombo((b) => Math.max(b, v)); return v; });
+      // A miss DEGRADES the combo rather than wiping it — the session engine's mechanic.
+      else setCombo((n) => Math.max(0, n - 2));
+    }
+    const to = nextStep(step, g.ok);
+    setStep(to);
+    if (!g.ok) setPicks((p) => [...p, choice]);
+    if (to === STEP.DONE || to === STEP.REVEAL) {
+      setRows((r) => [...r, { kind: TURN.CHOICE, ok: first && g.ok, cued: !first && g.ok,
+        revealed: to === STEP.REVEAL, act: turn.provenance.act }]);
+    }
+  };
+
+  const said = () => {                        // a SAY turn: no question, just the line
+    setStep(STEP.DONE);
+    setRows((r) => [...r, { kind: TURN.SAY, act: turn.provenance.act }]);
+  };
+
+  const advance = () => { stopJa(); setStep(STEP.ASK); setPicks([]); setAt((i) => i + 1); };
+  const replay = () => { setSeed((s) => s + 1); setAt(0); setStep(STEP.ASK); setPicks([]); setRows([]); setXp(0); setCombo(0); setBestCombo(0); };
+
+  const head = (
+    <div className="tc-rehhead">
+      <button className="tc-btn tc-btn-sm" onClick={() => { stopJa(); if (chosen) setChosen(null); else onExit(); }}>
+        ← {chosen ? "Pick another" : "Scripts"}
+      </button>
+      <span className="tc-rehname">Dialogue</span>
+    </div>
+  );
+
+  // ── PICK A CONVERSATION, AND A SIDE ──
+  if (!dialogue) {
+    return (
+      <div className="tc-sent">
+        {head}
+        <p className="tc-ladder">Take one person's part. Their side plays; on your turns you
+           choose your real line. It always finishes — a miss just gets you more help.</p>
+        <ul className="tc-diallist">
+          {catalog.map((r) => (
+            <li key={r.id} className={"tc-dialrow" + (r.playable ? "" : " is-off")}>
+              <div className="tc-dialmeta">
+                <span className="tc-dialname">{r.name}{r.boss && <span className="tc-bosschip">👑 act boss</span>}</span>
+                <span className="tc-provchip">{r.label}</span>
+              </div>
+              {r.playable ? (
+                <div className="tc-dialparts">
+                  {r.parts.map((p) => (
+                    <button key={p.speaker} className={"tc-segbtn" + (p.speaker === r.suggested ? " is-on" : "")}
+                            onClick={() => start(r, p.speaker)}>
+                      Play {p.speaker}<i>{p.graded} of {p.lines} turns asked</i>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="tc-dialwhy">{r.reason}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  // ── THE END SCREEN ──
+  if (done) {
+    const sum = dialogueSummary(rows, dialogue);
+    return (
+      <div className="tc-sent">
+        {head}
+        <div className="tc-done">
+          <p className="tc-eyebrow">{row.boss ? "Act boss cleared 👑" : "Conversation complete 🎭"}</p>
+          {/* The framing the whole mode is for. A percentage is the smaller true thing. */}
+          <p className="tc-dialbrag">You had the whole {dialogue.name} conversation as <b>{dialogue.part}</b>.</p>
+          {sum.comprehension != null ? (
+            <p className="tc-donerate"><b>{Math.round(sum.comprehension * 100)}%</b> of your lines came to you first time — {sum.unaided} of {sum.graded}</p>
+          ) : (
+            <p className="tc-donerate">No turn in this one could be asked as a question — you said every line yourself.</p>
+          )}
+          <ul className="tc-listentally">
+            {sum.cued > 0 && <li><span>Needed the rōmaji</span><b>{sum.cued}</b></li>}
+            {sum.revealed > 0 && <li><span>Shown to you</span><b>{sum.revealed}</b></li>}
+            {sum.said > 0 && <li><span>Said out loud, not scored</span><b>{sum.said}</b></li>}
+            <li><span>From</span><b>{dialogue.label}</b></li>
+          </ul>
+          {xp > 0 && <p className="tc-donexp">{xp} <span>xp earned</span></p>}
+          {bestCombo >= 2 && <p className="tc-donecombo">best run: <b>{bestCombo}</b> lines straight</p>}
+          {/* The conversation, whole, now that it is over — the thing that was practised. */}
+          <ul className="tc-dialscript">
+            {dialogue.beats.map((b, i) => (
+              <React.Fragment key={i}>
+                {b.npc.map((n) => (
+                  <li key={"n" + n.lineIdx} className="tc-dialline">
+                    <span className="tc-dialwho">{n.speaker}</span>
+                    <span className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></span>
+                    <span className="tc-dialen">{n.en}</span>
+                  </li>
+                ))}
+                {b.turn && (
+                  <li key={"m" + b.turn.lineIdx} className="tc-dialline is-mine">
+                    <span className="tc-dialwho">{b.turn.speaker}</span>
+                    <span className="tc-dialjp tc-jp"><Furigana tokens={b.turn.reveal.tokens} /></span>
+                    <span className="tc-dialen">{b.turn.reveal.en}</span>
+                  </li>
+                )}
+              </React.Fragment>
+            ))}
+          </ul>
+          <div className="tc-donebtns">
+            <button className="tc-btn tc-btn-primary" onClick={replay}>Play it again</button>
+            <button className="tc-btn" onClick={() => { stopJa(); setChosen(null); }}>Another conversation</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ONE BEAT ──
+  // Everything already said, so the conversation reads as a conversation. Trimmed to the
+  // last few lines: the full transcript is the reward on the end screen, and on a phone it
+  // would push the options off the bottom of the screen here.
+  const history = [];
+  for (let i = 0; i < at; i++) {
+    for (const n of dialogue.beats[i].npc) history.push({ ...n, mine: false });
+    const tn = dialogue.beats[i].turn;
+    if (tn) history.push({ ...tn.reveal, lineIdx: tn.lineIdx, mine: true });
+  }
+  /* The downshift is the only state that hides options. Once the turn is over the whole
+     list comes back so the correction can show what was picked against what was right —
+     an option quietly removed teaches nothing about why it was wrong. */
+  const options = turn && turn.kind === TURN.CHOICE
+    ? (step === STEP.CUE ? downshift(turn, picks) : turn.choices) : [];
+
+  return (
+    <div className="tc-sent">
+      {head}
+      <div className="tc-voicerow tc-listenbar">
+        <span className="tc-provchip">{dialogue.label}</span>
+        <span className="tc-dialpart">as {dialogue.part}</span>
+        <button className={"tc-fchip" + (voiceOn ? " is-on" : "")}
+          onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>🔊 Voice {voiceOn ? "on" : "off"}</button>
+        <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}>🐢 Slow</button>
+        {xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
+        {combo >= 2 && (
+          <span key={combo} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>{combo}<i>×</i></span>
+        )}
+      </div>
+
+      <div className="tc-card2">
+        <p className="tc-eyebrow">{dialogue.name} · beat {at + 1}/{dialogue.beats.length}</p>
+
+        {history.slice(-3).map((h) => (
+          <p key={"h" + h.lineIdx} className={"tc-dialpast" + (h.mine ? " is-mine" : "")}>
+            <b>{h.speaker}</b> <span className="tc-jp">{h.text}</span>
+          </p>
+        ))}
+
+        {beat.npc.map((n) => (
+          <div key={n.lineIdx} className="tc-dialsaid">
+            <p className="tc-dialwho">{n.speaker}
+              <button type="button" className="tc-speakbtn" aria-label={"Hear " + n.speaker + " again"}
+                onClick={() => speak(n.text)}>🔊</button>
+            </p>
+            <p className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></p>
+            {/* The English is the one thing withheld: understanding what was just said is
+                what the reply is being asked to prove. */}
+            {(resolved || !turn) && <p className="tc-dialen">{n.en}</p>}
+          </div>
+        ))}
+
+        {turn && turn.kind === TURN.CHOICE && (
+          <>
+            <p className="tc-mchint">{turn.prompt}</p>
+            {step === STEP.CUE && (
+              <p className="tc-dialcue">It sounds like: <b>{turn.romaji}</b></p>
+            )}
+            <div className="tc-mcopts tc-listenopts">
+              {options.map((c) => {
+                const isAnswer = c === turn.answer;
+                const cls = step === STEP.ASK ? "" : resolved
+                  ? (isAnswer ? " is-answer" : picks.includes(c) ? " is-wrongpick" : "")
+                  : "";
+                return (
+                  <button key={c} type="button" className={"tc-mcopt tc-jp" + cls}
+                          disabled={resolved} onClick={() => answer(c)}>{c}</button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {turn && turn.kind === TURN.SAY && (
+          <div className="tc-dialsay">
+            <p className="tc-sentgoal">{turn.reveal.en}</p>
+            {step === STEP.ASK ? (
+              <>
+                {/* No honest question can be built here — nothing was said for this line to
+                    answer — so it is played the way the rehearse ladder plays it. */}
+                <p className="tc-cue">{turn.prompt}</p>
+                <p className="tc-dialwhy">{turn.reason}</p>
+                <button className="tc-btn tc-btn-primary" onClick={said}>Reveal</button>
+              </>
+            ) : (
+              <p className="tc-dialjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
+            )}
+          </div>
+        )}
+
+        {resolved && (
+          <div className="tc-listenrev">
+            {turn && turn.kind === TURN.CHOICE && (
+              <>
+                <p className="tc-listenjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
+                {turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
+                {turn.reveal.en && <p className="tc-listenen">{turn.reveal.en}</p>}
+              </>
+            )}
+            {turn && turn.kind === TURN.SAY && turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
+            <button className="tc-btn tc-btn-primary" onClick={advance}>
+              {at + 1 >= dialogue.beats.length ? "Finish" : "Next →"}
+            </button>
+          </div>
+        )}
+
+        {!turn && (
+          <div className="tc-listenrev">
+            <button className="tc-btn tc-btn-primary" onClick={advance}>Finish</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── active AI helpers ── */
 // hookPrompt/debriefPrompt lived here; those prompts now live in cf/src/ai.js (Worker-owned).
 function Scripts({ cards = [] }) {
@@ -4839,6 +5176,11 @@ function Scripts({ cards = [] }) {
      catching them. */
   if (view === "listen") return <ScriptListen scripts={scripts} cards={cards} onExit={() => setView("list")} />;
 
+  /* ── DIALOGUE ──
+     The fifth mode, and the one the other four were building towards: read it, drill your
+     part, both sides, catch it by ear — then have the conversation. */
+  if (view === "dialogue") return <ScriptDialogue scripts={scripts} onExit={() => setView("list")} />;
+
   // ── NEW SCRIPT ──
   if (view === "new") {
     return (
@@ -4941,10 +5283,18 @@ function Scripts({ cards = [] }) {
           play at all, which is why the mode is entered from a button rather than from a
           tab switch. */}
       {scripts.length > 0 && (
-        <button className="tc-listenstart" onClick={() => { ttsUnlock(); setView("listen"); }}>
-          <span className="tc-listenstart-h">🎧 Listen</span>
-          <span className="tc-listenstart-s">A line plays; the Japanese stays hidden until you answer.</span>
-        </button>
+        <div className="tc-modestart">
+          <button className="tc-listenstart" onClick={() => { ttsUnlock(); setView("listen"); }}>
+            <span className="tc-listenstart-h">🎧 Listen</span>
+            <span className="tc-listenstart-s">A line plays; the Japanese stays hidden until you answer.</span>
+          </button>
+          {/* Same tap-to-start reason as Listen: iOS will not play any audio until a user
+              gesture has, so the mode is entered from a button rather than a tab switch. */}
+          <button className="tc-listenstart is-dialogue" onClick={() => { ttsUnlock(); setView("dialogue"); }}>
+            <span className="tc-listenstart-h">🎭 Dialogue</span>
+            <span className="tc-listenstart-s">Take a part and have the conversation — their side speaks, you choose your lines.</span>
+          </button>
+        </div>
       )}
       {scripts.length === 0 ? (
         <div className="tc-sentempty">

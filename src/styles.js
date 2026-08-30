@@ -846,6 +846,61 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-listentally b{color:var(--washi);}
 .tc-listennote{margin:10px 0 0;font-size:12px;color:var(--mut-2);}
 @media (max-width:460px){.tc-replay{width:88px;height:88px;font-size:34px;}.tc-listenjp{font-size:23px;}}
+
+/* ---- dialogue mode (MP-16). Mobile first: the picker is a single column of rows, the
+   part buttons stack under the name rather than beside it, and the transcript above the
+   options is trimmed to three lines so the answers stay above the fold on a 375px screen.
+   Emerald marks the learner's own lines throughout - the same semantic accent the rest of
+   the app uses for "yours / correct". ---- */
+.tc-modestart{display:flex;flex-direction:column;gap:10px;}
+.tc-listenstart.is-dialogue{background:linear-gradient(180deg,rgba(16,185,129,.14),rgba(16,185,129,.05));}
+.tc-listenstart.is-dialogue:hover{border-color:var(--ok);}
+.tc-diallist{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:10px;}
+.tc-dialrow{display:flex;flex-direction:column;gap:8px;padding:12px 14px;
+  background:var(--surface-2);border:1px solid var(--outline-2);border-radius:var(--r-m);}
+.tc-dialrow.is-off{opacity:.5;}
+.tc-dialmeta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.tc-dialname{font-size:16px;font-weight:600;color:var(--washi);display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tc-bosschip{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:rgb(232,191,90);background:rgba(232,191,90,.12);border:1px solid rgba(232,191,90,.35);
+  border-radius:99px;padding:3px 9px;}
+.tc-dialparts{display:flex;flex-wrap:wrap;gap:8px;}
+.tc-dialparts .tc-segbtn{flex:1 1 140px;min-height:var(--tap);display:flex;flex-direction:column;
+  align-items:flex-start;justify-content:center;gap:2px;}
+.tc-dialparts .tc-segbtn i{font-style:normal;font-size:11px;opacity:.65;}
+.tc-dialwhy{margin:0;font-size:12px;color:var(--mut-2);line-height:1.45;}
+.tc-dialpart{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ok);}
+/* Already said. Faded and single-line, because it is context rather than content. */
+.tc-dialpast{margin:0 0 6px;font-size:13px;line-height:1.5;color:var(--mut-2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tc-dialpast b{color:var(--mut);font-weight:600;margin-right:6px;}
+.tc-dialpast.is-mine b{color:var(--ok);}
+.tc-dialsaid{margin:6px 0 14px;padding:12px 14px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);border-radius:var(--r-m);}
+.tc-dialwho{margin:0 0 6px;font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--mut-2);display:flex;align-items:center;gap:8px;}
+.tc-dialjp{margin:0;font-size:22px;line-height:1.65;color:#fff;}
+.tc-dialen{display:block;margin:6px 0 0;font-size:14px;line-height:1.5;color:var(--mut);}
+/* The downshift. Shown only after a miss, and it gives the sound rather than the meaning. */
+.tc-dialcue{margin:10px 0 0;font-size:14px;line-height:1.5;color:var(--warn);
+  background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:var(--r-s);padding:9px 12px;}
+.tc-dialcue b{font-family:var(--mono);color:#ffd76e;}
+.tc-dialsay{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;}
+.tc-dialbrag{margin:8px 0 0;font-size:16px;line-height:1.5;color:var(--washi);}
+.tc-dialbrag b{color:var(--ok);}
+/* tc-donexp carries a negative top margin for the study done screen, where it sits under a
+   headline. Here it follows a tally, and the pull-up closed the gap to nothing. */
+.tc-listentally + .tc-donexp{margin-top:10px;}
+/* The conversation, whole, on the end screen. This is the payoff, so it is the one place
+   the Japanese and the English sit together with nothing withheld. */
+.tc-dialscript{list-style:none;margin:16px auto 0;padding:0;width:min(100%,420px);
+  display:flex;flex-direction:column;gap:8px;text-align:left;}
+.tc-dialline{display:flex;flex-direction:column;gap:2px;padding:9px 12px;border-radius:var(--r-s);
+  background:var(--surface-2);border-left:2px solid var(--outline-2);}
+.tc-dialline.is-mine{border-left-color:var(--ok);background:rgba(16,185,129,.08);}
+.tc-dialline .tc-dialjp{font-size:18px;}
+.tc-dialline .tc-dialen{font-size:13px;}
+@media (max-width:460px){.tc-dialjp{font-size:20px;}.tc-dialparts .tc-segbtn{flex:1 1 100%;}}
 .tc-write{display:flex;flex-direction:column;gap:14px;}
 .tc-canvaswrap{position:relative;width:100%;height:240px;background:#f7f3ea;border:0;border-radius:16px;overflow:hidden;box-shadow:inset 0 2px 10px rgba(0,0,0,.12);}
 .tc-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;display:block;}

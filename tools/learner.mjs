@@ -38,6 +38,10 @@ export function skillForFormat(format) {
     case "listen_meaning":
     case "listen_missing":
     case "listen_speaker": return "listening";
+    /* Dialogue mode (dialogue.mjs). Choosing the line that fits this moment of a real
+       conversation is using the language in context — not production, because nothing was
+       generated, and not listening, because the options are on screen. */
+    case "dialogue_turn": return "context";
     case "cloze": return "context";
     default: return null;                  // "learn" is exposure, not evidence
   }
@@ -135,6 +139,17 @@ export const FORMAT_MODES = {
      be answered from how it was said without understanding all of it, and claiming
      comprehension here would be exactly the overcounting this table exists to prevent. */
   listen_speaker: ["listening", "discrimination"],
+
+  /* Dialogue mode (dialogue.mjs, MP-16): one turn of a conversation the learner is playing
+     a side of. Its modes are DELIBERATELY the same two as script_response, because the
+     same two things happen in the learner's head — understand what was just said, choose a
+     use of the language rather than recall of it. What differs is the amount of context
+     brought to the choice (the whole conversation so far, and a role held throughout), and
+     context makes a question harder without making it a different cognitive act. Claiming
+     a third mode for it would be exactly the overcounting this table exists to prevent.
+     The format is separate anyway, so "what did playing the dialogues buy me" stays a
+     question the gain metric can answer on its own. */
+  dialogue_turn: ["comprehension", "transfer"],
 };
 
 /** What this format actually asks of the learner. Always an array, never null: a format
