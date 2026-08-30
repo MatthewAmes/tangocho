@@ -563,9 +563,34 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-bignum{font-size:82px;font-weight:300;letter-spacing:-.02em;color:#fff;line-height:1;font-family:-apple-system,"SF Pro Display",BlinkMacSystemFont,"Segoe UI",sans-serif;}
 .tc-bignum span{font-size:30px;color:var(--shu-soft);}
 .tc-donesub{color:var(--mut-2);font-size:14px;margin:8px 0 22px;}
-.tc-donemove{margin:-14px 0 20px;font-size:14px;font-weight:600;color:rgb(232,191,90);letter-spacing:.01em;}
+/* The done screen leads with what MOVED (MP-18). Tiles rather than one comma-joined
+   sentence: on a phone that line wraps into a paragraph and stops being scannable at
+   exactly the width most sessions end on, while three tiles stay three glanceable facts. */
+.tc-movehero{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin:4px 0 20px;}
+.tc-movestat{flex:1 1 132px;max-width:200px;background:var(--glass);border:1px solid rgba(255,255,255,.09);
+  border-radius:var(--r-m);padding:14px 12px;display:flex;flex-direction:column;align-items:center;gap:4px;}
+.tc-movestat b{font-size:34px;font-weight:600;line-height:1;letter-spacing:-.02em;color:var(--washi);}
+.tc-movestat span{font-size:12px;line-height:1.35;color:var(--mut-2);}
+/* Gold is the STABILITY ramp's own colour (MASTERY_STOPS), deliberately not one of the
+   semantic accents — how well a word is known reads as one continuous scale across the
+   app, and borrowing emerald here would file it under "correct" instead. */
+.tc-movestat.is-gold{background:rgba(232,191,90,.10);border-color:rgba(232,191,90,.34);}
+.tc-movestat.is-gold b{color:rgb(232,191,90);}
+.tc-movestat.is-back{background:rgba(16,185,129,.09);border-color:rgba(16,185,129,.30);}
+.tc-movestat.is-back b{color:var(--ok);}
+.tc-movenone{flex:1 1 100%;margin:0;font-size:13px;line-height:1.55;color:var(--mut-2);}
+.tc-doneact{margin:0 0 10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:baseline;
+  font-size:14px;color:var(--mut);}
+.tc-doneact b{font-size:16px;font-weight:600;color:var(--washi);}
+.tc-doneacttitle{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut-2);}
+/* The bottom margin is 22px rather than 12 because .tc-donexp below carries a -10px top
+   margin (it was written to sit tight under the rate line) and would otherwise crowd this
+   sentence against the XP figure. */
+.tc-doneweak{margin:0 auto 22px;max-width:40ch;font-size:14px;line-height:1.5;color:var(--mut);}
 .tc-donerate{margin:6px 0 0;font-size:14px;color:var(--mut);}
 .tc-donerate b{color:var(--ok);}
+/* Last and smallest, on purpose. See the comment beside it in the JSX. */
+.tc-donescore{margin:18px 0 14px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--mut-2);}
 .tc-donebtns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 
 .tc-empty{text-align:center;color:var(--mut-2);display:flex;flex-direction:column;gap:16px;align-items:center;}

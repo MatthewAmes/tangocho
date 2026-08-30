@@ -128,6 +128,18 @@ export const MASTERY_STOPS = [
   [1.00, [232, 191, 90]],    // gold — holding for months
 ];
 
+/* The amber -> gold stop above, named because it is no longer only a colour. "Words moved
+   into gold" is the session summary's headline and the roadmap's stability-as-currency, so
+   the threshold is a shared constant rather than a 0.75 repeated wherever it is needed. */
+export const GOLD_WARMTH = 0.75;
+
+/* The same line, expressed in DAYS of stability — which is the form an evidence row carries
+   (s0/s1) and therefore the form a pure selector can work in without a card object.
+   DERIVED by inverting masteryWarmth rather than written down as ~83: a hand-copied number
+   would keep the old value the first time MASTERY_CEIL or the stop moves, and the two
+   screens would then disagree about what gold means. */
+export const GOLD_STABILITY = Math.exp(GOLD_WARMTH * Math.log(1 + MASTERY_CEIL)) - 1;
+
 export function masteryWarmth(c) {
   const st = (c && c.fsrs) || (c ? seedFromHistory(c) : null);
   const S = st && st.S > 0 ? st.S : 0;

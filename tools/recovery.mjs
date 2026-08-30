@@ -31,7 +31,7 @@
    the shape of a queue entry — a card object carrying `_rescue` — because attaching the
    rungs IS the job. */
 
-import { buildRecovery, CUE, RECOVERY_NOTE } from "./learner.mjs";
+import { buildRecovery, CUE, RECOVERY_NOTE, recoveryTag } from "./learner.mjs";
 
 /* Cards to skip before each rung, counted from the one before it. The first is 1 — the
    very next beat — and they widen from there. Deliberately short: this is a repair inside
@@ -74,8 +74,10 @@ function stampRungs(stages, failure, depth) {
     /* What gets written to the evidence log, so the repair is visible in the data rather
        than inferred from a bonus appearing: "production:2/3" is the second rung of a
        three-rung rescue of a production miss. A flat string for the same reason `recent`
-       is one — this is written on every answer and has to stay cheap to keep. */
-    tag: failure + ":" + (i + 1) + "/" + n,
+       is one — this is written on every answer and has to stay cheap to keep. Formatted by
+       learner.mjs, which also parses it back: a log format assembled here and taken apart
+       there is one that drifts the first time either side is edited alone. */
+    tag: recoveryTag(failure, i + 1, n),
   }));
 }
 

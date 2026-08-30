@@ -30,6 +30,7 @@ import { posOf, shortGloss } from "./tools/pos.mjs";
 import { stopOffer, easedTarget, PACING, PACES, paceMinutes } from "./tools/pacing.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
 import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
+import { sessionSummary, pairsFromEvidence } from "./tools/summary.mjs";
 import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
          LISTEN_FORMATS, LISTEN_LABEL, LISTEN_DECK } from "./tools/listening.mjs";
 import { playableScripts, buildDialogue, gradeTurn, downshift, turnEvidence, scoreTurn,
@@ -63,7 +64,7 @@ import { GODAN_ROWS, conjugate, CONJ_FORMS } from "./src/lib/conjugate.js";
 import { unpackVideos, evidenceWeight, learningRate, applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, recommend, COVERAGE_LEADING_PARTICLES, COVERAGE_SAFE_SUFFIXES, COVERAGE_SAFE_SET, coverageAgainstDeck, band, bandName, relDots, agoLabel, blankInput } from "./src/lib/input-engine.js";
 import { SESSION_KEY, USER_EMAIL_KEY, loadSession, saveSession } from "./src/lib/session.js";
 import { TTS_OK, pickJpVoice, ttsUnlock, prefetchJa, speakJa, stopJa } from "./src/lib/tts.js";
-import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, dueness, statReview, boundMs, reviewOutcome, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryWarmth, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
+import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, dueness, statReview, boundMs, reviewOutcome, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -1324,7 +1325,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        changed in my memory", which is the only thing a review session is for. */
     startStateRef.current = new Map(cards.map((c) => {
       const st = c.fsrs || seedFromHistory(c);
-      return [c.id, { S: (st && st.S) || 0, warmth: masteryWarmth(c), leech: isLeech(c) }];
+      /* Stability in days, not warmth. The gold threshold is now expressed in days too
+         (GOLD_STABILITY, derived from the same ramp), so the snapshot carries the raw
+         quantity and tools/summary.mjs applies the rule — one definition of gold instead
+         of a colour stop restated here as 0.75. */
+      return [c.id, { S: (st && st.S) || 0, leech: isLeech(c) }];
     }));
     /* Interleave production into the session rather than leaving it on a separate tab you
        have to remember to visit. Roughly a third of the cards that have earned it get
@@ -1624,6 +1629,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     });
     setFatigueNow(pace.fatigue.level);
     if (evSkill) {
+      /* What was actually given and what was actually wanted, for the structured error
+         record (MP-09). Named apart from `got`, the boolean parameter of this very
+         function — one `got` meaning "answered correctly" and another meaning "the text
+         they produced" in the same scope is exactly the shadowing this codebase has been
+         bitten by, and the object literal below would happily take either.
+
+         Two shapes reach here: a typed answer sets verdict.got/want (the kana), a choice
+         sets verdict.chose/want (the English). Both are the same question — what did they
+         say instead — so both are recorded, and the format on the row says which is which.
+         A self-graded flip card sets no verdict at all and records neither. */
+      const gaveText = verdict ? (verdict.got || verdict.chose || null) : null;
+      const wantedText = (verdict && verdict.want) || c.reading || c.term || null;
       const rec = makeEvidence({
         id: c.id, deck: c.src || "vocab", format: fmt, skill: evSkill,
         /* The cue the learner actually saw. This read c._cue, a field the just-in-time
@@ -1660,6 +1677,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
            out whether its level means anything is to be able to ask later what actually
            happened to accuracy and latency at each level (spec §40, MP-22). */
         fatigue: pace.fatigue.confident ? pace.fatigue.level : null,
+        // Dropped on the floor by makeEvidence when the answer was right — see
+        // ERROR_TEXT_CAP for the cap and what it costs the sync.
+        got: gaveText, want: wantedText,
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
@@ -1699,7 +1719,24 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        session view for what declining costs (a quieter stretch, and easier questions). */
     if (pace.offer) showNudge({ reason: pace.reason, note: pace.note, fatigue: pace.fatigue });
     setPos((p) => p + 1);
-  }, [queue, pos, onResult, declineNudge, showNudge]);
+    /* `verdict` HAS to be in here. Without it this callback keeps the identity it was
+       created with — the deps only change when the card does — so every read of `verdict`
+       inside it saw the value from the top of the card, which is null: grade() ends by
+       calling setVerdict(null) and the next render hands back the same stale closure.
+
+       That was not a cosmetic staleness. Three things were being written from it and all
+       three were silently wrong:
+         - classifyFailure got got: "" for every typed miss, so each one was diagnosed as
+           `blank` ("nothing was retrieved") no matter what the learner actually wrote —
+           and blank routes to the recognition ladder, so a reading fumble was answered by
+           re-teaching the meaning.
+         - `confused` was null on every multiple-choice miss, so confusionFrom() — the
+           personal confusion matrix the distractor picker runs on — has been getting
+           nothing at all from the study screen.
+         - MP-09's got/want would have been dead on arrival for the same reason.
+       Found by driving a real session and comparing the screen ("you wrote かようび")
+       against the row it wrote (failure: blank, got: null). */
+  }, [queue, pos, onResult, verdict, declineNudge, showNudge]);
 
   /* ── spelling ──
      A production card used to be self-graded: see the English, think of the Japanese,
@@ -1952,39 +1989,91 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        was right still reported 80%, with no misses listed to explain the missing 20%. */
     const answered = new Set([...passed, ...struggled]);
     const asked = answered.size || poolSize;
-    const pct = asked ? Math.round((firstTry.size / asked) * 100) : 0;
     const missedCards = cards.filter((c) => struggled.has(c.id));
+    /* ── what the session MOVED (MP-18) ──
+       The rules all live in tools/summary.mjs, tested there; this only supplies the two
+       sides of the comparison and renders the result. The stability pairs come from the
+       CARD state captured at session start rather than from the evidence rows, because the
+       cards are the exact record and are the only place leech status exists — a word
+       introduced under the `learn` format writes no evidence at all, and rebuilding the
+       pairs from the log would quietly lose it. pairsFromEvidence is the fallback for the
+       case where the snapshot is missing (a session resumed after a reload). */
+    const summary = (() => {
+      const rows = sessionLog.current;
+      const before = startStateRef.current;
+      const pairs = [];
+      if (before && before.size) {
+        for (const c of cards) {
+          const b = before.get(c.id);
+          if (!b) continue;
+          const st = c.fsrs || seedFromHistory(c);
+          pairs.push({
+            id: c.id, deck: "vocab", s0: b.S, s1: (st && st.S) || 0,
+            leech0: b.leech, leech1: isLeech(c),
+          });
+        }
+      }
+      return sessionSummary({
+        sessionRows: rows,
+        pairs: pairs.length ? pairs : pairsFromEvidence(rows),
+        evidence, cards, now: Date.now(),
+      });
+    })();
+    const moved = summary.movement;
     return (
       <div className="tc-done">
         <p className="tc-eyebrow">{stopped ? "Good place to stop" : "Session complete"}</p>
         {/* An early finish has to read as the system respecting your time, not as the
             session being cut short or as a telling-off for getting tired. */}
         {stopped && <p className="tc-stopnote">{stopped.note}</p>}
-        <div className="tc-bignum">{pct}<span>%</span></div>
-        <p className="tc-donesub">{firstTry.size} nailed first try{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""} · {asked} card{asked === 1 ? "" : "s"}{asked < poolSize ? ` of ${poolSize}` : ""}</p>
-        {/* What MOVED. A percentage says how the answering went; these say what happened to
-            the memory, which is the thing the session was actually for. */}
-        {(() => {
-          const before = startStateRef.current;
-          if (!before || !before.size) return null;
-          const GOLD = 0.75;                       // the amber -> gold stop in MASTERY_STOPS
-          let gold = 0, freed = 0, days = 0;
-          for (const c of cards) {
-            const b = before.get(c.id);
-            if (!b) continue;
-            const st = c.fsrs || seedFromHistory(c);
-            const S = (st && st.S) || 0;
-            if (S > b.S) days += S - b.S;
-            if (masteryWarmth(c) >= GOLD && b.warmth < GOLD) gold++;
-            if (b.leech && !isLeech(c)) freed++;
-          }
-          const bits = [];
-          if (gold) bits.push(gold + (gold === 1 ? " word moved into gold" : " words moved into gold"));
-          if (freed) bits.push(freed + (freed === 1 ? " leech broken" : " leeches broken"));
-          if (days >= 1) { const d = Math.round(days); bits.push("+" + d + (d === 1 ? " day" : " days") + " of staying power"); }
-          if (!bits.length) return null;
-          return <p className="tc-donemove">{bits.join(" · ")}</p>;
-        })()}
+        {/* The headline is MOVEMENT, not accuracy. A percentage says how the answering went,
+            which is the one number a learner can improve by studying easier material; these
+            say what happened to the memory, which is what the session was for. The score is
+            still on the screen — it is just the last thing on it now, down beside the
+            per-skill counts, which is where the roadmap says it belongs. */}
+        <div className="tc-movehero">
+          {moved.gold > 0 && (
+            <div className="tc-movestat is-gold">
+              <b>{moved.gold}</b><span>{moved.gold === 1 ? "word into gold" : "words into gold"}</span>
+            </div>
+          )}
+          {summary.recoveries.landed > 0 && (
+            <div className="tc-movestat is-back">
+              <b>{summary.recoveries.landed}</b>
+              <span>{summary.recoveries.landed === 1 ? "mistake recovered" : "mistakes recovered"}</span>
+            </div>
+          )}
+          {moved.days >= 1 && (
+            <div className="tc-movestat">
+              <b>+{moved.days}</b><span>{moved.days === 1 ? "day of staying power" : "days of staying power"}</span>
+            </div>
+          )}
+          {moved.freed > 0 && (
+            <div className="tc-movestat">
+              <b>{moved.freed}</b><span>{moved.freed === 1 ? "leech broken" : "leeches broken"}</span>
+            </div>
+          )}
+          {/* Silence would read as the screen being broken. Saying nothing moved is both
+              true and better news than it sounds — it usually means a short session. */}
+          {!moved.moved && summary.recoveries.landed === 0 && (
+            <p className="tc-movenone">Nothing measurable moved this time. Short sessions often don't — the memory model waits for a few answers before it will claim anything.</p>
+          )}
+        </div>
+        {/* Where the textbook now stands, which is the only line here about the course
+            rather than about the sitting. Absent whenever mastery is not measurable either
+            side — "0% → 0%" on an unmeasured act is a claim, not a reading. */}
+        {summary.act && (
+          <p className="tc-doneact">
+            <span className="tc-doneacttitle">{summary.act.title}</span>
+            {summary.act.first ? (
+              <>mastery reads <b>{Math.round(summary.act.after * 100)}%</b> — first time it could be measured</>
+            ) : (
+              <>mastery {Math.round(summary.act.before * 100)}% → <b>{Math.round(summary.act.after * 100)}%</b></>
+            )}
+          </p>
+        )}
+        {/* One sentence, and only when the session actually measured enough to say it. */}
+        {summary.weakest && <p className="tc-doneweak">{summary.weakest.note}</p>}
         {/* The north-star metric, closed at the moment it was earned. Shown only against
             the learner's own recent rate — "0.42 per minute" is not a fact anyone can act
             on, and inventing a target to compare it against would be worse than silence. */}
@@ -2063,6 +2152,17 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </div>
           );
         })()}
+        {/* The score, last and smallest. It used to be an 82px number at the top of this
+            screen, which made the least interesting fact the session produced the most
+            prominent one — and it is the only figure here that gets BETTER by studying
+            easier material. Kept because it is still worth a glance, and demoted because
+            everything above it is worth more. Scored over what was actually ANSWERED, not
+            over what was planned: a session can legitimately end early (the adaptive stop
+            does exactly that) and a correct answer drops that card's later copies, so
+            dividing by the plan reported 80% for a session with no misses in it. */}
+        <p className="tc-donescore">
+          {firstTry.size} of {asked} first try{asked < poolSize ? ` · ${poolSize} planned` : ""}{missedCards.length > 0 ? ` · ${missedCards.length} to review` : ""}
+        </p>
         <div className="tc-donebtns">
           {missedCards.length > 0 && (
             <button className="tc-btn tc-btn-primary" onClick={() => start(missedCards)}>Review the {missedCards.length} you missed</button>

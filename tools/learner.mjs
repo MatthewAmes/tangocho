@@ -249,11 +249,77 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
   return "meaning";
 }
 
+/* ── what was actually given, and what was actually wanted ──
+   `failure` says which KIND of thing went wrong. It does not say what happened, and the two
+   are different questions: "production" is a category, かようび for きんようび is the
+   mistake. Without the strings, "you consistently confuse 会社 and 学校" is a sentence the
+   app can never say about a typed answer, and a recovery ladder can only re-ask the
+   question rather than address what the learner actually produced.
+
+   Kept ONLY on failures. A correct answer's text is the expected answer, which the deck
+   already holds — storing it would double the log to say nothing.
+
+   ## The cap, and the arithmetic behind it
+
+   ERROR_TEXT_CAP is 20 CHARACTERS, and it is a storage decision before it is a display one.
+   Evidence is a ring buffer of 4000 rows (EVIDENCE_CAP in the app, and mergeEvidence keeps
+   the same 4000 after a sync) which travels to KV as ONE blob on every sync, so anything
+   added here is paid for four thousand times over.
+
+   Japanese is three bytes per character in UTF-8, so a capped pair costs at most
+   20 x 3 x 2 = 120 bytes of text, plus 19 bytes for the two JSON keys with their quotes,
+   colons and commas — about 140 bytes on a FAILED row and exactly zero on a correct one.
+   A log that was nothing but misses would therefore add 4000 x 140 = ~550 KB to the synced
+   snapshot; at a realistic quarter-of-the-log miss rate it is ~140 KB. Both sit far inside
+   a 25 MB KV value, and the worst case is the one worth stating because it is the one that
+   arrives without warning.
+
+   Twenty is also not an arbitrary round number: the longest reading in the whole seed deck
+   is 17 characters, so the cap keeps every real answer intact and only ever truncates
+   something that was not a reading in the first place. */
+export const ERROR_TEXT_CAP = 20;
+
+/** Trim one answer string for storage. Splits by CODE POINT rather than by UTF-16 unit —
+ *  slicing a string in half can land between a surrogate pair and produce a lone half that
+ *  no longer renders, and the deck carries emoji. The ellipsis counts toward the cap so the
+ *  byte arithmetic above stays true. */
+export function clipText(s) {
+  if (s == null) return null;
+  const str = String(s).trim();
+  if (!str) return null;
+  const chars = Array.from(str);
+  if (chars.length <= ERROR_TEXT_CAP) return str;
+  return chars.slice(0, ERROR_TEXT_CAP - 1).join("") + "…";
+}
+
+/* ── the recovery tag ──
+   "production:2/3" — the failure that started a rescue, and how far up its ladder this beat
+   sits. Written on every evidence row that belongs to a rescue (recovery.mjs stamps it onto
+   the rung), so a repair reads back out of the log instead of being reconstructed from a
+   bonus and a timestamp.
+
+   Built and parsed HERE rather than beside the sequencer because recovery.mjs already
+   imports this file; putting the format in the other direction would make the two modules
+   import each other to agree on one string. */
+export function recoveryTag(failure, stage, of) {
+  return String(failure) + ":" + stage + "/" + of;
+}
+
+/** The tag read back. Returns null for anything that is not one, so a caller can treat
+ *  "no rescue" and "an unparseable rescue" the same way instead of guessing. */
+export function parseRecovery(tag) {
+  const m = /^([a-z]+):(\d+)\/(\d+)$/.exec(String(tag || ""));
+  if (!m) return null;
+  const stage = parseInt(m[2], 10), of = parseInt(m[3], 10);
+  if (!(of > 0) || !(stage > 0) || stage > of) return null;
+  return { from: m[1], stage, of, last: stage === of };
+}
+
 /* ── evidence ──
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue }) {
+export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue, got, want }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
@@ -300,6 +366,12 @@ export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failu
        reads it yet — that is the point of writing it now rather than later. */
     fatigue: typeof fatigue === "number" && isFinite(fatigue)
       ? Math.round(fatigue * 100) / 100 : null,
+    /* What was given and what was wanted, truncated, and only when something went wrong —
+       see ERROR_TEXT_CAP for why they are capped and what the cap costs. Both are ADDITIVE:
+       a row written before they existed simply has neither, and every reader below treats
+       absent as "not recorded" rather than as an empty answer. */
+    got: ok ? null : clipText(got),
+    want: ok ? null : clipText(want),
     at: at || Date.now(),
   };
 }
@@ -1055,4 +1127,110 @@ export function confusionFrom(evidence = []) {
     out.set(id, [...inner.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k));
   }
   return out;
+}
+
+/* ── mistakes that are still mistakes ──
+   The evidence log holds every miss the learner has ever made, which is not the same thing
+   as a list of what they still get wrong. Most misses get fixed — that is what the app is
+   for — and a feed that keeps handing back a word repaired three weeks ago is a feed nobody
+   can act on. So this selector answers the narrower and much more useful question: which
+   items broke and have NOT since been shown to be repaired.
+
+   Two things retire an error, and they are deliberately the only two:
+
+     1. A CUE-FREE SUCCESS on that item. Getting it right with options on screen is not
+        evidence that the underlying knowledge was repaired — the answer was in front of
+        them. Nothing below CUE.FREE clears anything, which is the whole point: the bar for
+        "fixed" has to be higher than the bar that was failed, or the list empties itself.
+     2. A COMPLETED RECOVERY CHAIN — the last rung of a rescue, answered right. That rung IS
+        a cue-free retrieval by construction (the ladders end at FREE or CONTEXT), so this
+        is mostly rule 1 restated; it is written down separately because a rescue that ends
+        in a context exercise should count, and because the tag is what makes "recovered"
+        legible in the log rather than inferred.
+
+   One error per item, newest kept: the feed drives a mistake-recovery SLOT and quest
+   progress (MP-19), and both want "this item is broken, here is the freshest evidence of
+   how", not a transcript. `misses` carries the count so a word that has broken five times
+   since it was last repaired can be told from one that slipped once.
+
+   Pure: rows in, rows out, no clock of its own (pass `now`). Tested in
+   tools/test-learner.mjs. */
+
+/** The identity an evidence row belongs to, and what a mistake is deduped by. DECK-qualified,
+ *  because ids are only unique within a deck — the same numeric id in `vocab` and in a mined
+ *  deck are different words, and collapsing them would retire an error with a success on
+ *  something else entirely. `summarise` builds the same key inline; this is the named version
+ *  the selectors share. */
+export function itemKey(row) {
+  return (row && row.deck ? row.deck : "vocab") + ":" + (row ? row.id : "");
+}
+
+/** True when this row is a retrieval clean enough to retire an outstanding error. */
+function clearsError(e, clearAt) {
+  if (!e || !e.ok) return false;
+  const rec = parseRecovery(e.recovery);
+  if (rec && rec.last) return true;
+  return typeof e.cue === "number" && e.cue >= clearAt;
+}
+
+/** Unrecovered errors, newest first, one per item.
+ *
+ *  @param evidence  makeEvidence rows
+ *  @param opts      { now, days = 90, limit = 20, clearAt = CUE.FREE }
+ *  @returns [{ key, id, deck, format, skill, failure, cue, got, want, confused, ms, at, misses }]
+ */
+export function recentErrors(evidence = [], opts = {}) {
+  const now = opts.now || Date.now();
+  const windowMs = (opts.days || 90) * 86400000;
+  const clearAt = opts.clearAt ?? CUE.FREE;
+  const limit = opts.limit ?? 20;
+
+  /* Chronological, because the rule is a sequence rule: whether an error still stands
+     depends on what happened AFTER it. The log is normally already in order — both the
+     local ring buffer and mergeEvidence append — so this sort is nearly free, and doing it
+     anyway is cheaper than a bug that only appears on a device that synced out of order. */
+  const rows = (evidence || [])
+    .filter((e) => e && e.at && e.id != null)
+    .slice()
+    .sort((a, b) => a.at - b.at);
+
+  const open = new Map();
+  for (const e of rows) {
+    const key = itemKey(e);
+    if (!e.ok) {
+      const prev = open.get(key);
+      open.set(key, { row: e, misses: (prev ? prev.misses : 0) + 1 });
+      continue;
+    }
+    if (clearsError(e, clearAt)) open.delete(key);
+  }
+
+  /* The age filter lands HERE rather than on the way in. A success from outside the window
+     still repairs an error inside it — dropping old rows first would resurrect mistakes the
+     learner has demonstrably fixed, which is the exact failure this selector exists to
+     avoid. Only the surviving ERRORS are aged out. */
+  const out = [];
+  for (const { row, misses } of open.values()) {
+    if (now - row.at > windowMs) continue;
+    out.push({
+      key: itemKey(row),
+      id: row.id,
+      deck: row.deck || "vocab",
+      format: row.format || null,
+      skill: row.skill || null,
+      failure: row.failure || null,
+      cue: typeof row.cue === "number" ? row.cue : null,
+      /* Absent on rows written before the strings were recorded. Null rather than "" so a
+         consumer can tell "we did not keep it" from "they answered with nothing" — which is
+         a real and separately diagnosed failure (`blank`). */
+      got: row.got || null,
+      want: row.want || null,
+      confused: row.confused || null,
+      ms: row.ms || 0,
+      at: row.at,
+      misses,
+    });
+  }
+  out.sort((a, b) => b.at - a.at);
+  return limit > 0 ? out.slice(0, limit) : out;
 }

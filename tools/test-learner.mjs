@@ -12,6 +12,7 @@ import {
   posterior, stateOf, STATE, practiceValue, abilityFrom, planAfterFailure,
   latencyNorms, latencyVerdict, confusionFrom,
   buildRecovery, FAILURES, scoreAnswer, isMemoryCheck,
+  ERROR_TEXT_CAP, clipText, recoveryTag, parseRecovery, itemKey, recentErrors,
 } from "./learner.mjs";
 
 let fail = 0, run = 0;
@@ -659,6 +660,151 @@ t("memory check fires only on a correct answer after a real gap", () => {
   eq(isMemoryCheck(60, true), true);
   eq(isMemoryCheck(60, false), false, "a miss is not a memory check");
   eq(isMemoryCheck(2, true), false, "a card seen yesterday is not a memory check");
+});
+
+console.log("=== the error record: what was given, what was wanted (MP-09) ===");
+t("a reading survives the cap untouched — the longest in the deck is 17 characters", () => {
+  eq(clipText("〜くださってありがとうございます。"), "〜くださってありがとうございます。");
+});
+t("anything longer is clipped TO the cap, ellipsis included", () => {
+  const out = clipText("あ".repeat(60));
+  eq(Array.from(out).length, ERROR_TEXT_CAP, "the ellipsis must be paid for out of the cap");
+  eq(out.endsWith("…"), true);
+});
+t("clipping splits by code point, so an emoji is never cut in half", () => {
+  // A plain UTF-16 slice at the cap lands between a surrogate pair and leaves half a
+  // character, which renders as a replacement box and syncs as garbage. Every card in the
+  // deck carries an emoji, so this is reachable rather than theoretical.
+  eq(clipText("🍣".repeat(40)), "🍣".repeat(ERROR_TEXT_CAP - 1) + "…");
+});
+t("empty and absent both come back as null, never as an empty string", () => {
+  eq(clipText(""), null);
+  eq(clipText("   "), null);
+  eq(clipText(null), null);
+  eq(clipText(undefined), null);
+});
+t("a failure keeps got/want; a correct answer keeps neither", () => {
+  const miss = makeEvidence({ id: 1, format: "type", ok: false, failure: "production", got: "かようび", want: "きんようび" });
+  eq(miss.got, "かようび");
+  eq(miss.want, "きんようび");
+  const hit = makeEvidence({ id: 1, format: "type", ok: true, got: "きんようび", want: "きんようび" });
+  eq(hit.got, null, "storing the right answer would double the log to say nothing");
+  eq(hit.want, null);
+});
+t("the fields are additive — a row written without them still parses", () => {
+  const old = makeEvidence({ id: 1, format: "mc", ok: false, failure: "meaning" });
+  eq(old.got, null);
+  eq(old.want, null);
+  eq(old.failure, "meaning", "nothing else about the row changed");
+});
+
+console.log("=== the recovery tag round-trips (MP-09) ===");
+t("built and parsed by the same module", () => {
+  const p = parseRecovery(recoveryTag("production", 2, 3));
+  eq(p.from, "production"); eq(p.stage, 2); eq(p.of, 3); eq(p.last, false);
+});
+t("the final rung is the one that reads as complete", () => {
+  eq(parseRecovery(recoveryTag("reading", 3, 3)).last, true);
+});
+t("anything that is not a tag is null rather than a guess", () => {
+  eq(parseRecovery(null), null);
+  eq(parseRecovery(""), null);
+  eq(parseRecovery("production"), null);
+  eq(parseRecovery("production:0/3"), null, "stages are 1-based");
+  eq(parseRecovery("production:4/3"), null, "a rung past the end is not a rung");
+});
+
+console.log("=== recentErrors: mistakes that are still mistakes (MP-09) ===");
+const ERR_NOW = Date.UTC(2026, 7, 30, 12, 0, 0);
+const ERR_HOUR = 3600000;
+// one row: hours BEFORE now. Named apart from the `ev` helper above — one bare `ev` in a
+// test file is a fixture, two are a collision.
+const errRow = (hoursAgo, extra = {}) => makeEvidence({
+  id: extra.id ?? 1, deck: extra.deck || "vocab", format: extra.format || "type",
+  // "cue" in extra, not ?? — the rescue rows below pass cue: null ON PURPOSE, and a
+  // nullish default would quietly hand them the cue-free rung the assertion is about.
+  ok: !!extra.ok, cue: "cue" in extra ? extra.cue : CUE.FREE,
+  failure: extra.ok ? null : (extra.failure || "production"),
+  got: extra.got, want: extra.want, recovery: extra.recovery,
+  at: ERR_NOW - hoursAgo * ERR_HOUR,
+});
+t("an unrecovered miss is in the feed, with the strings attached", () => {
+  const out = recentErrors([errRow(5, { got: "かようび", want: "きんようび" })], { now: ERR_NOW });
+  eq(out.length, 1);
+  eq(out[0].id, 1);
+  eq(out[0].failure, "production");
+  eq(out[0].got, "かようび");
+  eq(out[0].want, "きんようび");
+});
+t("A RECOVERED ERROR DROPS OUT once a cue-free success lands", () => {
+  const rows = [errRow(5), errRow(2, { ok: true, cue: CUE.FREE })];
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 0);
+});
+t("a success WITH the answer on screen does not clear anything", () => {
+  const rows = [errRow(5), errRow(2, { ok: true, cue: CUE.CHOOSE, format: "mc" })];
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 1, "picking it out of four is not a repair");
+});
+t("a contextual success clears too — it is above the free rung, not below it", () => {
+  const rows = [errRow(5), errRow(2, { ok: true, cue: CUE.CONTEXT, format: "cloze" })];
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 0);
+});
+t("a completed recovery chain clears the error", () => {
+  const rows = [errRow(5), errRow(2, { ok: true, cue: null, recovery: recoveryTag("production", 3, 3) })];
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 0);
+});
+t("an UNfinished recovery chain does not", () => {
+  const rows = [errRow(5), errRow(2, { ok: true, cue: null, recovery: recoveryTag("production", 2, 3) })];
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 1, "the climb is not the summit");
+});
+t("order matters: a miss AFTER the repair puts the item back", () => {
+  const rows = [errRow(9), errRow(6, { ok: true, cue: CUE.FREE }), errRow(2, { failure: "reading" })];
+  const out = recentErrors(rows, { now: ERR_NOW });
+  eq(out.length, 1);
+  eq(out[0].failure, "reading", "the newest miss is the one that stands");
+});
+t("a success from before the window still repairs an error inside it", () => {
+  // The age filter has to run on the survivors, not on the way in — otherwise an old
+  // success is invisible and a mistake the learner has demonstrably fixed comes back.
+  const rows = [errRow(24 * 200), errRow(24 * 150, { ok: true, cue: CUE.FREE })];
+  eq(recentErrors(rows, { now: ERR_NOW, days: 90 }).length, 0);
+});
+t("a stale unrecovered error ages out of the feed", () => {
+  eq(recentErrors([errRow(24 * 200)], { now: ERR_NOW, days: 90 }).length, 0);
+  eq(recentErrors([errRow(24 * 200)], { now: ERR_NOW, days: 365 }).length, 1);
+});
+t("one entry per item, newest first, with the miss count carried", () => {
+  const rows = [
+    errRow(9, { id: 1 }), errRow(8, { id: 1, failure: "blank" }),
+    errRow(3, { id: 2, failure: "reading" }),
+  ];
+  const out = recentErrors(rows, { now: ERR_NOW });
+  eq(out.length, 2);
+  eq(out[0].id, 2, "newest first");
+  eq(out[1].id, 1);
+  eq(out[1].misses, 2, "two unrepaired misses on the same word");
+  eq(out[1].failure, "blank", "the freshest evidence of how it broke");
+});
+t("the same id in two decks is two different words", () => {
+  const rows = [errRow(5, { id: 7, deck: "vocab" }), errRow(2, { id: 7, deck: "mined", ok: true, cue: CUE.FREE })];
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 1, "a mined-deck success must not clear a vocab error");
+  eq(itemKey({ deck: "vocab", id: 7 }) === itemKey({ deck: "mined", id: 7 }), false);
+});
+t("an out-of-order log is still read chronologically", () => {
+  const rows = [errRow(2, { ok: true, cue: CUE.FREE }), errRow(5)];    // success listed first
+  eq(recentErrors(rows, { now: ERR_NOW }).length, 0);
+});
+t("the feed is capped, and the cap keeps the newest", () => {
+  const rows = Array.from({ length: 40 }, (_, i) => errRow(40 - i, { id: i }));
+  const out = recentErrors(rows, { now: ERR_NOW, limit: 5 });
+  eq(out.length, 5);
+  eq(out[0].id, 39, "the most recent miss leads");
+});
+t("rows written before got/want existed still make usable error records", () => {
+  const legacy = { id: 3, deck: "vocab", format: "mc", ok: false, failure: "meaning", cue: 1, at: ERR_NOW - ERR_HOUR };
+  const out = recentErrors([legacy], { now: ERR_NOW });
+  eq(out.length, 1);
+  eq(out[0].got, null, "not recorded is not the same as answered with nothing");
+  eq(out[0].failure, "meaning");
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} learner tests passed`);

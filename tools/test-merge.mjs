@@ -6,6 +6,9 @@ import {
   cardMergeKey, mergeDeck, applySeed, mergeDays, mergeScripts, mergeInput,
   mergeStats, mergeHooks, mergeEvidence, mergeSnapshots,
 } from "./merge.mjs";
+// The real writer, so the round-trip is tested against the shape the app actually stores
+// rather than against a hand-typed object that could drift away from it.
+import { makeEvidence } from "./learner.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
@@ -203,6 +206,48 @@ t("freq merges per record like the deck", () => {
   const freq = JSON.parse(out["jpn101:freq"]);
   eq(freq.length, 2);
   eq(freq.find((c) => c.term === "a").seen, 5);
+});
+
+console.log("=== evidence survives the round trip with its newer fields intact (MP-09) ===");
+/* The acceptance criterion for the structured error record. mergeEvidence unions WHOLE
+   rows, so nothing here should need changing when a field is added — which is exactly the
+   claim worth pinning down, because the day it stops being true is the day a sync silently
+   strips the diagnosis off every mistake and nothing in the app looks broken. */
+const errorRow = makeEvidence({
+  id: 41, deck: "vocab", format: "type", ok: false, ms: 4200, cue: 4,
+  failure: "production", got: "かようび", want: "きんようび", confused: "c9",
+  predicted: 0.61, pRecall: 0.44, s0: 3.5, s1: 1.2, recovery: "production:1/3",
+  at: 1756500000000,
+});
+t("a failure keeps got/want/recovery through a merge", () => {
+  const out = JSON.parse(mergeEvidence("[]", JSON.stringify([errorRow])));
+  eq(out.length, 1);
+  eq(out[0], errorRow, "the row must come back byte-identical, not merely recognisable");
+});
+t("the union does not drop the side that has the newer fields", () => {
+  const oldRow = { id: 7, deck: "vocab", format: "mc", ok: false, failure: "meaning", at: 1756400000000 };
+  const merged = JSON.parse(mergeEvidence(JSON.stringify([oldRow]), JSON.stringify([errorRow])));
+  eq(merged.length, 2, "one old row and one new one, both kept");
+  eq(merged[0].id, 7, "sorted oldest first");
+  eq(merged[1].got, "かようび");
+});
+t("a duplicated row is deduped without losing its strings", () => {
+  const merged = JSON.parse(mergeEvidence(JSON.stringify([errorRow]), JSON.stringify([errorRow])));
+  eq(merged.length, 1);
+  eq(merged[0].want, "きんようび");
+});
+t("the whole snapshot path carries them too", () => {
+  const out = mergeSnapshots(
+    { "jpn101:evidence": JSON.stringify([errorRow]) },
+    { "jpn101:evidence": "[]" },
+    Date.now(), 0,
+  );
+  eq(JSON.parse(out["jpn101:evidence"])[0].got, "かようび");
+});
+t("the added text stays inside the cap that the size estimate assumes", () => {
+  const wild = makeEvidence({ id: 1, format: "type", ok: false, got: "あ".repeat(400), want: "い".repeat(400) });
+  const bytes = Buffer.byteLength(JSON.stringify({ got: wild.got, want: wild.want }), "utf8");
+  ok(bytes <= 160, "a failed row's two strings must stay ~140 bytes, measured " + bytes);
 });
 
 console.log(fail ? `\n${fail} of ${run} FAILED` : `\nall ${run} merge tests passed`);
