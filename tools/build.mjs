@@ -107,10 +107,17 @@ await import("./check-oral-kana.mjs");
    every build rather than only when someone remembers to run the tests. */
 for (const suite of ["test-counters.mjs", "test-romaji.mjs"]) {
   const r = spawnSync(process.execPath, [path.join(ROOT, "tools", suite)], { encoding: "utf8" });
-  if (r.status !== 0) {
+  /* Node 24.7 on macOS intermittently SIGSEGVs during exit teardown — AFTER the suite has
+     printed "N passed, 0 failed" and called process.exit(0). That crash carries no
+     information about the readings; refusing to build on it just makes deploys flaky.
+     So: a signal death is tolerated IFF the suite's own summary says nothing failed.
+     A real assertion failure still exits 1 with "N failed" and still refuses to build. */
+  const crashedCleanly = r.signal === "SIGSEGV" && /\b0 failed\b/.test(r.stdout || "");
+  if (r.status !== 0 && !crashedCleanly) {
     console.error(`\n${suite} FAILED — refusing to build\n${r.stdout || ""}${r.stderr || ""}`);
     process.exit(1);
   }
+  if (crashedCleanly) console.warn(`    (${suite} passed, then hit the Node teardown segfault — tolerated)`);
   console.log(`    ${suite.replace(/^test-|\.mjs$/g, "")} ${(r.stdout.match(/(\d+) passed/) || [])[1]} readings verified`);
 }
 
