@@ -123,6 +123,26 @@ t("a missing field lands in 'unknown' rather than throwing", () => {
   const rows = [row(0, 1000, 1, 2)];
   eq(gainBy(rows, "format")[0].key, "unknown");
 });
+t("a list-valued field fans out instead of becoming one silly bucket", () => {
+  // `mode` is a list — a typed answer demanded recall and production at once. Joining the
+  // list into "recall,production" would make a bucket that answers nothing, and splitting
+  // one row's gain in half would claim the minutes were shared. They were not: they are
+  // the same minutes, counted under both headings.
+  const rows = Array.from({ length: MIN_ROWS }, (_, i) =>
+    row(i * 10, 3000, 1, 4, { mode: ["recall", "production"] }));
+  const by = gainBy(rows, "mode");
+  eq(by.length, 2);
+  eq(by.find((x) => x.key === "recall").n, MIN_ROWS);
+  eq(by.find((x) => x.key === "production").n, MIN_ROWS);
+  eq(by.find((x) => x.key === "recall").rate, by.find((x) => x.key === "production").rate);
+});
+t("rows from before mode tagging group as unknown rather than throwing", () => {
+  const rows = [row(0, 1000, 1, 2), row(10, 1000, 1, 2, { mode: [] })];
+  const by = gainBy(rows, "mode");
+  eq(by.length, 1);
+  eq(by[0].key, "unknown");
+  eq(by[0].n, 2);
+});
 
 console.log("=== bestUse ===");
 t("needs two measured buckets before it will compare", () => {

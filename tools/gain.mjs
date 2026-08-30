@@ -92,13 +92,27 @@ export function gainPerMinute(rows) {
 }
 
 /** Rate broken down by a field — "which of these actually buys me memory per minute".
- *  Buckets under MIN_ROWS report rate: null rather than a number nobody should act on. */
+ *  Buckets under MIN_ROWS report rate: null rather than a number nobody should act on.
+ *
+ *  A field holding an ARRAY fans out: `mode` is a list, because one answer can demand
+ *  recall and production at once, and a row counts toward every bucket it belongs to. The
+ *  buckets therefore overlap and their counts sum past the number of rows. That is the
+ *  correct reading — "minutes spent recalling" and "minutes spent producing" are the same
+ *  minutes when you typed the answer — and the alternative, one bucket per combination,
+ *  splits the evidence so finely that nothing ever reaches MIN_ROWS. */
 export function gainBy(rows, field) {
   const groups = new Map();
   for (const r of scorable(rows)) {
-    const k = r[field] == null ? "unknown" : String(r[field]);
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(r);
+    const v = r[field];
+    /* An empty array is "classified, and it demanded nothing we track" — not the same as
+       an unclassified row, but there is no bucket either way, so both land in unknown. */
+    const keys = Array.isArray(v)
+      ? (v.length ? v.map(String) : ["unknown"])
+      : [v == null ? "unknown" : String(v)];
+    for (const k of keys) {
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
   }
   const out = [];
   for (const [key, xs] of groups) {

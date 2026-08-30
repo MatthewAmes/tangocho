@@ -4,7 +4,8 @@
 //
 //   node tools/test-learner.mjs
 import {
-  SKILLS, skillForFormat, CUE, cueFor, maskReading, cueHint,
+  SKILLS, skillForFormat, COGNITIVE_MODES, MODE_LABEL, FORMAT_MODES, modesForFormat,
+  CUE, cueFor, maskReading, cueHint,
   classifyFailure, editDistance, makeEvidence, profileFrom, confidenceFor,
   CONFIDENCE, biggestGap, explainPick, summarise,
   DIRECTIONS, pushRecent, recentAcc, predictSuccess, chooseIntervention, skillAfterFailure,
@@ -32,6 +33,49 @@ t("each format maps to the ability it actually tests", () => {
 t("an introduction produces no evidence", () => {
   // Being shown a word is not a measurement of anything.
   eq(skillForFormat("learn"), null);
+});
+
+console.log("\n=== format is not the same thing as cognitive mode ===");
+t("every known format maps to at least one mode", () => {
+  // The acceptance criterion for MP-13. A format with no mode is a screen nobody can say
+  // anything about — it would show up as cognitive variety without being any.
+  for (const f of Object.keys(FORMAT_MODES)) {
+    const modes = modesForFormat(f);
+    ok(modes.length >= 1, f + " maps to no mode");
+    for (const m of modes) ok(COGNITIVE_MODES.includes(m), f + " claims an unknown mode: " + m);
+  }
+});
+t("the six formats the session engine emits are all covered", () => {
+  // session.mjs FORMATS. If a format can reach an evidence record it must be classified.
+  for (const f of ["learn", "mc", "recall", "listen", "type", "cloze"]) {
+    ok(modesForFormat(f).length >= 1, f + " is emitted but unclassified");
+  }
+});
+t("the spec's examples come out as the spec states them", () => {
+  eq(modesForFormat("mc").join(","), "recognition");
+  eq(modesForFormat("type").join(","), "recall,production", "typing is retrieval AND spelling out");
+  eq(modesForFormat("listen").join(","), "listening,recognition", "audio choice");
+  eq(modesForFormat("build").includes("reconstruction"), true, "a word bank is reassembly");
+  eq(modesForFormat("build").includes("production"), false, "a word bank hands over the pieces");
+  eq(modesForFormat("match").slice().sort().join(","), "discrimination,recognition");
+});
+t("one skill can cover two modes — which is the whole point", () => {
+  // A listening MC and a listening reassembly are the same SKILL and different work.
+  eq(skillForFormat("listen"), "listening");
+  ok(modesForFormat("listen").includes("recognition"));
+  ok(!modesForFormat("order").includes("recognition"), "reassembly is not recognition");
+});
+t("an unclassified format returns nothing rather than borrowing a guess", () => {
+  eq(modesForFormat("no-such-format").length, 0);
+  eq(modesForFormat(undefined).length, 0);
+});
+t("every mode has a label the UI can print", () => {
+  for (const m of COGNITIVE_MODES) ok(MODE_LABEL[m], m + " has no label");
+});
+t("the returned list cannot be mutated back into the table", () => {
+  const a = modesForFormat("mc");
+  a.push("transfer");
+  eq(modesForFormat("mc").length, 1, "the table leaked a mutable reference");
 });
 
 console.log("\n=== cue strength ===");
@@ -186,6 +230,68 @@ t("an empty session summarises to nothing rather than crashing", () => {
   const s = summarise([]);
   eq(s.answered, 0);
   eq(s.commonestFailure, null);
+});
+t("the summary groups by cognitive mode as well as by skill", () => {
+  const evs = [
+    makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true }),
+    makeEvidence({ id: "b", deck: "vocab", format: "type", ok: true }),
+  ];
+  const s = summarise(evs);
+  eq(s.byMode.recognition.n, 1);
+  // A typed answer counted toward both of the things it demanded, so the mode columns add
+  // up to more than the number of answers. That is the correct reading, not a double count.
+  eq(s.byMode.recall.n, 1);
+  eq(s.byMode.production.n, 1);
+  ok(s.modesWorked.includes("production"));
+});
+t("two formats can look varied and be the same work", () => {
+  // The reason MP-13 exists: mc and match are different screens and mostly one demand.
+  const s = summarise([
+    makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true }),
+    makeEvidence({ id: "b", deck: "vocab", format: "match", ok: true }),
+  ]);
+  eq(s.byMode.recognition.n, 2, "both screens asked for recognition");
+});
+
+console.log("\n=== cognitive mode rides on the evidence ===");
+t("an answer records what it actually asked for", () => {
+  const e = makeEvidence({ id: "a", deck: "vocab", format: "type", ok: true });
+  eq(e.mode.join(","), "recall,production");
+  eq(e.skill, "production", "the skill is unchanged");
+});
+t("a screen that knows better than its format name can say so", () => {
+  const e = makeEvidence({ id: "a", deck: "vocab", format: "mc", mode: ["transfer"], ok: true });
+  eq(e.mode.join(","), "transfer");
+});
+t("an unclassified format leaves the field empty rather than wrong", () => {
+  eq(makeEvidence({ id: "a", deck: "vocab", format: "mystery", ok: true }).mode.length, 0);
+});
+t("old evidence without the field still parses everywhere", () => {
+  // Rows written before MP-13 have no `mode` at all. Nothing may throw on them, and
+  // nothing may silently count them as having demanded nothing.
+  const legacy = [
+    { id: "a", deck: "vocab", format: "mc", skill: "recognition", ok: true, ms: 900, cue: 1, at: Date.now() },
+    { id: "b", deck: "vocab", format: "type", skill: "production", ok: false, failure: "reading", ms: 4000, cue: 3, at: Date.now() },
+  ];
+  const s = summarise(legacy);
+  eq(s.answered, 2, "legacy rows still count as answers");
+  eq(s.bySkill.recognition.n, 1, "legacy rows still carry their skill");
+  eq(Object.keys(s.byMode).length, 0, "an unclassified session claims no modes");
+  eq(s.modesWorked.length, 0);
+  const p = profileFrom(legacy);
+  eq(p.recognition.n, 1, "the profile still reads legacy rows");
+  eq(p.production.n, 1);
+  ok(latencyNorms(legacy, { minSamples: 1 })["recognition|mc"], "norms still build from legacy rows");
+  eq(confusionFrom(legacy).size, 0);
+});
+t("a mixed log of old and new rows summarises without either poisoning the other", () => {
+  const mixed = [
+    { id: "a", deck: "vocab", format: "mc", skill: "recognition", ok: true, at: Date.now() },
+    makeEvidence({ id: "b", deck: "vocab", format: "mc", ok: true }),
+  ];
+  const s = summarise(mixed);
+  eq(s.answered, 2);
+  eq(s.byMode.recognition.n, 1, "only the tagged row is classified");
 });
 
 console.log("\n=== rolling recent history ===");

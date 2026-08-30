@@ -37,6 +37,94 @@ export function skillForFormat(format) {
   }
 }
 
+/* ── format is not the same thing as cognitive mode ──
+   The skill above says WHICH ability an exercise measures. It does not say what the
+   learner's head actually had to do, and those are different questions: a listening
+   multiple choice and a listening sentence-reassembly both file under `listening`, and one
+   of them is picking the right answer off a list while the other is building a sentence.
+
+   Without the distinction written down, an app can add five new screens, report a lovely
+   spread of formats, and have asked the learner to do exactly one thing five times.
+   Visual variety gets counted as cognitive variety, which is the specific mistake this
+   taxonomy exists to make impossible to make quietly.
+
+   A format maps to one or MORE modes, because most real exercises demand more than one
+   thing: typing a word from its English is a retrieval and then a spelling-out, and both
+   can fail independently. */
+export const COGNITIVE_MODES = [
+  "exposure",         // first contact — shown, nothing retrieved
+  "recognition",      // the answer is in front of you; find it
+  "discrimination",   // two plausible answers are in front of you; tell them apart
+  "recall",           // nothing is in front of you; retrieve it
+  "reconstruction",   // the pieces are given; assemble them
+  "production",       // generate the Japanese yourself, character by character
+  "listening",        // decode it from sound rather than from the page
+  "comprehension",    // understand a whole utterance, not a word
+  "transfer",         // apply it to a situation the exercise did not rehearse
+];
+
+export const MODE_LABEL = {
+  exposure: "Meeting it",
+  recognition: "Recognising",
+  discrimination: "Telling apart",
+  recall: "Recalling",
+  reconstruction: "Reassembling",
+  production: "Producing",
+  listening: "Listening",
+  comprehension: "Understanding",
+  transfer: "Using it",
+};
+
+/* Two of these names also appear elsewhere: `recognition` and `listening` are SKILLS as
+   well. That overlap is deliberate rather than sloppy — the channel an item arrives
+   through is part of the cognitive demand, and calling it something else here would only
+   invent a synonym. The pairs still separate properly: format `listen` is
+   listening+recognition, and a future listening reassembly would be listening+
+   reconstruction. Same skill, different modes, which is the whole point. */
+export const FORMAT_MODES = {
+  /* The six formats the session engine emits (session.mjs FORMATS). */
+  learn:  ["exposure"],
+  mc:     ["recognition"],
+  recall: ["recall"],
+  type:   ["recall", "production"],
+  listen: ["listening", "recognition"],
+  /* Cloze renders as a blank in a real sentence with the English alongside and options
+     underneath: the sentence has to be understood before the options mean anything. */
+  cloze:  ["comprehension", "recognition"],
+
+  /* The production drills (production.mjs DRILL). They do not write evidence today — the
+     drill panel grades locally — but they are activity formats, and leaving them out
+     would let the one screen that is pure reassembly go uncounted the moment it is wired
+     up. A word bank is explicitly NOT production: the pieces are handed over. */
+  order:  ["reconstruction"],
+  build:  ["comprehension", "reconstruction"],
+  fill:   ["comprehension", "discrimination"],
+
+  /* Matching pairs. Recognition, plus the discrimination that a grid of near-neighbours
+     forces and a single four-option question does not. */
+  match:  ["recognition", "discrimination"],
+
+  /* Script-derived activities (scriptplay.mjs). Kept as their own formats rather than
+     folded into the ones above so that "what did the textbook dialogues actually buy me"
+     stays an answerable question. */
+  script_speaker:  ["comprehension", "discrimination"],
+  /* Deterministic dialogue: the real next line among plausible wrong ones. Transfer,
+     because choosing a reply is a use of the language and not a recall of it. Production
+     is deliberately absent until the free-response version exists — claiming it here
+     would be exactly the overcounting this table is for. */
+  script_response: ["comprehension", "transfer"],
+  script_order:    ["comprehension", "reconstruction"],
+  script_cloze:    ["comprehension", "recognition"],
+};
+
+/** What this format actually asks of the learner. Always an array, never null: a format
+ *  nobody has classified returns [] rather than a guess, so an unmapped format shows up
+ *  as a gap in the analytics instead of quietly borrowing another format's modes. */
+export function modesForFormat(format) {
+  const m = FORMAT_MODES[format];
+  return m ? [...m] : [];
+}
+
 /* ── cue strength ──
    The reviews both argued the same thing: multiple-choice / recall / typing is not three
    exercise types, it is one retrieval with three amounts of help, and the help should
@@ -130,10 +218,19 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery }) {
+export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
+    /* DERIVED from the format rather than demanded from the caller, so tagging every
+       answer with what it actually asked for costs no change at the one place evidence is
+       written. Passing `mode` explicitly is still allowed — a screen that knows it is
+       doing something the format name does not capture should say so.
+
+       Stored as an array because most formats are more than one thing. Rows written
+       before this existed simply have no `mode`, and every reader below treats absent as
+       "not classified" rather than as an empty answer. */
+    mode: Array.isArray(mode) && mode.length ? [...mode] : modesForFormat(format),
     cue: cue == null ? null : cue,
     ok: !!ok,
     ms: ms > 0 ? Math.round(ms) : 0,
@@ -253,6 +350,7 @@ export function explainPick(pick, opts = {}) {
    count the app can defend; "you mastered 14 words" is not. */
 export function summarise(evidence = []) {
   const bySkill = {};
+  const byMode = {};
   let ok = 0, n = 0, fresh = 0;
   const failures = {};
   const items = new Set();
@@ -266,12 +364,29 @@ export function summarise(evidence = []) {
       bySkill[e.skill].n += 1;
       if (e.ok) bySkill[e.skill].ok += 1;
     }
+    /* One answer counts toward EVERY mode it demanded, so the columns deliberately sum to
+       more than `answered`. The question this table answers is "did the session ask me to
+       do more than one kind of thinking", and splitting a typed answer into half a recall
+       and half a production would answer a different and less useful one.
+
+       Rows from before mode tagging have no `mode` at all and are skipped rather than
+       bucketed as unknown — the same treatment the gain metric gives rows written before
+       stability was recorded, and for the same reason. */
+    const modes = Array.isArray(e.mode) ? e.mode : [];
+    for (const m of modes) {
+      byMode[m] = byMode[m] || { n: 0, ok: 0 };
+      byMode[m].n += 1;
+      if (e.ok) byMode[m].ok += 1;
+    }
     if (e.cue === CUE.SHOWN) fresh += 1;
     if (!e.ok && e.failure) failures[e.failure] = (failures[e.failure] || 0) + 1;
   }
   const worked = Object.keys(bySkill)
     .filter((s) => bySkill[s].n > 0)
     .sort((a, b) => bySkill[b].n - bySkill[a].n);
+  const modesWorked = Object.keys(byMode)
+    .filter((m) => byMode[m].n > 0)
+    .sort((a, b) => byMode[b].n - byMode[a].n);
   return {
     answered: n,
     correct: ok,
@@ -279,6 +394,10 @@ export function summarise(evidence = []) {
     introduced: fresh,
     bySkill,
     skillsWorked: worked,
+    /* Empty on a log that predates mode tagging, which is the honest reading: the session
+       was not classified, not "the session demanded nothing". */
+    byMode,
+    modesWorked,
     failures,
     /* Named as the biggest FAILURE type rather than a diagnosis. The model can count what
        went wrong; claiming to know why is a different and much stronger claim. */
