@@ -39,10 +39,12 @@ import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
-  pushRecent, confusionFrom, scoreAnswer, isMemoryCheck, latencyNorms, latencyVerdict,
+  pushRecent, confusionFrom, scoreAnswer, isMemoryCheck, MEMORY_CHECK_DAYS, latencyNorms, latencyVerdict,
   posterior, stateOf, STATE, STATE_LABEL, abilityFrom,
 } from "./tools/learner.mjs";
 import { sequenceRecovery, dropSolved } from "./tools/recovery.mjs";
+import { rollMissions, evaluateMissions, missionContext, rowsForDay, MISSION_BONUS } from "./tools/missions.mjs";
+import { topReward, personalBests, memoryCheckAhead } from "./tools/rewards.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
   acceptedReadings, COUNTERS, DAY_READING, MONTH_READING, MONTH_KANJI, HOUR_READING,
@@ -424,6 +426,30 @@ async function logDay({ ok, ms, deck, fnew, area }) {
   const a = area || (deck ? areaForDeck(deck) : null);
   if (a) { (d.by || (d.by = {}))[a] = (d.by[a] || 0) + 1; }
   sSet(DAYS_KEY, JSON.stringify(_days));
+}
+
+/* ── today's missions ──
+   One record per day, held the way the day counters are: a module-level cache so the Study
+   screen does not re-read storage on every render, dropped on a pull so a board rolled on
+   the other machine wins over a stale copy here.
+
+   What is stored is deliberately thin — the day, the missions themselves, and which have
+   already paid out. PROGRESS IS NEVER STORED: it is recomputed from the evidence log every
+   render (missions.mjs), so there is no second counter that can drift away from the rows
+   that actually happened. */
+const MISSIONS_KEY = "jpn101:missions";
+let _missionBoard = null;
+async function loadMissionBoard() {
+  if (_missionBoard === null) {
+    try { const r = await sGet(MISSIONS_KEY); _missionBoard = r ? JSON.parse(r) : null; }
+    catch (e) { _missionBoard = null; }
+  }
+  return _missionBoard;
+}
+onAfterPull(() => { _missionBoard = null; });
+function saveMissionBoard(board) {
+  _missionBoard = board;
+  sSet(MISSIONS_KEY, JSON.stringify(board));
 }
 
 /* ── the mascot ──
@@ -886,6 +912,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      next exercise is chosen from it — see easedTarget in the intervention below. */
   const [fatigueNow, setFatigueNow] = useState(0);
   const [award, setAward] = useState(null);      // {points, reasons, memory} for the flyup
+  /* The one moment worth a sentence, if this answer earned one — a comeback, a personal
+     record, a run with no hints. Separate from `award` because they answer different
+     questions: the award says what the answer was worth, this says what it MEANT. */
+  const [reward, setReward] = useState(null);
   const [marks, setMarks] = useState([]);
   const [combo, setCombo] = useState(0);
   const [bestCombo, setBestCombo] = useState(0);
@@ -959,6 +989,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   useEffect(() => { loadContext().then(() => setContextReady(true)).catch(() => setContextReady(true)); }, []);
   const confusion = useMemo(() => confusionFrom(evidence), [evidence]);
   const norms = useMemo(() => latencyNorms(evidence), [evidence]);
+  /* This learner's fastest correct answer on each item, for each ability, in each format —
+     the record a personal best is measured against. Norms say "fast for you on this KIND of
+     question"; this says "faster than you have ever been on THIS one", which is the figure
+     the roadmap's own example is written in (18.4s to 11.2s on 火曜日). */
+  const bests = useMemo(() => personalBests(evidence), [evidence]);
   const [foreign, setForeign] = useState([]);
   /* Reloaded whenever a session ends, not once per page load. This snapshot IS the
      other decks' progress; keeping a stale copy meant a kanji answered in lesson one
@@ -998,6 +1033,58 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Persisted the moment it is tapped, the way the pace and priorities are. A mode chosen
      for one session and forgotten by the next would be a setting you had to re-set daily. */
   const setPractice = (mode) => { const next = { ...plan, practice: mode }; setPlan(next); savePlan(next); };
+
+  /* ── today's missions (spec §§34–35) ──
+     Two or three goals rolled from the learner model and the curriculum, generated in
+     tools/missions.mjs and only DISPLAYED here. The board is rolled once a day and then
+     left alone; progress is re-derived from the evidence log on every render, so a chip
+     can never claim something the rows do not show.
+
+     Rolled after the evidence log has loaded rather than on mount: generating from an
+     empty log would offer a first-morning learner the one satisfiable mission there is,
+     write it down, and then not reconsider until tomorrow. */
+  const [board, setBoard] = useState(null);
+  const [evidenceReady, setEvidenceReady] = useState(false);
+  useEffect(() => { loadEvidence().then(() => setEvidenceReady(true)).catch(() => setEvidenceReady(true)); }, []);
+  useEffect(() => {
+    if (!evidenceReady || cards.length === 0) return;
+    let live = true;
+    loadMissionBoard().then((stored) => {
+      if (!live) return;
+      const rolled = rollMissions(stored, { evidence, cards, act: actNow, now: Date.now() });
+      // `rerolled` is an answer to "did you regenerate", not part of the record. Storing it
+      // would put a transient in a file that outlives the question.
+      const record = { day: rolled.day, missions: rolled.missions, awarded: rolled.awarded };
+      if (rolled.rerolled) saveMissionBoard(record);
+      setBoard(record);
+    }).catch(() => {});
+    return () => { live = false; };
+    /* Deliberately NOT keyed on `evidence`: the board is a day's worth of goals, and
+       re-running this on every answer would roll a new one the moment a fresh day's first
+       row landed while the screen was open. The day check inside rollMissions is what
+       decides, and it only needs to run when the screen mounts. */
+  }, [evidenceReady, cards.length]);          // eslint-disable-line react-hooks/exhaustive-deps
+  const missionCtx = useMemo(() => missionContext({ cards, evidence }), [cards, evidence]);
+  const missions = useMemo(
+    () => (board ? evaluateMissions(board.missions, rowsForDay(evidence), missionCtx) : []),
+    [board, evidence, missionCtx],
+  );
+  /* Completion pays through the SAME xp counter every answer feeds — no second currency
+     (the roadmap rejected gems, and a mission board is not the place to sneak one back
+     in). Paid once per mission per day, which is what `awarded` on the stored record is
+     for: it survives a reload, so re-opening the app cannot re-collect. */
+  const [missionDone, setMissionDone] = useState(null);
+  useEffect(() => {
+    if (!board) return;
+    const paid = new Set(board.awarded || []);
+    const fresh = missions.filter((m) => m.complete && !paid.has(m.id));
+    if (fresh.length === 0) return;
+    const next = { ...board, awarded: [...paid, ...fresh.map((m) => m.id)] };
+    saveMissionBoard(next);
+    setBoard(next);
+    setXp((n) => n + MISSION_BONUS * fresh.length);
+    setMissionDone({ mission: fresh[0], more: fresh.length - 1, at: Date.now() });
+  }, [missions, board]);
 
   /* The words quarantined for the checkpoint this quarter. Derived from the deck and the
      calendar rather than stored, so every device agrees without syncing and a wiped setting
@@ -1227,7 +1314,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
     setMarks([]);
-    setXp(0); setAward(null);
+    setXp(0); setAward(null); setReward(null); setMissionDone(null);
     fatigueLog.current = [];
     startedAtRef.current = Date.now();
     snoozeRef.current = 0;
@@ -1482,6 +1569,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       const sc = scoreAnswer({ ok: got, cue: cueLevel, verdict: lv, comeback, stabilityDays: stabDays });
       setXp((n) => n + sc.points);
       setAward({ ...sc, memory: isMemoryCheck(stabDays, got), at: Date.now() });
+      /* The same answer, asked what it deserves a WORD for (spec §34 via tools/rewards.mjs).
+         The score already pays for all of this; what was missing is the learner ever seeing
+         it. At most one fires, and on most answers none does.
+
+         `bests` is the log as it stands BEFORE this row is written, which is what makes a
+         personal record a record rather than a comparison with itself; `sessionLog` is the
+         run of earlier answers the no-hint streak is counted along. */
+      if (evSkill) {
+        const won = topReward(
+          { id: c.id, ok: got, cue: cueLevel, ms: think, skill: evSkill, format: fmt, comeback },
+          { priorRows: sessionLog.current, bests },
+        );
+        if (won) setReward({ ...won, at: Date.now() });
+      }
     }
     /* ── pacing, decided before the record is written so the record can carry it ──
        Answering the next question with the offer still on screen IS declining it, and is
@@ -1613,6 +1714,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const c = queue[pos];
     if (!c || !typed.trim()) return;
     const want = c.reading || c.term;
+    /* Same fix the choice formats already got, and the same bug: nothing was setting
+       thinkRef here, so every TYPED answer went into the log as ms: 0 — untimed. That
+       silently disabled the production latency norm (it needs timed correct answers, so it
+       could never form), the speed bonus in scoreAnswer, rapid-guess detection for fatigue,
+       and — the reason it surfaced — the personal-record reward, which cannot compare two
+       times when one of them is zero. Submitting IS the answer here, so the think time is
+       how long the card was on screen. */
+    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
     const ok = kanaEqual(toKana(typed.trim()), want);
     setVerdict({ ok, got: toKana(typed.trim()), want });
     setFlipped(true);
@@ -1681,6 +1790,35 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </>
           )}
         </div>
+        {/* ── today's missions (spec §§34–35) ──
+            Two or three goals rolled from the learner model and the curriculum, not from a
+            list of things an app would like you to do. They are READ-ONLY: none of them is
+            a button, because every one of them is completed by studying, and a chip that
+            started a special session would turn a goal into a mode.
+
+            Nothing is offered that today's state cannot finish — the satisfiability rule
+            lives in tools/missions.mjs — so a learner with a clean fortnight is never told
+            to go and recover two mistakes. Some days that leaves one chip, or none. */}
+        {missions.length > 0 && (
+          <div className="tc-missions">
+            <div className="tc-batchhead"><span>Today</span></div>
+            <div className="tc-missionrow">
+              {missions.map((m) => (
+                <div key={m.id} className={"tc-mission" + (m.complete ? " is-done" : "")}
+                     title={m.note}
+                     aria-label={m.label + " — " + m.done + " of " + m.need + (m.complete ? ", complete" : "")}>
+                  <span className="tc-missionmark" aria-hidden="true">{m.complete ? "✓" : "○"}</span>
+                  <span className="tc-missionlabel">{m.label}</span>
+                  <span className="tc-missioncount">{m.done}/{m.need}</span>
+                  <span className="tc-missionbar" aria-hidden="true">
+                    <i style={{ width: Math.round(m.pct * 100) + "%" }} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* The learner picks the scope; the engine still picks every exercise inside it
             (spec §14). Offered only once there IS an act to point at — before the first
             session "This lesson" would be a button that does nothing, and the honest
@@ -1998,6 +2136,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         </div>
       )}
 
+      {/* ── the memory check, announced ──
+          The same event as the banner below it, said one beat EARLIER — before the answer
+          instead of after. Afterwards it is a fact about a card; beforehand it is the
+          question the whole spacing model has been building towards, and the learner gets
+          to feel the stakes of it rather than being told they were met.
+
+          Suppressed while the previous answer's payoff is still on screen: two memory-check
+          messages at once is one too many, and the older one is the one being read. */}
+      {!flipped && !verdict && fmt !== "learn" && !(award && award.memory)
+        && memoryCheckAhead(live && live.fsrs && live.fsrs.S) && (
+        <div className="tc-memahead" key={"ma" + (card ? card.id : "") + pos} role="status">
+          <span aria-hidden="true">🧠</span>
+          <span>{MEMORY_CHECK_DAYS}+ days since this came up — let's see if it stuck.</span>
+        </div>
+      )}
+
       {/* The moment spacing visibly paid off. The scheduler had left this item alone for
           weeks precisely because it predicted the memory would hold — this is that
           prediction coming true, and it was previously invisible. */}
@@ -2017,6 +2171,33 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           {award.reasons.filter((r) => r.label !== "attempt").map((r) => (
             <span key={r.label}>{r.label}</span>
           ))}
+        </div>
+      )}
+
+      {/* What that answer MEANT, when it meant something (tools/rewards.mjs). One line, one
+          moment, and nothing to dismiss — it is replaced by the next answer's and vanishes
+          with the session. On most answers there is nothing here at all, which is the point:
+          a badge that appears every time is wallpaper. */}
+      {reward && (
+        <div className={"tc-reward is-" + reward.kind} key={"rw" + reward.at} role="status">
+          <span className="tc-rewardmark" aria-hidden="true">
+            {reward.kind === "comeback" ? "◆" : reward.kind === "speed-pr" ? "⚡" : "✦"}
+          </span>
+          <b>{reward.title}</b>
+          <span className="tc-rewardsub">{reward.detail}</span>
+        </div>
+      )}
+
+      {/* A mission clearing is the quietest of the three. It has already paid into the XP
+          counter at the top of the screen; this only says which one, so the learner is not
+          left wondering where twenty-five points came from. */}
+      {missionDone && (
+        <div className="tc-reward is-mission" key={"md" + missionDone.at} role="status">
+          <span className="tc-rewardmark" aria-hidden="true">✓</span>
+          <b>Mission complete</b>
+          <span className="tc-rewardsub">
+            {missionDone.mission.label}{missionDone.more > 0 ? " +" + missionDone.more + " more" : ""}
+          </span>
         </div>
       )}
 

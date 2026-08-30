@@ -139,6 +139,30 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sizesel{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:8px;}
 .tc-szbtn{appearance:none;border:0;background:transparent;color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:4px 11px;border-radius:8px;cursor:pointer;}
 .tc-szbtn.is-on{background:var(--washi);color:var(--ai);}
+/* ── mission chips ──
+   A stack, not a grid: each row is one sentence plus its count, and two of them side by
+   side on a 375px screen would truncate the label — which is the only part that says what
+   to go and do. Not buttons and not focusable, because none of them is an action: they are
+   completed by studying, and the study buttons are directly below. */
+.tc-missions{margin:0 0 4px;}
+.tc-missionrow{display:flex;flex-direction:column;gap:6px;}
+.tc-mission{position:relative;overflow:hidden;display:flex;align-items:center;gap:9px;
+  min-height:40px;padding:9px 13px;border-radius:var(--r-m);
+  background:var(--glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--gloss);font:var(--t-body-sm);color:var(--washi);}
+.tc-missionmark{flex:none;font-size:12px;color:var(--mut-2);}
+.tc-missionlabel{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}
+.tc-missioncount{flex:none;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--mut-2);}
+/* The progress read sits UNDER the row rather than beside it — a bar competing for the
+   same line as the label is what forced the label to truncate in the first place. */
+.tc-missionbar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(255,255,255,.06);}
+.tc-missionbar>i{display:block;height:100%;background:var(--info);transition:width .3s ease;}
+.tc-mission.is-done{color:var(--mut-2);}
+.tc-mission.is-done .tc-missionmark{color:var(--ok);}
+.tc-mission.is-done .tc-missionlabel{text-decoration:line-through;text-decoration-color:var(--outline-2);}
+.tc-mission.is-done .tc-missionbar>i{background:var(--ok);}
+@media (prefers-reduced-motion:reduce){ .tc-missionbar>i{transition:none;} }
+
 .tc-batchgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;}
 .tc-batchchip{appearance:none;text-align:left;border:0;position:relative;overflow:hidden;
   color:var(--washi);font:inherit;min-height:62px;padding:0;border-radius:16px;cursor:pointer;
@@ -221,6 +245,27 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background:linear-gradient(135deg,rgba(151,117,250,.18),rgba(77,171,247,.10));
   backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
   box-shadow:var(--gloss);animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
+/* Announced BEFORE the answer, so it is deliberately quieter than the payoff banner above:
+   an outline rather than a fill, because it is a question being asked and not a result. */
+.tc-memahead{display:flex;align-items:center;gap:9px;margin:0 0 12px;padding:10px 14px;
+  border-radius:var(--r-m);font:var(--t-body-sm);font-weight:600;color:var(--washi-2);
+  border:1px solid rgba(167,139,250,.32);background:rgba(167,139,250,.06);
+  animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
+
+/* One line, one moment. Sits where the award row does and reads as part of the same strip:
+   the award says what an answer was worth, this says what it meant. */
+.tc-reward{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 14px;
+  border-radius:var(--r-m);font:var(--t-body-sm);color:var(--washi);
+  background:var(--glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--gloss);animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
+.tc-reward b{font-weight:700;letter-spacing:.01em;}
+.tc-rewardsub{color:var(--mut-2);font-size:13px;}
+.tc-rewardmark{font-size:12px;}
+.tc-reward.is-comeback .tc-rewardmark{color:var(--ok);}
+.tc-reward.is-speed-pr .tc-rewardmark{color:var(--warn);}
+.tc-reward.is-no-hint .tc-rewardmark{color:var(--info);}
+.tc-reward.is-mission .tc-rewardmark{color:var(--ok);}
+
 .tc-stopnote{margin:-6px auto 16px;max-width:34ch;font-size:14px;line-height:1.5;color:var(--mut-2);}
 /* The offer to stop, above the next card. Deliberately quieter than .tc-memcheck and
    .tc-award: those celebrate something that happened, this asks a question, and a nudge
@@ -244,7 +289,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   color:rgb(232,191,90);letter-spacing:.04em;}
 .tc-donexp span{font-size:11px;font-weight:600;opacity:.65;letter-spacing:.14em;text-transform:uppercase;}
 @media (prefers-reduced-motion:reduce){
-  .tc-xp,.tc-award,.tc-memcheck{animation:none;}
+  .tc-xp,.tc-award,.tc-memcheck,.tc-memahead,.tc-reward{animation:none;}
 }
 @keyframes tc-rescue-in{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:none;}}
 @media (prefers-reduced-motion:reduce){ .tc-rescue{animation:none;} }
