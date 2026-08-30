@@ -40,12 +40,20 @@ const HTML = path.join(ROOT, "index.html");
 // commit does not re-dirty the tree and a future CI drift check needs no stamp carve-out.
 // (A dirty build that never gets committed wears a number the next real commit will take
 // over — the normal flow here always commits, so that stays theoretical.)
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 let STAMP;
 try {
-  const git = (cmd) => execSync(cmd, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  const n = Number(git("git rev-list --count HEAD"));
-  STAMP = "b" + (git("git status --porcelain") ? n + 1 : n);
+  /* execFileSync with an argv array, not execSync with a string: this also runs on the
+     Windows machine, where cmd.exe would not honour single-quoted pathspecs. */
+  const git = (...args) => execFileSync("git", args, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  /* Count only commits that can change this artifact. A CI or docs commit must NOT bump
+     the stamp: it does not rebuild index.html, so a plain count would leave the committed
+     artifact one number behind and the drift check red on every such commit — which is
+     exactly how the first CI run failed. Same pathspec for the dirty check, so a
+     docs-only edit does not predict a version bump either. */
+  const SCOPE = ["--", ".", ":(exclude).github", ":(exclude)docs", ":(exclude,glob)**/*.md"];
+  const n = Number(git("rev-list", "--count", "HEAD", ...SCOPE));
+  STAMP = "b" + (git("status", "--porcelain", ...SCOPE) ? n + 1 : n);
 } catch (e) {
   STAMP = "b-" + new Date().toISOString().slice(0, 10);   // no git (tarball checkout): date beats lying
 }
