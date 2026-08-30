@@ -941,7 +941,6 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      other decks' progress; keeping a stale copy meant a kanji answered in lesson one
      still looked untouched in lesson eight and was introduced as new every time. */
   const [foreignEpoch, setForeignEpoch] = useState(0);
-  useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length, foreignEpoch]);
 
   /* The study plan reaches the scheduler here: pace decides how long a session runs, the
      area priorities weight which decks it draws from, and the practice mode says whether to
@@ -951,6 +950,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     loadPlan().then(setPlan).catch(() => {});
     return subscribePlan(setPlan);
   }, []);
+  /* Below the plan, not above it: the scope setting is a dependency, and a dep array is
+     evaluated during render — reading `plan` before its useState would be a temporal dead
+     zone, which is a blank page rather than a stale one. */
+  useEffect(() => { loadForeignDecks(cards, plan.enrichment).then(setForeign).catch(() => {}); },
+            [cards.length, foreignEpoch, plan.enrichment]);
   /* Where Matthew is in the book. Derived from what he has actually answered rather than
      asked for, because a position he has to remember to update is a position that will be
      wrong by the second week — and it reads the deck's own history as well as the evidence
@@ -1929,6 +1933,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               a "new word" because you just missed it is the small dishonesty that makes an
               app feel like it is not paying attention. */}
           <span className="tc-kindchip tc-learnchip">{card._rescue ? "here it is" : "new word"}</span>
+          {/* Spec §32: enrichment is allowed, unannounced enrichment is not. A word being
+              met for the first time that is not in the textbook says so, so "why am I being
+              taught this" never has to be guessed. Introductions only — once a word has
+              been studied a few times, where it came from has stopped being the news. */}
+          {card.src === "freq" && !card._rescue && (
+            <span className="tc-kindchip tc-enrichchip">enrichment</span>
+          )}
           {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
           <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
           <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
@@ -2616,6 +2627,33 @@ function Plan({ cards = [] }) {
         </div>
       </section>
 
+      {/* ── scope control (spec §32) ──
+          The frequency list is ten thousand words long and the course deck has around
+          1,590 still unstudied, so with both admitted they compete for the same handful of
+          new-card slots every day. This is the one lever that settles it. It only ever
+          touches NEW words: switching to textbook only does not abandon a frequency word
+          already being learned, and the hint says so because otherwise it reads as if it
+          might. */}
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Where new words come from</h2>
+        <p className="tc-planhint">
+          Your course deck is always in. This says whether words from the frequency list —
+          common Japanese that isn't in the textbook — can also be introduced.
+        </p>
+        <div className="tc-modeseg" role="group" aria-label="Where new words come from">
+          {SCOPE_CHOICES.map(([on, label, note]) => (
+            <button key={label} className={"tc-segbtn" + (plan.enrichment === on ? " is-on" : "")}
+                    aria-pressed={plan.enrichment === on} title={note}
+                    onClick={() => update({ enrichment: on })}>{label}</button>
+          ))}
+        </div>
+        <p className="tc-planhint">
+          {plan.enrichment
+            ? "Enrichment words are marked in the session, so you always know which ones are outside the course."
+            : "Textbook only. Frequency words you've already started keep coming back for review — nothing you've begun is dropped."}
+        </p>
+      </section>
+
       {/* ── which lesson am I on ──
           "This lesson" and "Catch up" need a position in the book, and the derivation —
           latest act with any evidence — moves on a single curious answer. It is right
@@ -3217,10 +3255,27 @@ const PRACTICE_MODES = [
   ["review", "Catch up", "Older material that's due or shaky."],
 ];
 
+/* The two scopes, in student words — the same shape as PRACTICE_MODES, and rendered by the
+   same segmented control. Ordered with enrichment second so the strict option reads as the
+   narrower one; which of them is the DEFAULT is ENRICHMENT_DEFAULT's business, not this
+   list's order. */
+const SCOPE_CHOICES = [
+  [false, "Textbook only", "New words come from your course deck alone."],
+  [true, "Textbook + enrichment", "Common Japanese from outside the book can be introduced too, clearly marked."],
+];
+
 /* The acts the book actually has, read off curriculum.mjs's volume table rather than typed
    out here — Volume 3 arrives as a data row (spec §24) and this list grows with it. */
 const ACT_CHOICES = VOLUME_ACTS.flatMap((v) =>
   Array.from({ length: v.to - v.from + 1 }, (_, i) => v.from + i));
+
+/* Scope control (spec §32): does study stay inside the course, or may the frequency list
+   introduce words alongside it? Only the NEW intake is at stake — see freqPool.
+
+   DEFAULT SEAM — one line, and the only place the answer lives. true keeps today's
+   behaviour (enrichment on); flipping it to false makes strict textbook the default.
+   That flip is Matthew's open question, so it ships unflipped. */
+const ENRICHMENT_DEFAULT = true;
 
 const PLAN_DEFAULT = {
   vision: { fiveYear: "", oneYear: "", term: "" },
@@ -3231,6 +3286,10 @@ const PLAN_DEFAULT = {
      because it is the same kind of thing — a standing choice about how study should be
      shaped — and it syncs across his devices for free that way. */
   practice: "mix",
+  /* Whether words from outside the course may take new-card slots. Stored with the plan
+     for the same reason the practice mode is: it is a standing choice about the shape of
+     study, and it syncs across his devices for free here. */
+  enrichment: ENRICHMENT_DEFAULT,
   /* The act Current Lesson and Catch up point at. null means "work it out from what I have
      actually answered" (curriculum.mjs currentAct), which is right almost always; the
      number is here for the case where it is not, because "latest act with any evidence"
@@ -3251,6 +3310,9 @@ async function loadPlan() {
       // A mode name this build does not know falls back to the default rather than
       // silently arming nothing — a stored plan outlives the code that wrote it.
       practice: PRACTICE_MODES.some(([k]) => k === p.practice) ? p.practice : PLAN_DEFAULT.practice,
+      // Only a stored boolean counts. A plan written before this setting existed has no
+      // opinion, and the seam above — not whatever JSON coerces — decides for it.
+      enrichment: typeof p.enrichment === "boolean" ? p.enrichment : PLAN_DEFAULT.enrichment,
       actOverride: Number.isFinite(p.actOverride) ? p.actOverride : null,
     };
   } catch (e) { return { ...PLAN_DEFAULT }; }
@@ -3391,8 +3453,10 @@ async function recordForeign(card, ok, ms, area, outcome) {
   } catch (e) { /* a lost result is better than a broken session */ }
 }
 
-/* Load every other deck's items and stats, ready to hand to the session builder. */
-async function loadForeignDecks(cards) {
+/* Load every other deck's items and stats, ready to hand to the session builder.
+   `enrich` is the plan's scope setting; it reaches only the frequency branch below, which
+   is the one deck that is not part of the course. */
+async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
   const out = [];
   /* Kana is deliberately NOT pooled. Hiragana and katakana are memorised, so drilling a
      character in Smart Review spends a slot that a word or a kanji needed. The Kana tab
@@ -3437,7 +3501,9 @@ async function loadForeignDecks(cards) {
     const quota = Number(qRaw) || FREQ_DEFAULT_QUOTA;
     const today = days[localDayKey()];
     const room = Math.max(0, quota - ((today && today.fnew) || 0));
-    const { started, fresh } = freqPool(words, stats, { room });
+    /* Textbook-only closes the frontier and leaves `started` alone: no new frequency word
+       is offered, and every one already begun keeps reviewing on its own schedule. */
+    const { started, fresh } = freqPool(words, stats, { room, enrich });
     const items = [...started, ...fresh].map((x) => foreignCard("freq", x));
     out.push({ deck: "freq", items, stats: Object.fromEntries(items.map((i) => [i.id, i])) });
   } catch (e) {}

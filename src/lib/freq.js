@@ -81,14 +81,21 @@ export function freqStatsOf(cards) {
 
 /** What a session may draw on: everything started, plus the next unstarted ranks.
  *  `room` is how many new words the day still allows; when it is 0 the frontier is empty
- *  and only review material comes back, which is what a daily new-word limit is for. */
-export function freqPool(words, stats, { room = FREQ_DEFAULT_QUOTA, frontier = FREQ_FRONTIER } = {}) {
+ *  and only review material comes back, which is what a daily new-word limit is for.
+ *
+ *  `enrich` is scope control (spec §32). False means "textbook only": this list is outside
+ *  the course, so it may not spend a NEW slot while ~1,590 unstudied course words are
+ *  waiting for the same slots. It closes the frontier and nothing else — every word already
+ *  started still comes back on schedule, because a memory the learner has begun is theirs
+ *  and a setting that orphaned it would be a setting that loses work. */
+export function freqPool(words, stats, { room = FREQ_DEFAULT_QUOTA, frontier = FREQ_FRONTIER, enrich = true } = {}) {
   const st = stats || {};
   const started = [], fresh = [];
+  const intake = enrich ? room : 0;
   for (const w of words || []) {
     const s = st[w.t];
     if (s && (s.seen || 0) > 0) started.push(freqCard(w, s));
-    else if (room > 0 && fresh.length < Math.min(frontier, room * 3)) fresh.push(freqCard(w, null));
+    else if (intake > 0 && fresh.length < Math.min(frontier, intake * 3)) fresh.push(freqCard(w, null));
   }
   return { started, fresh };
 }

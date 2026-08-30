@@ -9,6 +9,7 @@ import {
   normaliseScope, scopeShiftFor, SCOPE_MODES, skillOf,
 } from "./session.mjs";
 import { provenanceOf } from "./curriculum.mjs";
+import { freqPool } from "../src/lib/freq.js";
 import { abilityFrom, predictSuccess, CUE } from "./learner.mjs";
 
 let fail = 0, run = 0;
@@ -986,6 +987,67 @@ t("skillOf carries the rolling windows the estimators read", () => {
   const legacy = { seen: 10, correct: 9, fsrs: { S: 4, last: NOW } };
   eq("recent" in skillOf(legacy, "fsrs"), false, "no window → no field, not an empty one");
   ok(abilityFrom(skillOf(legacy, "fsrs")).mean > 0, "legacy records still estimate");
+});
+
+// ── scope control: textbook only vs enrichment (MP-21, spec §32) ──
+// The frequency list is ten thousand words and the course deck has ~1,590 still unstudied,
+// so both admitted means they compete for the same few new-card slots every day. The
+// setting closes the frequency FRONTIER and nothing else — the property worth asserting is
+// not that strict mode is quiet but that it is quiet WITHOUT dropping a started memory.
+console.log("\n=== scope control (MP-21) ===");
+
+// freq.json rows as the app receives them: terse, and ranked, so f0 is the commonest word.
+const FREQ_ROWS = Array.from({ length: 60 }, (_, i) => ({ t: "f" + i, r: "f" + i, m: "gloss " + i, p: "n", k: i + 1 }));
+// Two words already begun, both decayed enough to have a real claim on a slot rather than
+// merely being eligible for one. f3 is nearly lost; a session that skips it is a bug.
+const FREQ_STATS = { f3: studied("f3", 3, 60), f7: studied("f7", 5, 40) };
+// The same mapping loadForeignDecks does — the deck name goes into the id, which is how a
+// graded answer finds its way back to the right store.
+const freqSource = (opts) => {
+  const { started, fresh } = freqPool(FREQ_ROWS, FREQ_STATS, opts);
+  const items = [...started, ...fresh].map((x) => ({ ...x, id: "freq:" + x.id, src: "freq" }));
+  return { deck: "freq", caps: { type: true, listen: true }, items,
+           stats: Object.fromEntries(items.map((i) => [i.id, i])) };
+};
+const freqPicks = (opts) => buildSession([freqSource(opts), deck("vocab", 20, (i) => (i < 10 ? studied("vocab" + i, 8, 12) : null))],
+                                         { now: NOW, size: 30 });
+
+t("textbook only admits no NEW frequency word", () => {
+  const { started, fresh } = freqPool(FREQ_ROWS, FREQ_STATS, { room: 15, enrich: false });
+  eq(fresh.length, 0, "the frontier is closed");
+  const picks = freqPicks({ room: 15, enrich: false });
+  const news = picks.filter((p) => p.fresh && p.item.src === "freq");
+  eq(news.length, 0, "and nothing new from the list reaches the session");
+  // Not merely "the session was empty of freq": there is room, and the vocab deck spends it.
+  gt(picks.filter((p) => p.fresh).length, 0, "the new slots still get used, by the course deck");
+});
+
+t("a frequency word already started keeps reviewing under textbook only", () => {
+  // The whole risk of a scope switch is orphaning a memory the learner has begun. Both
+  // started words survive the pool, and the decayed one is actually scheduled.
+  const { started } = freqPool(FREQ_ROWS, FREQ_STATS, { room: 15, enrich: false });
+  eq(started.length, 2, "both started words are still pooled");
+  ok(started.every((c) => c.seen > 0), "and they arrive with their history attached");
+  const ids = new Set(freqPicks({ room: 15, enrich: false }).map((p) => p.item.id));
+  ok(ids.has("freq:f3"), "the nearly-lost word is still scheduled");
+});
+
+t("enrichment is the untouched path, pick for pick", () => {
+  // The setting has to be provably inert when it is on: a session built with enrich:true
+  // must be the session the app built before the option existed. Compared as serialised
+  // picks rather than as counts, because "same number of cards" is not the same session.
+  const before = JSON.stringify(freqPicks({ room: 15 }));
+  const after = JSON.stringify(freqPicks({ room: 15, enrich: true }));
+  eq(after, before, "explicit enrichment builds byte-for-byte what the default builds");
+  gt(freqPool(FREQ_ROWS, FREQ_STATS, { room: 15, enrich: true }).fresh.length, 0,
+     "and it is a live path, not an empty one on both sides");
+});
+
+t("the daily quota still binds inside enrichment mode", () => {
+  // Strict mode is a second gate, not a replacement for the first: a day whose new-word
+  // budget is spent introduces nothing either way.
+  eq(freqPool(FREQ_ROWS, FREQ_STATS, { room: 0, enrich: true }).fresh.length, 0);
+  eq(freqPool(FREQ_ROWS, FREQ_STATS, { room: 0, enrich: false }).fresh.length, 0);
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} session tests passed`);

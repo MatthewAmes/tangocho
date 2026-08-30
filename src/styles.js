@@ -292,6 +292,10 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-learn-tap:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:3px;}
 .tc-learn-tap:hover{background:radial-gradient(140% 130% at 30% -12%, rgba(124,92,255,.3) 0%, rgba(64,84,168,.16) 45%, rgba(255,255,255,.06) 80%);}
 .tc-learnchip{background:rgba(120,220,170,.2);color:#c8f5df;}
+/* The other side of the card from the new-word chip, because both are absolute and both
+   want the top edge. Amber: this is a heads-up about where the word came from, not a
+   correctness signal. */
+.tc-enrichchip{right:auto;left:18px;background:rgba(245,158,11,.2);color:#ffdda8;}
 .tc-mcchip{background:rgba(140,170,255,.2);color:#d3e0ff;}
 .tc-listenchip{background:rgba(255,200,120,.2);color:#ffe2b8;}
 .tc-learnnote{margin:6px 0 0;font-size:13px;color:rgba(255,255,255,.6);text-align:center;}
