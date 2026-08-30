@@ -39,14 +39,17 @@ jobs:
           cache: npm
       - name: Install (root + tools via postinstall)
         run: npm ci
+      - name: Build
+        # Before the tests: test-modules.mjs reads cf/public/freq.json, which is a build
+        # product (cf/public is gitignored), so a fresh checkout has no such file until
+        # the build has run. Locally this is invisible because everyone builds constantly.
+        run: npm run build
       - name: Tests
-        # Node 24.7 on macOS intermittently SIGSEGVs during exit teardown after suites
+        # Node 24.x on macOS intermittently SIGSEGVs during exit teardown after suites
         # pass (tools/build.mjs documents it). If the same flake appears on Linux, one
         # retry distinguishes it from a real failure: assertions are deterministic here,
         # so a suite that truly fails, fails twice.
         run: npm test || npm test
-      - name: Build
-        run: npm run build
       - name: Committed index.html matches the source (drift check)
         run: |
           git diff --stat --exit-code index.html \
