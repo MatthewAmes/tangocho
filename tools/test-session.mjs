@@ -7,14 +7,16 @@ import {
   DEFAULTS, need, daysSince, isStale, pacePerItem, budgetFor,
   candidates, buildSession, describe, formatFor, withFormats, FORMATS, pacePerDeck,
   normaliseScope, scopeShiftFor, SCOPE_MODES, skillOf,
+  curriculumShiftFor, varietyPenalty, interventionFor,
 } from "./session.mjs";
 import { provenanceOf } from "./curriculum.mjs";
 import { freqPool } from "../src/lib/freq.js";
-import { abilityFrom, predictSuccess, CUE } from "./learner.mjs";
+import { abilityFrom, predictSuccess, modesForFormat, CUE } from "./learner.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
 const gt = (a, b, m) => { if (!(a > b)) throw new Error(`${m || ""} expected ${a} > ${b}`); };
+const lt = (a, b, m) => { if (!(a < b)) throw new Error(`${m || ""} expected ${a} < ${b}`); };
 const lte = (a, b, m) => { if (!(a <= b)) throw new Error(`${m || ""} expected ${a} <= ${b}`); };
 const gte = (a, b, m) => { if (!(a >= b)) throw new Error(`${m || ""} expected ${a} >= ${b}`); };
 const eq = (a, b, m) => { if (a !== b) throw new Error(`${m || ""} expected ${b}, got ${a}`); };
@@ -949,6 +951,220 @@ t("the shift is symmetric, and published on the candidate only when it applies",
   const scoped = candidates(modeDeck(), { now: NOW, scope: { mode: "current", act: ACT_NOW } });
   eq(scoped.find((c) => c.item.id === "cur0").scopeShift, DEFAULTS.scopeWeight);
   eq(scoped.find((c) => c.item.id === "old0").scopeShift, 0);
+});
+
+console.log("\n=== curriculum relevance in the default session ===");
+/* A synthetic learner half-way through the book, and a book to be half-way through. Twelve
+   acts, four studied words each, EVERY ONE IN THE SAME MEMORY STATE — identical stability,
+   identical elapsed days, identical streak — so whatever leans is the new term and not decay
+   wearing its coat. Plus the item §15 and §16 are really about: an Act-3 word that has
+   genuinely faded, which has to reach the session anyway. */
+const ACT_HERE = 8;
+const bookDeck = () => {
+  const items = [], stats = {};
+  for (let act = 1; act <= 12; act++) {
+    for (let i = 0; i < 4; i++) {
+      const id = "a" + act + "w" + i;
+      items.push({ id, term: id, sec: act + "-2", order: act * 10 + i });
+      stats[id] = studied(id, 20, 8);                     // need 0.34, whichever act it is in
+    }
+  }
+  // r 0.60, need 3.20, and stale on top of that.
+  items.push({ id: "act3Fading", term: "act3Fading", sec: "3-4", order: 39 });
+  stats.act3Fading = studied("act3Fading", 5, 30);
+  return [{ deck: "vocab", caps: { type: true, listen: true }, items, stats }];
+};
+// Share of the session's distinct items drawn from a span of acts.
+const spanShare = (picks, lo, hi) => {
+  const seen = new Set();
+  let hit = 0, n = 0;
+  for (const p of picks) {
+    const k = p.deck + " " + p.item.id;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const act = provenanceOf(p.item).act;
+    n++;
+    if (act !== null && act >= lo && act <= hi) hit++;
+  }
+  return n ? hit / n : 0;
+};
+const runBook = (extra = {}) => buildSession(bookDeck(), { now: NOW, size: 20, seed: "mp06", ...extra });
+
+t("a learner mid-Act-8 gets a session that leans on Acts 7–9", () => {
+  const here = spanShare(runBook({ act: ACT_HERE }), 7, 9);
+  const flat = spanShare(runBook(), 7, 9);
+  gt(here, flat, "knowing where the learner is should pull the session towards it");
+  // A fixture where every memory is in the same state is the hardest case for a weight this
+  // small: with nothing to choose between on need, the term is competing against the full
+  // jitter band. Nearly doubling the share of the three current acts is what it buys.
+  gte(here, 1.7 * flat, "and pull it far enough to feel like staying in the course (§16)");
+  // The far end of the book is what gives way — decayed by distance, not cut off at a line.
+  gt(spanShare(runBook(), 1, 3), spanShare(runBook({ act: ACT_HERE }), 1, 3));
+  console.log("        Acts 7–9 share — knowing the act " + here.toFixed(2) + " · not knowing it " + flat.toFixed(2));
+});
+t("§16 does not cost §15: the due Act-3 word still gets in", () => {
+  // The reason this is a small weight rather than a curriculum filter. A word actually
+  // being lost outranks curriculum relevance at any setting of the knob.
+  ok(inSession(runBook({ act: ACT_HERE }), "act3Fading"), "the fading Act-3 word must still get in");
+  ok(inSession(runBook({ act: ACT_HERE, curriculumWeight: 20 }), "act3Fading"),
+     "and no amount of curriculum relevance may buy its way past a decaying memory");
+});
+t("the knob at zero is byte-for-byte the session this file already built", () => {
+  const base = JSON.stringify(runBook());
+  eq(JSON.stringify(runBook({ act: ACT_HERE, curriculumWeight: 0 })), base, "weight 0 is off");
+  eq(JSON.stringify(runBook({ act: null })), base, "and so is a learner with no position yet");
+  eq(JSON.stringify(runBook({ act: undefined })), base, "...or a caller that never had one");
+  const off = candidates(bookDeck(), { now: NOW, act: ACT_HERE, curriculumWeight: 0 });
+  eq("curriculumShift" in off[0], false, "off means no field at all, not a field holding zero");
+});
+t("relevance decays with distance, and unplaced material is left alone", () => {
+  const at = (act) => curriculumShiftFor({ id: "x", term: "x", sec: act + "-2" }, ACT_HERE);
+  eq(at(8), DEFAULTS.curriculumWeight, "the current act gets the whole weight");
+  eq(at(7), DEFAULTS.curriculumWeight / 2, "a neighbour gets half");
+  eq(at(9), at(7), "and the decay is symmetric — the book has a past and a future");
+  gt(at(7), at(6));
+  gt(at(6), at(5));
+  gt(at(1), 0, "no cutoff: distance keeps mattering rather than stopping at a line");
+  // The same honesty rule the scope shift follows: class days, manga and the non-textbook
+  // decks are not in NihonGO NOW!, so they are neither boosted nor demoted.
+  eq(curriculumShiftFor({ id: "x", term: "x", sec: "DB 8–9" }, ACT_HERE), 0);
+  eq(curriculumShiftFor({ id: "x", term: "x", sec: "7/20" }, ACT_HERE), 0);
+  eq(curriculumShiftFor({ id: "x", term: "x" }, ACT_HERE), 0);
+  eq(curriculumShiftFor({ id: "x", term: "x", sec: "8-2" }, null), 0, "no position, no lean");
+});
+t("a chosen practice mode turns the default lean off", () => {
+  // Two curriculum terms pulling on the same act at once is the multi-term scheduler the
+  // roadmap says not to build — in Cumulative Review they would fight. One or the other.
+  const scope = { mode: "current", act: ACT_HERE };
+  eq(JSON.stringify(buildSession(bookDeck(), { now: NOW, size: 20, seed: "mp06", scope, act: ACT_HERE })),
+     JSON.stringify(buildSession(bookDeck(), { now: NOW, size: 20, seed: "mp06", scope })),
+     "a scoped session ignores the default lean entirely");
+  const scoped = candidates(bookDeck(), { now: NOW, act: ACT_HERE, scope });
+  eq("curriculumShift" in scoped[0], false, "and carries no curriculum field to argue with");
+  eq(scoped.find((c) => c.item.id === "a8w0").scopeShift, DEFAULTS.scopeWeight);
+});
+t("the weight is sized against need, and the ordering is asserted not described", () => {
+  // 0.6 is the smallest thing `need` itself ever adds — the bump for a broken streak. A lean
+  // nobody asked for has to be worth less than the weakest memory signal in the formula.
+  lt(DEFAULTS.curriculumWeight, 0.6, "curriculum relevance must not outweigh a broken streak");
+  lt(DEFAULTS.curriculumWeight, DEFAULTS.scopeWeight, "...nor a mode the learner chose");
+  lt(DEFAULTS.curriculumWeight, 4, "...nor, by a mile, the decay bonus");
+  // Stated in the units that matter: `need` is (1 - recall) * 8, so the whole weight is
+  // worth this much predicted recall and no more.
+  const recallPoints = DEFAULTS.curriculumWeight / 8;
+  lt(recallPoints, 0.1, "a current-act word may outrank one at most this much safer");
+});
+
+console.log("\n=== session variety ===");
+/* Evidence rows as the session's own log holds them: makeEvidence writes the format and the
+   cognitive modes that format demands (learner.mjs FORMAT_MODES). */
+const shown = (format, n = 3) => Array.from({ length: n }, () => ({ format, mode: modesForFormat(format) }));
+/* Two words in the SAME memory state — identical need, so nothing but variety is left to
+   separate them — that the engine would nonetheless ask differently. One has demonstrated
+   reading and no sentence to sit in, so it is a flip card; the other has a sentence, so it
+   is a cloze. `need` reads only the recognition FSRS record, which is identical in both. */
+const READING = { seen: 40, correct: 40, recent: "1111111111" };
+const CONTEXTUAL = { rseen: 20, rcorrect: 19, rfsrs: { S: 12, D: 5, last: NOW - 8 * DAY } };
+const twinDeck = (S = 20, ago = 8) => [{
+  deck: "vocab",
+  items: [{ id: "flip", caps: {} }, { id: "inSentence", caps: { context: true } }],
+  stats: { flip: studied("flip", S, ago, READING), inSentence: studied("inSentence", 20, 8, CONTEXTUAL) },
+}];
+const twinScores = (extra = {}) => {
+  const c = candidates(twinDeck(extra.S, extra.ago), { now: NOW, seed: "tie", recent: extra.recent });
+  return { flip: c.find((x) => x.item.id === "flip"), inSentence: c.find((x) => x.item.id === "inSentence") };
+};
+
+t("format and cognitive mode are penalised separately", () => {
+  eq(varietyPenalty([], { format: "mc" }), 0, "no history, nothing to avoid");
+  eq(varietyPenalty(shown("mc"), { format: "mc" }), DEFAULTS.varietyWeight,
+     "the same question a fourth time costs the lot");
+  // type is recall + production; mc is recognition. Nothing in common, nothing to pay.
+  eq(varietyPenalty(shown("mc"), { format: "type" }), 0, "a genuinely different demand is free");
+  // listen is listening + recognition: a different-looking screen asking one of the same
+  // things. Half relief, which is the whole reason §12 separates format from mode.
+  eq(varietyPenalty(shown("mc"), { format: "listen" }), DEFAULTS.varietyWeight / 2,
+     "visual variety without cognitive variety earns half the relief");
+  // A row from before mode tagging has no `mode`; its format's modes are read from the
+  // table, the same fallback makeEvidence itself uses.
+  eq(varietyPenalty([{ format: "mc" }], { format: "mc" }), DEFAULTS.varietyWeight);
+  eq(varietyPenalty([{ ok: true }, {}], { format: "mc" }), 0, "a row with no format says nothing");
+});
+t("the window and the penalty size are both knobs", () => {
+  const log = [...shown("mc", 5), ...shown("type", 3)];
+  eq(varietyPenalty(log, { format: "mc" }), 0, "three answers ago is already long enough");
+  eq(varietyPenalty(log, { format: "mc" }, { varietyWindow: 8 }),
+     DEFAULTS.varietyWeight * (5 / 8 + 5 / 8) / 2, "a wider window remembers the mc run");
+  eq(varietyPenalty(log, { format: "type" }, { varietyWeight: 0 }), 0, "and zero turns it off");
+  eq(varietyPenalty(log, { format: "type" }, { varietyWindow: 0 }), 0);
+});
+t("two candidates of equal value: the one that is not a repeat wins", () => {
+  const plain = twinScores();
+  eq(plain.flip.need, plain.inSentence.need, "the fixture must put both memories in the same place");
+  eq(interventionFor(plain.flip).format, "recall");
+  eq(interventionFor(plain.inSentence).format, "cloze");
+  // Asked one way, then the other. The jitter is identical in both runs, so the only thing
+  // that moves is which of the two was just on screen — and it moves the right way.
+  const afterRecall = twinScores({ recent: shown("recall") });
+  const afterCloze = twinScores({ recent: shown("cloze") });
+  gt(afterRecall.inSentence.score - afterRecall.flip.score,
+     afterCloze.inSentence.score - afterCloze.flip.score,
+     "whichever format was just asked three times should go second");
+  // ...and on this seed the jitter alone would have put the flip card first, so the
+  // tie-break genuinely reorders rather than merely narrowing a gap.
+  gt(plain.flip.score, plain.inSentence.score, "unvaried, the flip card leads");
+  gt(afterRecall.inSentence.score, afterRecall.flip.score, "after a run of flip cards, it does not");
+});
+t("a higher-value candidate still beats a varied lower-value one", () => {
+  // The same pair, except the flip card has genuinely decayed — and it is also the format
+  // just asked three times, so variety is pushing as hard as it can in the wrong direction.
+  const decayed = twinScores({ S: 2, ago: 30, recent: shown("recall") });
+  gt(decayed.flip.need, decayed.inSentence.need + 1, "the fixture must make one clearly needier");
+  gt(decayed.flip.score, decayed.inSentence.score, "learning value first; variety second");
+});
+t("variety cannot widen the tie-break band", () => {
+  /* The band is this file's standing promise: a spread narrow enough that it cannot reorder
+     a real priority. Variety is paid OUT of it, so the promise is unchanged — and that is
+     asserted against a hostile history and an absurd weight rather than assumed. */
+  const src = bookDeck();
+  // The score with the band closed: need, the decay bonus and the deck weight, and nothing
+  // else. Every run below is measured against this rather than against another jittered run.
+  const pure = candidates(src, { now: NOW, seed: "band", jitterBand: 0 });
+  const runs = [candidates(src, { now: NOW, seed: "band" })];
+  for (const fmt of ["mc", "recall", "type", "listen", "cloze"]) {
+    runs.push(candidates(src, { now: NOW, seed: "band", recent: shown(fmt) }));
+    runs.push(candidates(src, { now: NOW, seed: "band", recent: shown(fmt), varietyWeight: 99 }));
+  }
+  for (const run of runs) {
+    for (let i = 0; i < pure.length; i++) {
+      lte(Math.abs(run[i].score - pure[i].score), DEFAULTS.jitterBand + 1e-12,
+          "no score may move further than the band it lives in");
+    }
+    // ...so a pair the band could not already have swapped still cannot be swapped.
+    for (let i = 0; i < pure.length; i++) {
+      for (let j = 0; j < pure.length; j++) {
+        if (pure[i].score - pure[j].score <= DEFAULTS.jitterBand) continue;
+        gt(run[i].score, run[j].score, "a real priority gap must survive any history");
+      }
+    }
+  }
+});
+t("no usable history is the session this file already built", () => {
+  const base = JSON.stringify(buildSession(bookDeck(), { now: NOW, size: 20, seed: "mp10" }));
+  // Including a log made entirely of rows written before formats were recorded: nothing to
+  // react to has to mean the untouched path, not a path that happens to score zero.
+  for (const recent of [undefined, null, [], [{}, { ok: true, ms: 900 }]]) {
+    eq(JSON.stringify(buildSession(bookDeck(), { now: NOW, size: 20, seed: "mp10", recent })), base,
+       "recent " + JSON.stringify(recent) + " should change nothing");
+  }
+  eq(JSON.stringify(buildSession(bookDeck(), { now: NOW, size: 20, seed: "mp10",
+                                              recent: shown("mc"), varietyWeight: 0 })), base,
+     "and the weight knob turns it off outright");
+});
+t("variety is the smallest term in the file, deliberately", () => {
+  lte(DEFAULTS.varietyWeight, DEFAULTS.jitterBand, "it has to fit inside the band it is paid from");
+  lt(DEFAULTS.varietyWeight, DEFAULTS.curriculumWeight, "...and below the smallest real scoring term");
+  gt(DEFAULTS.varietyWindow, 0);
 });
 
 console.log("\n=== describe ===");

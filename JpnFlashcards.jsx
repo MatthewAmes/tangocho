@@ -1041,8 +1041,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     /* The practice mode arrives as a scope, and only as a scope: on "mix" — the default —
        session.mjs takes the untouched path, so nothing about Smart Review changes unless
        Matthew chooses it. */
+    /* `act` is the same fact the scope carries, handed over separately because it is a fact
+       about Matthew and not about the mode: Smart Mix has no mode and still has a position,
+       and that position is what the default session's curriculum lean is computed from. The
+       scheduler ignores it whenever a mode IS chosen — the two leans are exclusive.
+
+       `recent` is this session's own answered rows, and only those: variety is a property of
+       what you have just been asked, not of your history, and nothing here is stored. It is
+       a tie-break inside the jitter band, so it cannot reorder anything the memory model
+       actually cares about. Note where it bites — the ORDER of a session is fixed when the
+       session starts (see `start` below, which snapshots the queue on purpose so a rebuild
+       cannot lose your place mid-run), so this shapes the NEXT session built: Go again, or a
+       second Smart Review after a section drill. Reordering the live queue is a separate
+       decision and deliberately not taken here. */
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
-                                  exclude: heldOut, scope: { mode: plan.practice, act: actNow } });
+                                  exclude: heldOut, scope: { mode: plan.practice, act: actNow },
+                                  act: actNow, recent: sessionLog.current });
     // retention.target: not a dep in the usual sense (it's a module `let`, not props/state) but
     // isLeech/dueness read it live, and the retention chip's onClick bumps `retentionPref`
     // right alongside it — so this recomputes on the same render that value changes.

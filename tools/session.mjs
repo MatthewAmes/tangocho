@@ -29,11 +29,21 @@
       practice modes — Current Lesson, Cumulative Review, Smart Mix — enter through the
       `scope` option and move ONE weight. Smart Mix is the absence of a scope, so the
       default session is bit-for-bit the one this file has always built. See the scope
-      block below for why a weight and not a filter. */
+      block below for why a weight and not a filter.
+
+   5. REVIEW SHOULD FEEL LIKE STAYING IN THE COURSE (spec §13, §16). Smart Mix — where the
+      learner has asked for nothing in particular — still knows where they are in the book,
+      and leans very gently towards it: a boost that decays with distance in acts, small
+      enough that it cannot outrank any memory signal in `need`. See curriculumShiftFor.
+
+   6. VARIETY IS A TIE-BREAK AND NOTHING MORE (spec §37). Four translations in a row is a
+      worse session than three; a fading word skipped for the sake of that is a worse
+      session still. So the variety penalty is confined to the jitter band, arithmetically
+      rather than by good intentions. See varietyPenalty. */
 
 import { retrievability, seedFromHistory } from "./fsrs.mjs";
-import { chooseIntervention, TARGET_SUCCESS } from "./learner.mjs";
-import { provenanceOf } from "./curriculum.mjs";
+import { chooseIntervention, modesForFormat, TARGET_SUCCESS } from "./learner.mjs";
+import { actDistance, provenanceOf } from "./curriculum.mjs";
 
 const DAY = 86400000;
 
@@ -85,6 +95,29 @@ export const DEFAULTS = {
      top of its need, and the stale reserve hands it a slot before ordering is consulted at
      all. Raising this weight buys focus and cannot buy its way past a decaying memory. */
   scopeWeight: 2.2,
+  /* How hard the DEFAULT session leans on where the learner is in the book. The second
+     scoring term (roadmap: one at a time, with a test), and it is sized the same way the
+     first one was — against `need`, so what it can and cannot outrank is a statement and
+     not a hope.
+
+     0.5 is smaller than 0.6, which is the smallest thing `need` itself ever adds — the bump
+     an item gets purely for having its current streak broken. So curriculum proximity is
+     worth less than the weakest memory signal in the formula, and by a long way less than
+     the +4 a decaying item carries or the 2.2 of a mode the learner explicitly chose. That
+     ordering is the whole justification and it is asserted, not described.
+
+     What 0.5 actually buys, stated in the units that matter: `need` is (1 - recall) * 8, so
+     half a point is 6 percentage points of predicted recall. A current-act word is preferred
+     over an older word that the model rates up to 6 points safer, and over nothing else. It
+     is a lean, not a filter, and every §15 protection still stands above it. */
+  curriculumWeight: 0.5,
+  /* Variety (spec §37), which is deliberately NOT a scoring term in the sense the two above
+     are. See varietyPenalty: it is subtracted inside the jitter band, so its whole range is
+     smaller than the spread this file already calls "never wide enough to reorder
+     priorities". Learning value first; variety only decides between things the model has
+     nothing left to say about. */
+  varietyWindow: 3,     // how many recent answers count as "just asked"
+  varietyWeight: 0.12,  // ...and the most a full repeat can cost, well inside jitterBand
 };
 
 /* How badly an item needs to be seen. Higher = sooner.
@@ -312,9 +345,10 @@ export function budgetFor(sources, opts = {}) {
    Kana, kanji, dates and frequency items are unplaced for the same honest reason: they are
    not in NihonGO NOW! at all, so they keep exactly the share vocabShare already gives them.
 
-   Deliberately NOT here, and worth someone's next issue: a graded pull towards NEARBY acts
-   (curriculum.mjs has sceneDistance and actDistance ready for it). That is a second scoring
-   term, and the roadmap is explicit about adding them one at a time. */
+   The graded pull towards NEARBY acts that this block used to name as future work is the
+   next block down — curriculumShiftFor — and it is a separate term with its own test,
+   because the roadmap is explicit about adding them one at a time. The two never run
+   together: a chosen scope turns the default lean off. */
 export const SCOPE_MODES = ["current", "review", "mix"];
 
 /* A scope worth acting on, or null. Null means "build the session you always did", so both
@@ -340,6 +374,107 @@ export function scopeShiftFor(item, scope, opts = {}) {
   return scope.mode === "current" ? w : -w;
 }
 
+/* ── curriculum relevance in the DEFAULT session (spec §13, §16) ──
+   The practice modes above only move when the learner asks them to. This one is always on,
+   and it is the half of §13 the scoring formula was missing: candidate value is curriculum
+   relevance AND learner need, and until now it was learner need alone. §16 puts it in the
+   learner's words — review should feel like staying in the course rather than being thrown
+   back across the book — and that is a property of the ordinary session, not of a mode.
+
+   ADDED, THOUGH §13 SAYS "TIMES". A multiplicative term scales whatever it multiplies, and
+   what it would be multiplying here includes the +4 a decaying item carries — so a fading
+   current-act word would get the boost amplified by exactly the signal that is supposed to
+   be untouchable, and the §15 guarantee would depend on the weight after all. Added, the
+   term is a fixed half-point that can be compared against every other number in DEFAULTS
+   and reasoned about on its own. Relevance modulating need is the better model and it needs
+   the protections rewritten first; this is the term the roadmap actually asked for.
+
+   A GRADED PULL, NOT A BAND. The obvious version is "current act plus or minus one", and it
+   has a cliff in it: on the day the current act ticks from 8 to 9, everything in Act 7 drops
+   from boosted to nothing at all, and the session lurches for no reason the learner did
+   anything to cause. Decay with distance instead — w, w/2, w/3, w/4 … — and the same tick
+   moves every item by a little. It is also the honest shape: relevance genuinely does fade
+   with distance rather than ending at a line someone drew.
+
+   No cutoff, for the same reason. Act 1 against a learner on Act 8 is w/8, which is 0.0625
+   — smaller than a rounding error in `need` — so a cutoff would buy nothing and add a second
+   number to argue about. One knob, one curve.
+
+   OFF WHENEVER A SCOPE IS ON, which callers get for free from candidates(). Two curriculum
+   terms pulling on the same act at once is exactly the multi-term scheduler the roadmap
+   says not to build: in Cumulative Review they would fight (-2.2 against +0.5) and in
+   Current Lesson they would stack, and either way there is no longer one number to tune.
+   The learner asked for a scope or they did not; one of the two terms is live, never both.
+
+   Unplaced items get zero, the same rule and for the same reason as the scope shift: 5.6%
+   of the deck is class-day notes and manga pages, and kana, kanji and dates are not in
+   NihonGO NOW! at all. A guessed act would put a permanent thumb on a guess.
+
+   It moves REVIEW ordering only. New intake is still sorted by `order` — the lesson number —
+   because meeting words in the order the book teaches them is the point, and that already
+   walks forward through the curriculum on its own. The scope shift gets a say there because
+   Current Lesson would otherwise hand every new slot to the earliest unstudied word in the
+   book; a half-point default lean has no such problem to solve. */
+export function curriculumShiftFor(item, act, opts = {}) {
+  const w = opts.curriculumWeight ?? DEFAULTS.curriculumWeight;
+  if (!(w > 0) || !Number.isFinite(act)) return 0;
+  // actDistance compares two placeable things, so the learner's position is handed to it as
+  // the provenance record it would have had — the textbookId key is what marks it as one.
+  const d = actDistance(item, { textbookId: null, act, scene: null });
+  return d === null ? 0 : w / (1 + d);
+}
+
+/* ── variety, as a tie-break and only as a tie-break (spec §37) ──
+   Asking for translation four times running is a worse session than asking for it three
+   times. Skipping a word the learner is about to lose so that the fourth question can look
+   different is a MUCH worse session, and §37 says so in as many words: track recent
+   formats and modes, but never sacrifice a critical learning opportunity for variety.
+
+   The way that promise is kept here is arithmetic rather than intention. candidates() pays
+   the penalty out of the jitter band: jitter narrows by exactly the width variety is given,
+   so the total spread of everything below `need` is the same jitterBand it was before this
+   function existed. The band is already documented as "tie-break spread only — never wide
+   enough to reorder priorities", and variety inherits that guarantee rather than asking for
+   a new one. A varietyWeight turned up past the band does not escape it either — it just
+   takes the whole band and leaves jitter nothing.
+
+   FORMAT AND COGNITIVE MODE ARE SCORED SEPARATELY, which is the entire point of the mode
+   taxonomy in learner.mjs (spec §12). A run of mc, then match, then a listening choice is
+   three different-looking screens that all asked "find the answer among these" — visual
+   variety mistaken for cognitive variety, and countable only if the two are counted apart.
+   Repeating the format costs the full penalty (a format repeat is a mode repeat by
+   definition); a new format that demands the same head-work costs half. A row from before
+   mode tagging existed carries no `mode`, so its format's modes are read from the table —
+   the same fallback makeEvidence itself uses.
+
+   Pure, and callable two ways: a candidate that already knows its format is scored as-is
+   (which is what the tests do), and a session candidate that does not gets the intervention
+   it would be asked as, from the same function that will choose it for real at serve time.
+   That is a projection, not a guess. */
+export function varietyPenalty(recent, candidate, opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  if (!(o.varietyWeight > 0) || !(o.varietyWindow > 0)) return 0;
+  const rows = [];
+  const list = recent || [];
+  for (let i = list.length - 1; i >= 0 && rows.length < o.varietyWindow; i--) {
+    if (list[i] && list[i].format) rows.push(list[i]);
+  }
+  if (!rows.length || !candidate) return 0;
+
+  const format = candidate.format || (candidate.item ? interventionFor(candidate, o).format : null);
+  if (!format) return 0;
+  const own = Array.isArray(candidate.mode) && candidate.mode.length ? candidate.mode : modesForFormat(format);
+  const modes = new Set(own);
+
+  let sameFormat = 0, sameMode = 0;
+  for (const r of rows) {
+    if (r.format === format) sameFormat++;
+    const rm = Array.isArray(r.mode) && r.mode.length ? r.mode : modesForFormat(r.format);
+    if (rm.some((m) => modes.has(m))) sameMode++;
+  }
+  return o.varietyWeight * ((sameFormat / rows.length) + (sameMode / rows.length)) / 2;
+}
+
 /* Flatten every deck into one scored list of candidates. */
 export function candidates(sources, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -348,6 +483,26 @@ export function candidates(sources, opts = {}) {
      fields on the candidate — so Smart Mix costs nothing and cannot drift from what this
      function returned before practice modes existed. */
   const scope = normaliseScope(o.scope);
+  /* Where the learner is in the book, or null when the curriculum term is off — which it is
+     whenever a scope is chosen (see curriculumShiftFor), whenever the weight is zeroed, and
+     whenever nothing has been studied yet so there is no position to lean towards. Resolved
+     once, and null means the same thing it means for `scope`: nothing below runs, no
+     provenance lookups, no extra field, byte-for-byte the session this file already built.
+     `act` is its own option rather than being read off `scope`, because it is a fact about
+     the learner and not about the mode — Smart Mix has no mode and still has a position. */
+  const act = scope === null && Number.isFinite(o.act) && o.curriculumWeight > 0 ? o.act : null;
+  /* What the learner has just been asked, newest last — the session's own answered rows,
+     passed in by the caller. Filtered here rather than inside the penalty so that "no usable
+     history" is decided once: rows written before format tagging carry none, and a log made
+     entirely of those has to take the untouched path, not a path that merely scores zero.
+
+     `vary` is the slice of the jitter band handed to variety. It is taken OUT of the band
+     rather than added on top, which is what makes the guarantee arithmetic: the total spread
+     of everything below `need` is jitterBand whether variety is speaking or not, so the
+     band's own promise — never wide enough to reorder priorities — covers it unchanged. Zero
+     when there is nothing recent, and then this is exactly the line it has always been. */
+  const recent = (Array.isArray(o.recent) ? o.recent : []).filter((r) => r && r.format);
+  const vary = recent.length ? Math.min(o.jitterBand, Math.max(0, o.varietyWeight)) : 0;
   const out = [];
   for (const s of sources) {
     const stats = s.stats || {};
@@ -366,7 +521,8 @@ export function candidates(sources, opts = {}) {
          not met, which is not what the name promises anyone reading it. */
       const urgency = need(st, now);
       const shift = scope ? scopeShiftFor(item, scope, o) : 0;
-      out.push({
+      const near = act === null ? 0 : curriculumShiftFor(item, act, o);
+      const cand = {
         deck: s.deck,
         item,
         st,
@@ -385,13 +541,21 @@ export function candidates(sources, opts = {}) {
         /* The practice mode's lean on this item, published so the ordering can be argued
            with rather than guessed at. Present only in a scoped session — see above. */
         ...(scope ? { scopeShift: shift } : null),
-        /* A fading item jumps the queue. An annual diagnostic does not: it is a sample on
-           something the model says is fine, and letting it outrank a word actually being
-           lost is exactly the mistake the day-based ceiling used to make. */
-        score: urgency + (staleReason === "decay" ? 4 : staleReason === "annual_check" ? 0.5 : 0) + (s.weight || 0)
-          + shift
-          + (hashSeed(s.deck + ":" + item.id + ":" + (o.seed || dayKey(now))) - 0.5) * o.jitterBand,
-      });
+        /* ...and the curriculum lean, on the same terms. The two are mutually exclusive, so
+           a candidate never carries both and there is only ever one number in play. */
+        ...(act === null ? null : { curriculumShift: near }),
+      };
+      /* The tie-break: deterministic jitter, less whatever variety wants off it. Jitter
+         gives up exactly the width variety takes, so the two together still span jitterBand
+         and no wider — see the note on `vary` above. */
+      const tie = (hashSeed(s.deck + ":" + item.id + ":" + (o.seed || dayKey(now))) - 0.5) * (o.jitterBand - vary)
+        - (vary ? Math.min(vary, varietyPenalty(recent, cand, o)) : 0);
+      /* A fading item jumps the queue. An annual diagnostic does not: it is a sample on
+         something the model says is fine, and letting it outrank a word actually being
+         lost is exactly the mistake the day-based ceiling used to make. */
+      cand.score = urgency + (staleReason === "decay" ? 4 : staleReason === "annual_check" ? 0.5 : 0) + (s.weight || 0)
+        + shift + near + tie;
+      out.push(cand);
     }
   }
   return out;
