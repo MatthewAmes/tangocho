@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash tools/hooks/session-start.sh",
+            "timeout": 45,
+            "statusMessage": "Pulling the other machines' work…"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash tools/hooks/session-stop.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

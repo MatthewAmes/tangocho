@@ -1,4 +1,10 @@
-.claude/
+# Claude Code. Most of this directory is per-machine (conversations, caches, personal
+# permission grants) and must not be shared — but the hooks and the preview-server config
+# are project setup that every machine needs, and .claude/ being blanket-ignored is why the
+# preview config had to be re-fixed by hand on a second machine.
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
 files.zip
 node_modules/
 cf/public/
@@ -7,3 +13,15 @@ cf/public/
 .env.local
 tools/.yt-candidates.json
 tools/.yt-raw.json
+tools/.kanji-cache.json
+tools/.jmdict-cache.gz
+tools/.freqlist-cache.txt
+
+# Secrets never belong in the repo — they live in Cloudflare's secret store
+# (`wrangler secret put`), which is encrypted and not readable back. These patterns are a
+# backstop for the times a key gets pasted into a file "just for a second".
+*api*key*.txt
+*api*key*.json
+*.key
+secrets.*
+**/apikey*

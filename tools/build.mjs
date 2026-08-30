@@ -15,6 +15,7 @@
 import { build } from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // fileURLToPath, not url.pathname — the project path contains a space ("Jpn App"),
@@ -56,9 +57,40 @@ for (const [what, re] of must) {
   }
 }
 
+// The browser must never call api.anthropic.com directly — no safe place for a key in a
+// client bundle, and this repo already had one key-in-source incident. AI features route
+// through the session-gated Worker endpoint (/api/ai) or stay off (AI_ENABLED = false).
+const mustNot = [["a direct Anthropic API call (use the Worker /api/ai route)", /api\.anthropic\.com/]];
+for (const [what, re] of mustNot) {
+  if (re.test(code)) {
+    console.error(`BUILD ABORTED — bundle contains ${what}.`);
+    process.exit(1);
+  }
+}
+
 // The feed source list is split across the app and the Worker for good reasons (see
 // check-feeds.mjs); a mismatch fails quietly at runtime, so catch it at build time.
 await import("./check-feeds.mjs");
+
+// A SEED key collision silently collapses two distinct cards into one on the next
+// seed-merge (see applySeed in tools/merge.mjs) — catch it before it ships.
+await import("./check-seed.mjs");
+
+// The Oral tab is rehearsed out loud by someone who cannot read kanji yet, so a stray
+// character there is not a cosmetic problem — it is a line he cannot practise.
+await import("./check-oral-kana.mjs");
+
+/* The counter and date readings are exam material. A wrong one would be drilled into him
+   as confidently as a right one, so the tables are checked against a hand-written copy on
+   every build rather than only when someone remembers to run the tests. */
+for (const suite of ["test-counters.mjs", "test-romaji.mjs"]) {
+  const r = spawnSync(process.execPath, [path.join(ROOT, "tools", suite)], { encoding: "utf8" });
+  if (r.status !== 0) {
+    console.error(`\n${suite} FAILED — refusing to build\n${r.stdout || ""}${r.stderr || ""}`);
+    process.exit(1);
+  }
+  console.log(`    ${suite.replace(/^test-|\.mjs$/g, "")} ${(r.stdout.match(/(\d+) passed/) || [])[1]} readings verified`);
+}
 
 // ── splice into index.html ────────────────────────────────────────────────────
 // The <head> has an attributed <script src="…gsi/client" …> tag; matching the exact
@@ -90,6 +122,11 @@ fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
 // The video index ships as a separate asset rather than inside the bundle: it's ~140KB of
 // data that changes on a completely different schedule from the code, and keeping it out
 // means the app still starts instantly if it fails to load.
+// data assets that ship alongside the bundle
+for (const asset of ["kanji.json", "freq.json"]) {
+  const src = path.join(ROOT, "data", asset);
+  if (fs.existsSync(src)) fs.writeFileSync(path.join(CF_PUBLIC, asset), fs.readFileSync(src, "utf8"), "utf8");
+}
 const VIDEOS = path.join(ROOT, "data", "videos.json");
 let videoCount = 0;
 if (fs.existsSync(VIDEOS)) {

@@ -140,11 +140,24 @@ export function seedFromHistory(card, w = FSRS_W) {
    every card is exactly the kind of friction that ends streaks — and self-assessment is
    unreliable anyway. This deck's own data settles it: answers under 3 seconds are 87%
    correct and answers over 6 seconds are 71% correct, so latency already carries the
-   signal a Hard/Good/Easy button is trying to elicit. Two buttons in, four grades out. */
-export function gradeFromLatency(correct, ms) {
+   signal a Hard/Good/Easy button is trying to elicit. Two buttons in, four grades out.
+
+   EASY is gated behind more than just speed. FSRS-4's Easy carries an easy bonus and a
+   large first-review stability because in the data the weights were fitted on, Easy is
+   rare ("this review was a waste"). A flat "under 3s = Easy" rule instead makes Easy the
+   MODAL grade for a recognised word (most correct recognition answers are fast), which
+   compounds: three quick reviews in a row scheduled a genuinely-known word out to years
+   before it had earned that. Easy now requires both genuine speed (< 1.5s) and prior
+   evidence (streak >= 2) that this isn't the first time the card has been fast. */
+export const LATENCY = { EASY_MS: 1500, GOOD_MS: 9000, EASY_MIN_STREAK: 2 };
+/** correct: boolean. ms: response latency, or 0/undefined if untimed.
+ *  ctx.streak: the card's current consecutive-correct counter (gates Easy).
+ *  ctx.force: 1|2|3|4 — explicit grade override (still AGAIN on a wrong answer). */
+export function gradeFromLatency(correct, ms, ctx = {}) {
+  if (ctx.force) return correct ? ctx.force : AGAIN;
   if (!correct) return AGAIN;
-  if (!ms || ms <= 0) return GOOD;
-  if (ms < 3000) return EASY;
-  if (ms < 6000) return GOOD;
+  if (!ms || ms <= 0 || ms > 180000) return GOOD;   // untimed, or a walked-away answer: don't punish or reward on latency
+  if (ms < LATENCY.EASY_MS && (ctx.streak || 0) >= LATENCY.EASY_MIN_STREAK) return EASY;
+  if (ms < LATENCY.GOOD_MS) return GOOD;
   return HARD;
 }

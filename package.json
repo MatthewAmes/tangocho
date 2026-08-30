@@ -1,0 +1,24 @@
+{
+  "name": "tangocho",
+  "version": "1.0.0",
+  "private": true,
+  "description": "単語帳 — JPN 101 study app. Convenience scripts only; the build's own deps live in tools/.",
+  "type": "module",
+  "scripts": {
+    "dev": "node tools/build.mjs && esbuild --servedir=cf/public --serve=3123",
+    "build": "node tools/build.mjs",
+    "deploy": "node tools/build.mjs && cd cf && wrangler deploy",
+    "test": "node tools/test-modules.mjs && node tools/test-fsrs.mjs && node tools/test-session.mjs && node tools/test-learner.mjs && node tools/test-cloze.mjs && node tools/test-input-engine.mjs && node tools/test-counters.mjs && node tools/test-romaji.mjs && node tools/test-calibration.mjs && node tools/test-benchmark.mjs && node tools/test-mining.mjs && node tools/test-kanjicontext.mjs && node tools/test-production.mjs && node tools/test-merge.mjs && node tools/test-days.mjs && node tools/test-worker.mjs && node tools/test-contrast.mjs && node tools/test-fatigue.mjs && node tools/test-conjugation.mjs && node tools/test-pos.mjs && node tools/test-gain.mjs",
+    "login": "wrangler login",
+    "postinstall": "npm --prefix tools install --silent"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "wrangler": "4.124.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260815.1": true
+  }
+}

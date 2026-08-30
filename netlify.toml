@@ -16,3 +16,15 @@
   to = "https://tangocho.deskbuddies.workers.dev/:splat"
   status = 301
   force = true
+
+# Netlify must never run a build here. This site publishes the committed files as-is and
+# does nothing but redirect.
+#
+# That used to be guaranteed by the absence of a root package.json — build tooling lives in
+# tools/ specifically so Netlify's auto-detection finds nothing. That invariant is invisible
+# and easy to break: a root package.json was added for the multi-machine setup within
+# minutes of it being written down, without anyone noticing it was load-bearing. Stating it
+# here makes it explicit instead of relying on a file staying absent.
+[build]
+  command = "echo 'tangocho: redirect-only site, nothing to build'"
+  publish = "."
