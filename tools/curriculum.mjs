@@ -107,6 +107,9 @@
 import { SEED } from "../src/data/seed.js";
 import { SECTION_MAP } from "../src/data/sections.js";
 import { SCRIPT_SEED } from "../src/data/scripts-seed.js";
+import { CONJ_BANK } from "../src/data/conj-bank.js";
+import { SKILLS, skillForFormat } from "./learner.mjs";
+import { buildClozeIndex } from "./cloze.mjs";
 
 export const TEXTBOOK_ID = "nihongo-now";
 
@@ -463,4 +466,175 @@ export function actDistance(a, b) {
   const p = coordsOf(a), q = coordsOf(b);
   if (!Number.isFinite(p.act) || !Number.isFinite(q.act)) return null;
   return Math.abs(p.act - q.act);
+}
+
+/* ── what an act asks the learner to be able to do (spec §5) ──
+
+   "Learn these 30 words" is not an objective; it is an inventory. §5 wants the layer above
+   it — recognise, recall, produce, comprehend, use — and it wants that layer DERIVED. An
+   objective the source material cannot support is a promise the app breaks the moment
+   someone tries to practise it, which is why every rule below is a gate on real data:
+
+     vocabulary   the cards provenanceOf places in the act
+     scripts      the dialogues provenanceOfScript places in the act
+     grammar      the conj-bank entries whose dictionary form or reading IS one of those
+                  cards — the bank carries no act of its own, so this term match is the
+                  only honest way to say an act covers a conjugation pattern
+
+   An act with no scripts gets NO script objectives. Acts 7–12 are exactly that case today
+   (all 34 scripts are Acts 2–6), and it is the case the test pins down: the shape of the
+   output has to change with the data or none of this is derived at all.
+
+   ── the skills ──
+
+   Every objective names one of learner.mjs's five SKILLS, so mastery per objective is the
+   posterior mastery.mjs already computes for that skill over the act's items — no second
+   scale, no new store. The skill is not asserted here: each objective names the FORMAT it
+   is asked as, and the skill is skillForFormat() of that format. One table decides what an
+   exercise measures, and it is the one the live evidence path uses.
+
+   Two consequences worth stating rather than discovering:
+
+   ORTHOGRAPHY IS NEVER AN OBJECTIVE. skillForFormat never returns it, because no exercise
+   in the app produces evidence about spelling as such. It stays a SKILL — the model has a
+   slot for it — and an objective claiming it would be measured by nothing.
+
+   `produce_responses` names an ability the dialogues genuinely support and that today's
+   script exercise does not yet measure: responseSelect is a choice among lines, which is
+   why learner.mjs's FORMAT_MODES deliberately withholds `production` from it. The objective
+   is about the learner, not about which screen exists this month; its posterior comes from
+   production evidence wherever the act's words are actually produced. The gap is real and
+   named, which is the difference between an honest objective and a fabricated one.
+
+   Grammar gets recognise and construct, and NOT a third "use it in a sentence". The conj
+   bank holds forms, not sentences, so nothing in the act's data could generate that
+   exercise — and §5's whole point is that an objective with no material behind it should
+   not appear. */
+
+/* Kinds are the three bodies of material an act can contain. */
+export const OBJECTIVE_KINDS = ["vocabulary", "script", "grammar"];
+
+/* The typed objectives, in the order a learner meets them. `format` is the app format the
+   objective is asked as and the only thing that decides `skill`; `unit` names what `items`
+   counts, so a UI can say "38 cards" or "6 dialogues" without a second lookup. */
+export const OBJECTIVE_TYPES = [
+  { type: "recognize", kind: "vocabulary", format: "mc", unit: "cards",
+    label: "Recognise the word among plausible neighbours" },
+  { type: "recall_meaning", kind: "vocabulary", format: "recall", unit: "cards",
+    label: "Recall what the word means" },
+  { type: "recall_japanese", kind: "vocabulary", format: "type", unit: "cards",
+    label: "Produce the Japanese from the English" },
+  { type: "use_in_context", kind: "vocabulary", format: "cloze", unit: "cards",
+    label: "Use the word in a sentence from the dialogues" },
+  { type: "understand_dialogue", kind: "script", format: "listen_meaning", unit: "scripts",
+    label: "Understand a dialogue line by ear" },
+  { type: "recognize_phrases", kind: "script", format: "mc", unit: "scripts",
+    label: "Recognise the act's phrases in the dialogue" },
+  { type: "produce_responses", kind: "script", format: "type", unit: "scripts",
+    label: "Produce a response that fits the dialogue" },
+  { type: "recognize_form", kind: "grammar", format: "mc", unit: "forms",
+    label: "Recognise the conjugated form" },
+  { type: "construct_form", kind: "grammar", format: "type", unit: "forms",
+    label: "Construct the form from the dictionary word" },
+];
+
+/* A sample small enough to read in a test failure and large enough to tell two objectives
+   apart. Provenance is for tracing, not for re-deriving the objective. */
+const SAMPLE = 3;
+
+/* Every objective an act's own material supports. Pure: pass `opts.cards` / `opts.scripts`
+   / `opts.conj` and a future volume is checked before it is merged into the deck.
+
+   Returns [] for an act nothing places anything in — including act null, which is what
+   currentAct returns for a learner who has answered nothing. */
+export function deriveObjectives(act, opts = {}) {
+  if (!Number.isFinite(act)) return [];
+  const cards = opts.cards || SEED;
+  const scripts = opts.scripts || SCRIPT_SEED;
+  const conj = opts.conj || CONJ_BANK;
+
+  const mine = (cards || []).filter((c) => provenanceOf(c, opts).act === act);
+  const dialogues = (scripts || []).filter((s) => provenanceOfScript(s).act === act);
+
+  /* Contextual material is cloze.mjs's own index, not a looser test of our own. It needs an
+     English gloss on the line and it refuses a line that IS the word, so asking it is the
+     difference between "the word appears in a dialogue" and "the app can build the
+     exercise". The scripts searched are ALL of them: an Act 9 word used in an Act 3 dialogue
+     still has a sentence to be practised in. */
+  const context = buildClozeIndex(scripts || [], mine.map((c) => ({ id: c.term, term: c.term, reading: c.reading })));
+
+  /* The conj bank carries no act. A pattern belongs to this act when the act teaches the
+     word it is drilled on — nothing weaker, or every act would claim every pattern. */
+  const forms = new Set();
+  for (const c of mine) { if (c.term) forms.add(c.term); if (c.reading) forms.add(c.reading); }
+  const grammar = (conj || []).filter((g) => g && (forms.has(g.dict) || forms.has(g.reading)));
+
+  const withMeaning = mine.filter((c) => c && c.meaning);
+  const typeable = mine.filter((c) => c && c.reading);
+  const inContext = mine.filter((c) => context.has(c.term));
+  const withLines = dialogues.filter((s) => (s.lines || []).length > 0);
+  const translated = dialogues.filter((s) => (s.lines || []).some((l) => l && l.en));
+  // A response needs something to respond TO, so a one-line dialogue supports no such drill.
+  const conversational = dialogues.filter((s) => (s.lines || []).length >= 2);
+
+  const backing = {
+    recognize: mine,
+    recall_meaning: withMeaning,
+    recall_japanese: typeable,
+    use_in_context: inContext,
+    understand_dialogue: translated,
+    recognize_phrases: withLines,
+    produce_responses: conversational,
+    recognize_form: grammar,
+    construct_form: grammar,
+  };
+
+  const nameOf = (x) => x.term || x.dict || x.name || x.id || null;
+  const out = [];
+  for (const spec of OBJECTIVE_TYPES) {
+    const items = backing[spec.type] || [];
+    if (!items.length) continue;                 // no material, no objective — spec §5
+    out.push({
+      id: act + ":" + spec.type,
+      act,
+      kind: spec.kind,
+      type: spec.type,
+      label: spec.label,
+      format: spec.format,
+      skill: skillForFormat(spec.format),
+      unit: spec.unit,
+      items: items.length,
+      /* Where the objective came from, in the same vocabulary provenanceOf uses. The act
+         is a textbook act even for grammar — it is the CARDS that placed it — so the
+         textbook is named and `sourceType` says which body of material was read. */
+      provenance: {
+        textbookId: TEXTBOOK_ID,
+        volume: volumeOfAct(act),
+        act,
+        sourceType: spec.kind === "script" ? "script" : spec.kind === "grammar" ? "conj-bank" : "scene",
+        sample: items.slice(0, SAMPLE).map(nameOf).filter(Boolean),
+      },
+    });
+  }
+  return out;
+}
+
+/* Mastery per objective, from the posteriors that already exist. `skills` is one scene's
+   (or one act's) per-skill block from mastery.mjs — { recognition: { mean, measured } … }.
+
+   Returns the objective with `mastered` and `measured` attached, and `mastered` is null
+   rather than 0 when the skill has not been measured: an ability nobody has tested is not
+   an ability at zero, and that distinction is the whole reason mastery.mjs gates on the
+   posterior rather than on an answer count. */
+export function objectiveMastery(objective, skills) {
+  const row = objective && skills ? skills[objective.skill] : null;
+  const measured = !!(row && row.measured);
+  return { ...objective, measured, mastered: measured ? row.mean : null };
+}
+
+/* The skills an act's objectives actually reach. Useful on its own: a UI that shows five
+   skill bars for an act whose material only supports three is inventing two of them. */
+export function objectiveSkills(objectives = []) {
+  const hit = new Set(objectives.map((o) => o.skill).filter(Boolean));
+  return SKILLS.filter((s) => hit.has(s));
 }

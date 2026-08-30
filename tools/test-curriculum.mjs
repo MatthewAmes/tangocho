@@ -12,8 +12,10 @@ import {
   buildLessonActs, actForLesson, buildOccurrenceIndex, occurrencesOf, lineForms,
   coordsOf, curriculumIndex, sameScene, sceneDistance, actDistance, currentAct,
   mergeOccurrences, OCCURRENCE_SOURCES,
+  deriveObjectives, objectiveMastery, objectiveSkills, OBJECTIVE_TYPES, OBJECTIVE_KINDS,
   TEXTBOOK_ID, SCENES_PER_ACT, VOLUME_ACTS,
 } from "./curriculum.mjs";
+import { SKILLS, skillForFormat } from "./learner.mjs";
 import { SEED } from "../src/data/seed.js";
 import { SECTION_MAP } from "../src/data/sections.js";
 import { SCRIPT_SEED } from "../src/data/scripts-seed.js";
@@ -452,6 +454,131 @@ t("the real deck places the learner somewhere real", () => {
   eq(currentAct([], upTo5), 5, "a deck studied through act 5 should report act 5");
   const oneNine = deck.find((c) => provenanceOf(c).act === 9);
   eq(currentAct([{ id: oneNine.id, at: 1 }], deck), 9, "one answered act-9 card places the learner in act 9");
+});
+
+console.log("\n=== objectives, derived from the act's own material ===");
+// Printed for the same reason the coverage block above is: the shape of this output is
+// supposed to follow the data, so a change in it should be visible rather than asserted
+// away. Acts 2-6 have scripts and Acts 7-12 do not, and that difference has to show here.
+const OBJ = {};
+for (let act = 1; act <= 12; act++) OBJ[act] = deriveObjectives(act);
+for (let act = 1; act <= 12; act++) {
+  const kinds = OBJECTIVE_KINDS.map((k) => k[0] + OBJ[act].filter((o) => o.kind === k).length).join(" ");
+  console.log(`  act ${String(act).padStart(2)}  ${String(OBJ[act].length).padStart(2)} objectives  [${kinds}]  ${OBJ[act].map((o) => o.type).join(", ")}`);
+}
+
+t("an act with no scripts has no script objectives", () => {
+  // The one that matters most: nothing is fabricated. All 34 scripts are Acts 2-6, so
+  // every act from 7 up must come back with vocabulary and grammar only.
+  for (const act of [7, 8, 9, 10, 11, 12]) {
+    eq(SCRIPT_SEED.filter((s) => provenanceOfScript(s).act === act).length, 0, `act ${act} has scripts after all;`);
+    eq(OBJ[act].filter((o) => o.kind === "script").length, 0, `act ${act} invented a script objective;`);
+  }
+});
+t("an act with scripts gets all three of them", () => {
+  for (const act of [2, 3, 4, 5, 6]) {
+    const script = OBJ[act].filter((o) => o.kind === "script").map((o) => o.type).sort();
+    eq(script.join(","), "produce_responses,recognize_phrases,understand_dialogue", `act ${act};`);
+  }
+});
+t("no objective is emitted with nothing behind it", () => {
+  for (const act of Object.keys(OBJ)) for (const o of OBJ[act]) gte(o.items, 1, `${o.id} counts nothing;`);
+});
+t("grammar appears only where a conj-bank word is actually taught", () => {
+  // The bank carries no act of its own; the mapping is a term match against the act's
+  // cards. Acts 4, 5 and 6 match nothing, and inventing a pattern for them is the failure.
+  for (const act of [1, 4, 5, 6, 7, 10, 12]) {
+    eq(OBJ[act].some((o) => o.kind === "grammar"), false, `act ${act} claimed a grammar objective;`);
+  }
+  const g = OBJ[2].find((o) => o.type === "construct_form");
+  gte(g.items, 1);
+  eq(g.provenance.sourceType, "conj-bank");
+  ok(g.provenance.sample.length > 0, "a grammar objective names the words it drills");
+});
+
+t("the skill of an objective is decided by learner.mjs, not restated here", () => {
+  for (const spec of OBJECTIVE_TYPES) {
+    const skill = skillForFormat(spec.format);
+    ok(skill, `${spec.type} is asked as "${spec.format}", which measures nothing;`);
+    ok(SKILLS.includes(skill), `${spec.type} claims a skill the model does not have;`);
+  }
+  for (const o of OBJ[3]) eq(o.skill, skillForFormat(o.format), `${o.id};`);
+});
+t("orthography is never claimed, because nothing measures it", () => {
+  // It stays a SKILL — the model has a slot — but no format produces evidence about
+  // spelling as such, so an objective naming it would be measured by nothing at all.
+  ok(SKILLS.includes("orthography"));
+  for (const act of Object.keys(OBJ)) {
+    eq(OBJ[act].some((o) => o.skill === "orthography"), false, `act ${act};`);
+  }
+});
+t("objectiveSkills reports only the skills the act's material reaches", () => {
+  eq(objectiveSkills(OBJ[3]).join(","), "recognition,production,listening,context");
+  eq(objectiveSkills(OBJ[9]).join(","), "recognition,production,context", "no scripts, so no listening;");
+  eq(objectiveSkills([]).length, 0);
+});
+t("every objective carries provenance back to the book", () => {
+  for (const o of OBJ[9]) {
+    eq(o.provenance.textbookId, TEXTBOOK_ID);
+    eq(o.provenance.act, 9);
+    eq(o.provenance.volume, 2);
+    ok(OBJECTIVE_KINDS.includes(o.kind), `${o.id} has an unnamed kind;`);
+  }
+  const vocab = OBJ[9].find((o) => o.type === "recognize");
+  ok(vocab.provenance.sample.every((term) => provenanceOf(SEED.find((c) => c.term === term)).act === 9),
+    "the sample is drawn from the act it claims");
+});
+t("ids are unique within an act and name the act", () => {
+  const ids = OBJ[3].map((o) => o.id);
+  eq(new Set(ids).size, ids.length);
+  ok(ids.every((id) => id.startsWith("3:")));
+});
+
+t("the objectives follow synthetic material, which is what 'derived' means", () => {
+  const cards = [
+    { term: "みず", reading: "みず", meaning: "water", sec: "99-1" },
+    { term: "そら", reading: "そら", meaning: "sky", sec: "99-2" },
+  ];
+  const scripts = [{ id: "seed-99-1", name: "99-1", lines: [
+    { en: "Is it water?", tokens: [{ t: "みず" }, { t: "ですか。" }] },
+    { en: "Yes.", tokens: [{ t: "はい" }, { t: "。" }] },
+  ] }];
+  const objectives = deriveObjectives(99, { cards, scripts, conj: [] });
+  eq(objectives.filter((o) => o.kind === "vocabulary").length, 4);
+  eq(objectives.filter((o) => o.kind === "script").length, 3);
+  eq(objectives.filter((o) => o.kind === "grammar").length, 0, "an empty bank maps nothing;");
+  eq(objectives.find((o) => o.type === "use_in_context").items, 1, "only みず has a sentence;");
+  eq(objectives[0].provenance.volume, null, "act 99 is in no volume the repo knows about;");
+});
+t("material the app cannot build an exercise from yields no objective", () => {
+  const cards = [{ term: "みず", sec: "99-1" }];                    // no reading, no meaning
+  const scripts = [{ id: "seed-99-1", name: "99-1", lines: [{ tokens: [{ t: "みず" }, { t: "ですか。" }] }] }];
+  const types = deriveObjectives(99, { cards, scripts, conj: [] }).map((o) => o.type);
+  eq(types.includes("recall_japanese"), false, "no reading to produce;");
+  eq(types.includes("recall_meaning"), false, "no meaning to recall;");
+  eq(types.includes("use_in_context"), false, "the line has no English, so cloze cannot use it;");
+  eq(types.includes("produce_responses"), false, "one line is nothing to respond to;");
+  eq(types.join(","), "recognize,recognize_phrases", "and what remains is what the data supports;");
+});
+t("an act nothing is placed in has no objectives at all", () => {
+  eq(deriveObjectives(99).length, 0, "the real deck reaches act 12;");
+  eq(deriveObjectives(null).length, 0);
+  eq(deriveObjectives(undefined).length, 0);
+  eq(deriveObjectives("3").length, 0, "an act is a number;");
+});
+
+t("mastery per objective comes from the posteriors that already exist", () => {
+  const o = OBJ[3].find((x) => x.type === "recall_japanese");
+  const skills = { production: { mean: 0.62, measured: true }, recognition: { mean: 0.9, measured: true } };
+  eq(objectiveMastery(o, skills).mastered, 0.62);
+  eq(objectiveMastery(o, skills).measured, true);
+  eq(objectiveMastery(o, skills).type, "recall_japanese", "the objective survives the wrapping;");
+});
+t("an unmeasured skill is null, never a flattering zero", () => {
+  const o = OBJ[3].find((x) => x.type === "recall_japanese");
+  eq(objectiveMastery(o, { production: { mean: 0.2, measured: false } }).mastered, null);
+  eq(objectiveMastery(o, {}).mastered, null);
+  eq(objectiveMastery(o, null).measured, false);
 });
 
 console.log(`\nall ${run} curriculum tests ${fail ? `— ${fail} FAILED` : "passed"}`);
