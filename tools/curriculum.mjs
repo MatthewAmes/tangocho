@@ -263,6 +263,41 @@ export function provenanceOfScript(script) {
   };
 }
 
+/* ── where the learner has got to ──
+   Curriculum position, which is not mastery (§4, §21) and not a setting either. The act a
+   practice mode should focus on is a fact about what has actually been answered, so it is
+   derived rather than typed in — a position the learner has to remember to update is a
+   position that will be wrong by the second week.
+
+   "Latest act with any evidence" is the spec's rule and this is exactly that, with one
+   deliberate widening: evidence means EITHER a row in the evidence log OR a card the deck
+   itself records as seen. The log is younger than the deck — it only carries rows from the
+   day it was added — so an act studied before then would otherwise read as never reached,
+   and the mode would send Matthew back to Act 1.
+
+   The sharp edge, stated rather than smoothed over: one answer is enough. Drilling a single
+   Act 12 card out of curiosity moves the current act to 12 and stays there. That is what
+   "furthest reached" means, and the honest fix is the explicit override the caller keeps —
+   not a threshold here that would silently disagree with the phrase it implements.
+
+   Unplaced cards never vote (see the header): a card with no act contributes nothing rather
+   than being guessed into one. Returns null when nothing has been studied at all. */
+export function currentAct(evidence = [], cards = [], opts = {}) {
+  const actOfId = new Map();
+  for (const card of cards || []) {
+    if (!card || card.id == null) continue;
+    const { act } = provenanceOf(card, opts);
+    if (act !== null) actOfId.set(card.id, act);
+  }
+
+  let latest = null;
+  const reached = (act) => { if (act !== null && (latest === null || act > latest)) latest = act; };
+  // The deck's own history first: `seen` is lifetime and survives an evidence log that does not.
+  for (const card of cards || []) if (card && (card.seen > 0 || card.rseen > 0)) reached(actOfId.get(card.id) ?? null);
+  for (const row of evidence || []) if (row && row.id != null) reached(actOfId.get(row.id) ?? null);
+  return latest;
+}
+
 /* ── occurrences ── */
 
 /* The plain Japanese of a line, and the same line with every ruby reading substituted for

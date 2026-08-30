@@ -23,10 +23,17 @@
 
    3. NEW-ITEM INTAKE IS THE REAL BUDGET. Reviews are cheap; encoding is expensive, and
       freshly-encoded items interfere with each other. So the session grows and shrinks
-      with the review backlog, while the number of genuinely new things stays capped. */
+      with the review backlog, while the number of genuinely new things stays capped.
+
+   4. THE LEARNER PICKS THE SCOPE; THE ENGINE STILL PICKS THE EXERCISES (spec §14). Three
+      practice modes — Current Lesson, Cumulative Review, Smart Mix — enter through the
+      `scope` option and move ONE weight. Smart Mix is the absence of a scope, so the
+      default session is bit-for-bit the one this file has always built. See the scope
+      block below for why a weight and not a filter. */
 
 import { retrievability, seedFromHistory } from "./fsrs.mjs";
 import { chooseIntervention, TARGET_SUCCESS } from "./learner.mjs";
+import { provenanceOf } from "./curriculum.mjs";
 
 const DAY = 86400000;
 
@@ -65,6 +72,19 @@ export const DEFAULTS = {
   itemsPerMinute: 2,
   stepGaps: [3, 8],     // a new item comes back after ~3 cards, then ~8 more
   fallbackMs: 4200,     // assumed per-item cost before there's latency history
+  /* How hard a practice mode leans on the current act. The ONE new scoring term (roadmap:
+     one at a time, with a test), and it is sized against `need` rather than picked to feel
+     right — which is the only way to say what it can and cannot outrank.
+
+     `need` is (1 - recall) * 8, plus 0.6 when the current streak is broken. A current-act
+     word sitting exactly at the retention target therefore scores 0.8, and at 2.2 it is
+     carried to 3.0 — which displaces older material down to about 62% predicted recall and
+     nothing below that. So Current Lesson reorders everything the model still considers
+     comfortable, and a genuinely fading Act-3 word still reaches an Act-9 session (spec
+     §15). That word is not close to being displaced, twice over: decay adds a further +4 on
+     top of its need, and the stale reserve hands it a slot before ordering is consulted at
+     all. Raising this weight buys focus and cannot buy its way past a decaying memory. */
+  scopeWeight: 2.2,
 };
 
 /* How badly an item needs to be seen. Higher = sooner.
@@ -263,10 +283,64 @@ export function budgetFor(sources, opts = {}) {
   return Math.max(Math.min(o.minItems, ceiling), Math.min(ceiling, raw));
 }
 
+/* ── practice modes (spec §14, §15) ──
+   The learner picks the broad shape of the session; the engine still picks every exercise
+   inside it. Three modes, and the third is the absence of the other two:
+
+     current   Current Lesson    — lean towards the act being studied now
+     review    Cumulative Review — lean away from it, towards the older material
+     mix       Smart Mix         — no lean at all; the session this file already built
+
+   A WEIGHT, NOT A FILTER, and that is the whole design. Filtering to the current act would
+   make "Current Lesson" a different app for the duration of the session: spaced repetition
+   would stop for as long as the mode was on, and the Act-3 word that has quietly decayed
+   to 40% would be locked out of the only session that would have rescued it. §15 asks for
+   the opposite — a due old item should surface INSIDE current-lesson practice. A weight
+   does that by construction, because the memory model keeps its say.
+
+   Act membership comes from provenanceOf, the one place in the repo that knows where a card
+   sits in the book. An item it cannot place gets ZERO in both directions — neither boosted
+   nor demoted. 94% of the deck resolves; the rest are class-day notes and manga pages, and
+   pretending they belong to the act next door would put the mode's whole thumb on a guess.
+   Kana, kanji, dates and frequency items are unplaced for the same honest reason: they are
+   not in NihonGO NOW! at all, so they keep exactly the share vocabShare already gives them.
+
+   Deliberately NOT here, and worth someone's next issue: a graded pull towards NEARBY acts
+   (curriculum.mjs has sceneDistance and actDistance ready for it). That is a second scoring
+   term, and the roadmap is explicit about adding them one at a time. */
+export const SCOPE_MODES = ["current", "review", "mix"];
+
+/* A scope worth acting on, or null. Null means "build the session you always did", so both
+   Smart Mix and a malformed scope land on the untouched path rather than a half-applied one.
+
+   An act of null collapses to mix on purpose: on a deck with no evidence yet there IS no
+   current act, and the honest answer to "focus on where I am" is that nobody knows yet. */
+export function normaliseScope(scope) {
+  const mode = typeof scope === "string" ? scope : scope && scope.mode;
+  if (mode !== "current" && mode !== "review") return null;
+  const act = scope && Number.isFinite(scope.act) ? scope.act : null;
+  return act === null ? null : { mode, act };
+}
+
+/* What the mode adds to (or takes off) one item's score. Symmetric by design: both modes
+   move the SAME act by the SAME amount, in opposite directions, so there is one number to
+   reason about and one number to tune. */
+export function scopeShiftFor(item, scope, opts = {}) {
+  if (!scope) return 0;
+  const w = opts.scopeWeight ?? DEFAULTS.scopeWeight;
+  const act = provenanceOf(item).act;
+  if (act === null || act !== scope.act) return 0;
+  return scope.mode === "current" ? w : -w;
+}
+
 /* Flatten every deck into one scored list of candidates. */
 export function candidates(sources, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const now = o.now || Date.now();
+  /* Resolved once. When it is null nothing below runs — no provenance lookups, no extra
+     fields on the candidate — so Smart Mix costs nothing and cannot drift from what this
+     function returned before practice modes existed. */
+  const scope = normaliseScope(o.scope);
   const out = [];
   for (const s of sources) {
     const stats = s.stats || {};
@@ -284,6 +358,7 @@ export function candidates(sources, opts = {}) {
          composite — so a deck priority could carry an item over an "urgency" bar it had
          not met, which is not what the name promises anyone reading it. */
       const urgency = need(st, now);
+      const shift = scope ? scopeShiftFor(item, scope, o) : 0;
       out.push({
         deck: s.deck,
         item,
@@ -300,10 +375,14 @@ export function candidates(sources, opts = {}) {
         recognition: skillOf(st, "fsrs"),
         production: skillOf(st, "rfsrs"),
         need: urgency,
+        /* The practice mode's lean on this item, published so the ordering can be argued
+           with rather than guessed at. Present only in a scoped session — see above. */
+        ...(scope ? { scopeShift: shift } : null),
         /* A fading item jumps the queue. An annual diagnostic does not: it is a sample on
            something the model says is fine, and letting it outrank a word actually being
            lost is exactly the mistake the day-based ceiling used to make. */
         score: urgency + (staleReason === "decay" ? 4 : staleReason === "annual_check" ? 0.5 : 0) + (s.weight || 0)
+          + shift
           + (hashSeed(s.deck + ":" + item.id + ":" + (o.seed || dayKey(now))) - 0.5) * o.jitterBand,
       });
     }
@@ -358,7 +437,14 @@ export function buildSession(sources, opts = {}) {
   const size = o.size || budgetFor(sources, o);
 
   const all = candidates(sources, { ...o, now });
-  const fresh = all.filter((c) => c.fresh).sort((a, b) => (a.item.order ?? 0) - (b.item.order ?? 0));
+  /* New intake is ordered by curriculum position, not by score — meeting words in the order
+     the book teaches them is the point. The practice mode gets a say ahead of that, and it
+     has to: `order` is the lesson number, so on its own it would hand every new slot in a
+     Current Lesson session to the earliest unstudied word in the book, which is the one act
+     the learner is demonstrably not on. Both keys are 0 when there is no scope, so the sort
+     falls through to exactly the comparison it has always used. */
+  const fresh = all.filter((c) => c.fresh)
+    .sort((a, b) => (b.scopeShift || 0) - (a.scopeShift || 0) || (a.item.order ?? 0) - (b.item.order ?? 0));
 
   /* Leech throttle. Drilling a stuck word harder does not unstick it, and a pool sorted
      purely by decay fills up with exactly those words — they are the most decayed things

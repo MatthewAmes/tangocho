@@ -32,6 +32,7 @@ import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from 
 import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
 import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
          LISTEN_FORMATS, LISTEN_LABEL, LISTEN_DECK } from "./tools/listening.mjs";
+import { currentAct, volumeOfAct, VOLUME_ACTS } from "./tools/curriculum.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -942,13 +943,25 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [foreignEpoch, setForeignEpoch] = useState(0);
   useEffect(() => { loadForeignDecks(cards).then(setForeign).catch(() => {}); }, [cards.length, foreignEpoch]);
 
-  /* The study plan reaches the scheduler here: pace decides how long a session runs, and
-     the area priorities weight which decks it draws from. */
+  /* The study plan reaches the scheduler here: pace decides how long a session runs, the
+     area priorities weight which decks it draws from, and the practice mode says whether to
+     lean towards the current act, away from it, or neither. */
   const [plan, setPlan] = useState(PLAN_DEFAULT);
   useEffect(() => {
     loadPlan().then(setPlan).catch(() => {});
     return subscribePlan(setPlan);
   }, []);
+  /* Where Matthew is in the book. Derived from what he has actually answered rather than
+     asked for, because a position he has to remember to update is a position that will be
+     wrong by the second week — and it reads the deck's own history as well as the evidence
+     log, which only carries rows from the day it was added. The setting overrides it. */
+  const actNow = useMemo(
+    () => (Number.isFinite(plan.actOverride) ? plan.actOverride : currentAct(evidence, cards)),
+    [evidence, cards, plan.actOverride],
+  );
+  /* Persisted the moment it is tapped, the way the pace and priorities are. A mode chosen
+     for one session and forgotten by the next would be a setting you had to re-set daily. */
+  const setPractice = (mode) => { const next = { ...plan, practice: mode }; setPlan(next); savePlan(next); };
 
   /* The words quarantined for the checkpoint this quarter. Derived from the deck and the
      calendar rather than stored, so every device agrees without syncing and a wiped setting
@@ -991,12 +1004,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     /* The benchmark hold-out is invisible here. Without this the checkpoint would measure
        how well you revised the test rather than how much Japanese you have, and the whole
        point of having a number you can trust would be gone. */
+    /* The practice mode arrives as a scope, and only as a scope: on "mix" — the default —
+       session.mjs takes the untouched path, so nothing about Smart Review changes unless
+       Matthew chooses it. */
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
-                                  exclude: heldOut });
+                                  exclude: heldOut, scope: { mode: plan.practice, act: actNow } });
     // retention.target: not a dep in the usual sense (it's a module `let`, not props/state) but
     // isLeech/dueness read it live, and the retention chip's onClick bumps `retentionPref`
     // right alongside it — so this recomputes on the same render that value changes.
-  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target, contextReady]);
+  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target, contextReady, actNow]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -1587,6 +1603,19 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </>
           )}
         </div>
+        {/* The learner picks the scope; the engine still picks every exercise inside it
+            (spec §14). Offered only once there IS an act to point at — before the first
+            session "This lesson" would be a button that does nothing, and the honest
+            answer at that point is the mix anyway. */}
+        {smartPool.length > 0 && actNow !== null && (
+          <div className="tc-modeseg" role="group" aria-label="Practice mode">
+            {PRACTICE_MODES.map(([key, label, note]) => (
+              <button key={key} className={"tc-segbtn" + (plan.practice === key ? " is-on" : "")}
+                      aria-pressed={plan.practice === key} title={note}
+                      onClick={() => setPractice(key)}>{label}</button>
+            ))}
+          </div>
+        )}
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
             {/* Say what is actually in the session. "16 cards" was true and told you
@@ -1605,9 +1634,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         )}
         {smartPool.length > 0 && (
           <p className="tc-smarthint">{
-            dueCount >= 15
-              ? `Mostly catch-up while ${dueCount} are due, plus a few new ones.`
-              : `Your weakest and most overdue, plus new words${newCount > 0 ? ` (${newCount} left)` : ""}.`
+            /* The mode lines say "mostly" and "steps back" on purpose. It is a lean, not a
+               wall — a word from Act 3 that has started to fade still comes through, and
+               the hint should not promise a filter the scheduler correctly refuses. */
+            plan.practice === "current" && actNow !== null
+              ? `Mostly Act ${actNow} — anything due from earlier still comes through.`
+              : plan.practice === "review" && actNow !== null
+                ? `Older material that's due or shaky. Act ${actNow} steps back for now.`
+                : dueCount >= 15
+                  ? `Mostly catch-up while ${dueCount} are due, plus a few new ones.`
+                  : `Your weakest and most overdue, plus new words${newCount > 0 ? ` (${newCount} left)` : ""}.`
           }</p>
         )}
 
@@ -2462,6 +2498,9 @@ function Plan({ cards = [] }) {
      do in general. Same 60-day window as the profile above, and the same posteriors — the
      only thing that changes is that the evidence is split by act-scene first. */
   const mastery = useMemo(() => masteryByLesson(evidence, cards, { days: 60 }), [evidence, cards]);
+  /* What the app worked out on its own, shown next to the override so the setting is a
+     correction rather than a guess. Same call the Study tab makes. */
+  const derivedAct = useMemo(() => currentAct(evidence, cards), [evidence, cards]);
   const scenesStudied = useMemo(() => mastery.scenes.filter((s) => s.started), [mastery]);
   const scenesFresh = useMemo(() => mastery.scenes.filter((s) => !s.started), [mastery]);
   const [allScenes, setAllScenes] = useState(false);
@@ -2575,6 +2614,25 @@ function Plan({ cards = [] }) {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* ── which lesson am I on ──
+          "This lesson" and "Catch up" need a position in the book, and the derivation —
+          latest act with any evidence — moves on a single curious answer. It is right
+          almost always and wrong loudly when it is wrong, so what it worked out is shown
+          and can be overruled. Auto stays the default; nothing here has to be touched. */}
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Which lesson are you on?</h2>
+        <p className="tc-planhint">
+          Worked out from what you've answered — it's what "This lesson" and "Catch up"
+          point at on the Study tab. Set it yourself if one card you tried out of curiosity
+          has pulled it ahead of where you really are.
+        </p>
+        <select className="tc-goalarea tc-actsel" value={plan.actOverride === null ? "auto" : String(plan.actOverride)}
+          onChange={(e) => update({ actOverride: e.target.value === "auto" ? null : Number(e.target.value) })}>
+          <option value="auto">Work it out for me{derivedAct === null ? " — nothing studied yet" : ` — Act ${derivedAct}`}</option>
+          {ACT_CHOICES.map((a) => <option key={a} value={String(a)}>Act {a} · Volume {volumeOfAct(a)}</option>)}
+        </select>
       </section>
 
       {/* ── the learner profile ──
@@ -3145,11 +3203,39 @@ const PACES = [
    of, and the ones being studied now are at the top. */
 const SCENE_CAP = 8;
 
+/* The three practice modes (spec §14), in student words. Matthew picks the scope; the
+   engine still picks every exercise inside it — which is why the labels talk about what he
+   gets and never about weights or acts.
+
+   "Smart Mix" is deliberately first in his head and default in the code: it is the session
+   the app has always built, so choosing nothing changes nothing. The other two are a lean,
+   not a wall, and the hints say so — a fading old word turns up in Current Lesson too, and
+   promising otherwise would be a promise the scheduler correctly refuses to keep. */
+const PRACTICE_MODES = [
+  ["mix", "Smart Mix", "Everything the model thinks you need today."],
+  ["current", "This lesson", "Mostly the act you're on, with reviews still mixed in."],
+  ["review", "Catch up", "Older material that's due or shaky."],
+];
+
+/* The acts the book actually has, read off curriculum.mjs's volume table rather than typed
+   out here — Volume 3 arrives as a data row (spec §24) and this list grows with it. */
+const ACT_CHOICES = VOLUME_ACTS.flatMap((v) =>
+  Array.from({ length: v.to - v.from + 1 }, (_, i) => v.from + i));
+
 const PLAN_DEFAULT = {
   vision: { fiveYear: "", oneYear: "", term: "" },
   goals: [],
   priorities: { vocabulary: 2, kanji: 2, listening: 1, reading: 1, writing: 1, speaking: 1, grammar: 1, culture: 1 },
   pace: "normal",
+  /* Which of the three Smart Review scopes is armed. Stored with the rest of the plan
+     because it is the same kind of thing — a standing choice about how study should be
+     shaped — and it syncs across his devices for free that way. */
+  practice: "mix",
+  /* The act Current Lesson and Catch up point at. null means "work it out from what I have
+     actually answered" (curriculum.mjs currentAct), which is right almost always; the
+     number is here for the case where it is not, because "latest act with any evidence"
+     moves on a single curious answer and he should be able to say otherwise. */
+  actOverride: null,
 };
 
 async function loadPlan() {
@@ -3162,6 +3248,10 @@ async function loadPlan() {
       vision: { ...PLAN_DEFAULT.vision, ...(p.vision || {}) },
       priorities: { ...PLAN_DEFAULT.priorities, ...(p.priorities || {}) },
       goals: Array.isArray(p.goals) ? p.goals : [],
+      // A mode name this build does not know falls back to the default rather than
+      // silently arming nothing — a stored plan outlives the code that wrote it.
+      practice: PRACTICE_MODES.some(([k]) => k === p.practice) ? p.practice : PLAN_DEFAULT.practice,
+      actOverride: Number.isFinite(p.actOverride) ? p.actOverride : null,
     };
   } catch (e) { return { ...PLAN_DEFAULT }; }
 }

@@ -599,6 +599,24 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-focus-btn:hover{background:rgba(216,72,47,.12);}
 .tc-smart-btn{background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
 .tc-smart-btn:hover{filter:brightness(1.12);}
+/* The practice-mode picker that sits above Smart Review. It borrows every colour from
+   .tc-segbtn so the three modes read as the same control as the pickers on Sentences and
+   Scripts, and keeps that rule's 40px touch target.
+   It carries its own flex, deliberately: .tc-seg is declared twice in this file — as a
+   segmented-control row up top and, further down, as the 20x4px progress pip the streak
+   rail is made of — and the pip wins. Reusing the name here collapsed the whole row to
+   20px wide underneath the Smart Review button. */
+.tc-modeseg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;}
+.tc-modeseg .tc-segbtn{flex:1 1 28%;min-width:96px;padding:9px 10px;font-size:13px;text-align:center;}
+/* .tc-segbtn.is-on asks for border-color:var(--info) on a rule that also sets border:0, so
+   the armed state comes down to a solid --surface-3 that reads DARKER than the translucent
+   unarmed one — on a control whose only job is to say which mode is on. The token it wanted
+   is drawn here as an inset ring instead, which needs no layout box and no new colour. */
+.tc-modeseg .tc-segbtn.is-on{box-shadow:inset 0 0 0 1px var(--info);}
+/* The act override on the Plan tab. Borrows the goal dropdown's colours; only the size
+   changes, because that one sits inline in a goal row and this one is a settings control
+   with a thumb aimed at it. */
+.tc-actsel{font-size:14px;padding:9px 11px;min-height:40px;}
 .tc-smarthint{margin:8px 0 0;font-size:12px;color:var(--mut-2);line-height:1.5;text-align:center;}
 .tc-kind-prod{background:rgba(216,72,47,.16);border-color:rgba(216,72,47,.4);color:var(--shu-soft);}
 /* Production cards read as a different exercise on purpose — the visual break is part of

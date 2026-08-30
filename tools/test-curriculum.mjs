@@ -10,7 +10,7 @@
 import {
   provenanceOf, provenanceOfScript, parseSection, sourceTypeOf, volumeOfAct,
   buildLessonActs, actForLesson, buildOccurrenceIndex, occurrencesOf, lineForms,
-  coordsOf, curriculumIndex, sameScene, sceneDistance, actDistance,
+  coordsOf, curriculumIndex, sameScene, sceneDistance, actDistance, currentAct,
   TEXTBOOK_ID, SCENES_PER_ACT, VOLUME_ACTS,
 } from "./curriculum.mjs";
 import { SEED } from "../src/data/seed.js";
@@ -353,6 +353,59 @@ t("real cards compare without the caller unpacking anything", () => {
   eq(sameScene(a, b), true);
   eq(sceneDistance(a, far), (9 - 3) * SCENES_PER_ACT + 2);
   ok(sceneDistance(a, b) < sceneDistance(a, far));
+});
+
+console.log("\n=== where the learner has got to ===");
+// The deck a practice mode sees: four acts, so "latest" has somewhere to be wrong.
+const posCards = [
+  { id: "a2", term: "a2", sec: "2-1" },
+  { id: "a3", term: "a3", sec: "3-4" },
+  { id: "a9", term: "a9", sec: "9-2" },
+  { id: "manga", term: "manga", sec: "DB 8–9" },       // unplaced: no act at all
+];
+t("nothing studied means nobody knows where you are", () => {
+  eq(currentAct([], posCards), null);
+  eq(currentAct(), null);
+  eq(currentAct([], []), null);
+});
+t("the latest act with evidence wins, whatever order it arrives in", () => {
+  eq(currentAct([{ id: "a9" }, { id: "a2" }], posCards), 9);
+  eq(currentAct([{ id: "a2" }, { id: "a9" }], posCards), 9);
+  eq(currentAct([{ id: "a2" }, { id: "a3" }], posCards), 3);
+});
+t("the deck's own history counts, because the evidence log is younger than the deck", () => {
+  // An act studied before the log existed would otherwise read as never reached, and
+  // Current Lesson would send a learner in Act 9 back to Act 1.
+  eq(currentAct([], posCards.map((c) => (c.id === "a9" ? { ...c, seen: 4 } : c))), 9);
+  // Production-only history counts too — rseen is still having met the word.
+  eq(currentAct([], posCards.map((c) => (c.id === "a3" ? { ...c, rseen: 2 } : c))), 3);
+  eq(currentAct([], posCards.map((c) => ({ ...c, seen: 0 }))), null);
+});
+t("an unplaced card never votes", () => {
+  // 5.6% of the deck has no act. Letting a manga page or a dated class-day card pick one
+  // would put the whole practice mode on a guess.
+  eq(currentAct([{ id: "manga" }], posCards), null);
+  eq(currentAct([{ id: "manga" }, { id: "a3" }], posCards), 3);
+});
+t("evidence for a card that is no longer in the deck is ignored", () => {
+  eq(currentAct([{ id: "deleted" }], posCards), null);
+  eq(currentAct([{ id: "deleted" }, { id: "a2" }], posCards), 2);
+  eq(currentAct([null, {}, { id: null }, { id: "a2" }], posCards), 2);
+});
+t("one answer is enough to move it — the documented sharp edge", () => {
+  // "Latest act with ANY evidence" is the spec's rule and this is it: drilling a single
+  // Act 9 card out of curiosity moves the position and keeps it there. The override in
+  // the plan is the fix, not a threshold here that would disagree with the phrase.
+  eq(currentAct([{ id: "a9" }], posCards), 9);
+});
+t("the real deck places the learner somewhere real", () => {
+  // SEED carries no ids — the app mints them on import — so the join is exercised the way
+  // the app does it, over cards that already have one.
+  const deck = SEED.map((c, i) => ({ ...c, id: "s" + i }));
+  const upTo5 = deck.map((c) => (provenanceOf(c).act <= 5 ? { ...c, seen: 1 } : c));
+  eq(currentAct([], upTo5), 5, "a deck studied through act 5 should report act 5");
+  const oneNine = deck.find((c) => provenanceOf(c).act === 9);
+  eq(currentAct([{ id: oneNine.id, at: 1 }], deck), 9, "one answered act-9 card places the learner in act 9");
 });
 
 console.log(`\nall ${run} curriculum tests ${fail ? `— ${fail} FAILED` : "passed"}`);

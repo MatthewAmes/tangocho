@@ -6,12 +6,15 @@
 import {
   DEFAULTS, need, daysSince, isStale, pacePerItem, budgetFor,
   candidates, buildSession, describe, formatFor, withFormats, FORMATS, pacePerDeck,
+  normaliseScope, scopeShiftFor, SCOPE_MODES,
 } from "./session.mjs";
+import { provenanceOf } from "./curriculum.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
 const gt = (a, b, m) => { if (!(a > b)) throw new Error(`${m || ""} expected ${a} > ${b}`); };
 const lte = (a, b, m) => { if (!(a <= b)) throw new Error(`${m || ""} expected ${a} <= ${b}`); };
+const gte = (a, b, m) => { if (!(a >= b)) throw new Error(`${m || ""} expected ${a} >= ${b}`); };
 const eq = (a, b, m) => { if (a !== b) throw new Error(`${m || ""} expected ${b}, got ${a}`); };
 const ok = (v, m) => { if (!v) throw new Error(m || "expected truthy"); };
 
@@ -788,6 +791,162 @@ t("a card answered CORRECTLY four minutes ago does not", () => {
   }];
   const picks = buildSession(src, { now: NOW, size: 20 });
   eq(picks.some((p) => p.item.id === "fine"), false, "a correct answer should not be re-asked immediately");
+});
+
+console.log("\n=== practice modes ===");
+/* The fixture is built so the ONLY thing separating the two halves is the act. Sixteen
+   current-act words and sixteen older ones, identical memory state down to the stability
+   and the elapsed days, so any difference in what gets picked is the mode and nothing else
+   — a fixture where the old material was also more decayed would let decay take the credit.
+   On top of that: one genuinely fading old word (§15's due Act-3 item), one settled old word
+   sitting comfortably below the weight's crossover, and unstudied material on both sides. */
+const ACT_NOW = 9;
+const modeDeck = () => {
+  const items = [], stats = {};
+  for (let i = 0; i < 16; i++) {
+    items.push({ id: "cur" + i, term: "cur" + i, sec: "9-2", order: 900 + i });
+    stats["cur" + i] = studied("cur" + i, 20, 8);          // need 0.34
+    items.push({ id: "old" + i, term: "old" + i, sec: "3-4", order: 300 + i });
+    stats["old" + i] = studied("old" + i, 20, 8);          // need 0.34 — the same memory
+  }
+  // r 0.60, need 3.20: faded past the recall floor, so Current Lesson must NOT bury it.
+  items.push({ id: "oldFading", term: "oldFading", sec: "3-4", order: 398 });
+  stats.oldFading = studied("oldFading", 5, 30);
+  // r 0.82, need 1.45: due, but still comfortable — this one Current Lesson may displace.
+  items.push({ id: "oldSettled", term: "oldSettled", sec: "3-4", order: 399 });
+  stats.oldSettled = studied("oldSettled", 4, 8);
+  for (let i = 0; i < 6; i++) {
+    items.push({ id: "curNew" + i, term: "curNew" + i, sec: "9-3", order: 960 + i });
+    items.push({ id: "oldNew" + i, term: "oldNew" + i, sec: "3-5", order: 360 + i });
+  }
+  return [{ deck: "vocab", caps: { type: true, listen: true }, items, stats }];
+};
+// Share of the session's distinct items that come from the act being studied now.
+const actShare = (picks, act = ACT_NOW) => {
+  const seen = new Set(), acts = [];
+  for (const p of picks) {
+    if (seen.has(p.deck + " " + p.item.id)) continue;
+    seen.add(p.deck + " " + p.item.id);
+    acts.push(provenanceOf(p.item).act);
+  }
+  return acts.length ? acts.filter((a) => a === act).length / acts.length : 0;
+};
+const inSession = (picks, id) => picks.some((p) => p.item.id === id);
+const runMode = (mode, extra = {}) => buildSession(modeDeck(), {
+  now: NOW, size: 22, ...extra,
+  scope: mode === "mix" ? undefined : { mode, act: ACT_NOW },
+});
+
+t("Smart Mix is the session this file already built, byte for byte", () => {
+  // The whole promise of the default: nothing changes for Matthew unless he chooses it.
+  const base = JSON.stringify(buildSession(modeDeck(), { now: NOW, size: 22 }));
+  for (const scope of [undefined, null, "mix", { mode: "mix" }, { mode: "mix", act: ACT_NOW }]) {
+    eq(JSON.stringify(buildSession(modeDeck(), { now: NOW, size: 22, scope })), base,
+       "scope " + JSON.stringify(scope) + " should change nothing");
+  }
+});
+t("a scope that cannot be honoured falls back to Smart Mix rather than half-applying", () => {
+  const base = JSON.stringify(buildSession(modeDeck(), { now: NOW, size: 22 }));
+  // No act: a deck with no evidence yet has no current lesson, and guessing one is worse
+  // than saying so. A mode nobody defined is the same situation.
+  for (const scope of [{ mode: "current" }, { mode: "current", act: null }, { mode: "bogus", act: 9 }]) {
+    eq(JSON.stringify(buildSession(modeDeck(), { now: NOW, size: 22, scope })), base,
+       "scope " + JSON.stringify(scope) + " should fall back to mix");
+  }
+  eq(normaliseScope({ mode: "current", act: null }), null);
+  eq(normaliseScope("mix"), null);
+  eq(normaliseScope({ mode: "review", act: 4 }).act, 4);
+  ok(SCOPE_MODES.includes("current") && SCOPE_MODES.includes("review") && SCOPE_MODES.includes("mix"));
+});
+t("same learner state, three modes, three measurably different mixes", () => {
+  const cur = actShare(runMode("current"));
+  const mix = actShare(runMode("mix"));
+  const rev = actShare(runMode("review"));
+  gt(cur, mix, "Current Lesson should draw more from the current act than Smart Mix");
+  gt(mix, rev, "Cumulative Review should draw less from it than Smart Mix");
+  console.log(`        current-act share — current ${cur.toFixed(2)} · mix ${mix.toFixed(2)} · review ${rev.toFixed(2)}`);
+});
+t("Current Lesson reaches a configurable share of the current act", () => {
+  gte(actShare(runMode("current")), 0.6, "at the default weight");
+  // Configurable, and in the direction the name promises: turning it off gives Smart Mix
+  // back, turning it up cannot give less focus than the default.
+  eq(actShare(runMode("current", { scopeWeight: 0 })), actShare(runMode("mix")));
+  gte(actShare(runMode("current", { scopeWeight: 6 })), actShare(runMode("current")));
+});
+t("§15: a due older item still surfaces inside current-lesson practice", () => {
+  // The reason this is a weight and not a filter. Under a filter the fading Act-3 word is
+  // locked out of the only session that would have rescued it.
+  ok(inSession(runMode("current"), "oldFading"), "the fading Act-3 word must still get in");
+  ok(inSession(runMode("current", { scopeWeight: 20 }), "oldFading"),
+     "and no amount of curriculum focus may buy its way past a decaying memory");
+});
+t("the crossover is where DEFAULTS says it is", () => {
+  // Old material the model still considers comfortable yields to the current act; old
+  // material that has actually faded does not. That boundary IS the weight's justification,
+  // so it is asserted rather than left in a comment.
+  const picks = runMode("current");
+  eq(inSession(picks, "oldSettled"), false, "a comfortable old word yields (need 1.45 < 0.34 + 2.2)");
+  eq(inSession(picks, "oldFading"), true, "a faded one does not (need 3.20, and stale on top)");
+  // The weight is smaller than the +4 a decaying item already carries, which is what makes
+  // that second assertion structural rather than lucky: at any current-act need N, a stale
+  // item at the same need still scores N + 4 against N + 2.2.
+  lte(DEFAULTS.scopeWeight, 4, "curriculum focus must stay below the decay bonus");
+});
+t("Cumulative Review leans away from the current act without banning it", () => {
+  lte(actShare(runMode("review")), 0.2, "the current act should be well out of the way");
+  // Downweighted, not excluded: on a deck where the current act is all there is, review
+  // mode still has to build a session rather than hand back an empty one.
+  const onlyCurrent = [{
+    deck: "vocab", caps: { type: true, listen: true },
+    items: Array.from({ length: 12 }, (_, i) => ({ id: "c" + i, term: "c" + i, sec: "9-2", order: i })),
+    stats: Object.fromEntries(Array.from({ length: 12 }, (_, i) => ["c" + i, studied("c" + i, 20, 8)])),
+  }];
+  const picks = buildSession(onlyCurrent, { now: NOW, size: 10, scope: { mode: "review", act: ACT_NOW } });
+  gt(picks.length, 0, "a review session with only current-act material is still a session");
+});
+t("new intake follows the mode instead of always starting at the front of the book", () => {
+  // `order` is the lesson number, so untouched material sorts oldest-first. Left alone,
+  // every new slot in a Current Lesson session would go to the one act Matthew is not on.
+  const news = (picks) => picks.filter((p) => p.fresh && p.step === 0).map((p) => p.item.id);
+  ok(news(runMode("current")).every((id) => id.startsWith("curNew")),
+     "Current Lesson introduces current-act words");
+  ok(news(runMode("mix")).every((id) => id.startsWith("oldNew")),
+     "Smart Mix still introduces in book order");
+  ok(news(runMode("review")).every((id) => id.startsWith("oldNew")),
+     "Cumulative Review does too");
+});
+t("material with no act in the book is neutral in both directions", () => {
+  // 5.6% of the deck is class-day notes and manga pages, and kana/kanji/dates are not in
+  // NihonGO NOW! at all. Guessing an act for them would put the mode's thumb on a guess.
+  eq(scopeShiftFor({ id: "x", term: "x", sec: "DB 8–9" }, { mode: "current", act: 9 }), 0);
+  eq(scopeShiftFor({ id: "x", term: "x", sec: "7/20" }, { mode: "current", act: 7 }), 0);
+  eq(scopeShiftFor({ id: "x", term: "x" }, { mode: "review", act: 9 }), 0);
+  // ...so a deck that is not in the textbook keeps exactly the share vocabShare gives it.
+  const kana = {
+    deck: "kana", caps: { listen: true },
+    items: Array.from({ length: 12 }, (_, i) => ({ id: "k" + i, term: "k" + i })),
+    stats: Object.fromEntries(Array.from({ length: 12 }, (_, i) => ["k" + i, studied("k" + i, 20, 8)])),
+  };
+  const share = (scope) => {
+    const picks = buildSession([...modeDeck(), kana], { now: NOW, size: 22, scope });
+    return picks.filter((p) => p.deck === "kana").length / picks.length;
+  };
+  const plain = share(undefined);
+  gt(plain, 0, "the fixture should actually be drawing on the kana deck");
+  eq(share({ mode: "current", act: ACT_NOW }), plain, "Current Lesson leaves it alone");
+  eq(share({ mode: "review", act: ACT_NOW }), plain, "so does Cumulative Review");
+});
+t("the shift is symmetric, and published on the candidate only when it applies", () => {
+  const item = { id: "x", term: "x", sec: "9-2" };
+  eq(scopeShiftFor(item, { mode: "current", act: 9 }), DEFAULTS.scopeWeight);
+  eq(scopeShiftFor(item, { mode: "review", act: 9 }), -DEFAULTS.scopeWeight);
+  eq(scopeShiftFor(item, { mode: "current", act: 3 }), 0, "a different act is not touched");
+  eq(scopeShiftFor(item, null), 0);
+  const plain = candidates(modeDeck(), { now: NOW });
+  eq("scopeShift" in plain[0], false, "an unscoped candidate carries no scope field at all");
+  const scoped = candidates(modeDeck(), { now: NOW, scope: { mode: "current", act: ACT_NOW } });
+  eq(scoped.find((c) => c.item.id === "cur0").scopeShift, DEFAULTS.scopeWeight);
+  eq(scoped.find((c) => c.item.id === "old0").scopeShift, 0);
 });
 
 console.log("\n=== describe ===");
