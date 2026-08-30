@@ -7,6 +7,10 @@
 !.claude/launch.json
 files.zip
 node_modules/
+# Saved email exports (source material for design docs, e.g. "Mega prompt.eml") stay
+# local: they carry mail headers, and an untracked in-scope file also poisons the build
+# stamp's dirty check, stamping every local build one commit ahead of what CI rebuilds.
+*.eml
 cf/public/
 .wrangler/
 .env
