@@ -765,6 +765,49 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-cue{margin:0;font-size:15px;color:rgba(255,255,255,.6);font-style:italic;}
 .tc-ladder{margin:0;font-size:12px;color:var(--mut-2);line-height:1.5;}
 .tc-offnote{margin:0;font-size:12px;color:var(--mut-2);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);padding:9px 12px;border-radius:8px;}
+
+/* ---- script listening (MP-14). Mobile first: the replay button is the biggest thing on
+   the card because it is the control the learner uses most, and the options are on the
+   46px tap floor even when their text is one word long. ---- */
+.tc-listenstart{appearance:none;width:100%;box-sizing:border-box;text-align:left;font:inherit;cursor:pointer;
+  display:flex;flex-direction:column;gap:4px;padding:14px 16px;min-height:var(--tap);
+  border:1px solid var(--outline-2);border-radius:var(--r-m);color:var(--washi);
+  background:linear-gradient(180deg,rgba(59,130,246,.14),rgba(59,130,246,.05));
+  transition:border-color .15s,background .15s,transform .1s;}
+.tc-listenstart:hover{border-color:var(--info);}
+.tc-listenstart:active{transform:scale(.99);}
+.tc-listenstart-h{font-size:16px;font-weight:600;color:#fff;}
+.tc-listenstart-s{font-size:12px;color:var(--mut-2);line-height:1.45;}
+/* Wraps, because a script Matthew pasted in himself can be named anything and the chip
+   next to the voice controls must not push the row off a 375px screen. */
+.tc-listenbar{flex-wrap:wrap;align-items:center;}
+/* The provenance chip (spec 3, 10): where in NihonGO NOW! this line comes from. */
+.tc-provchip{display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--mut);
+  background:var(--surface-2);border:1px solid var(--outline-2);border-radius:99px;padding:6px 12px;
+  white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
+.tc-listenq{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px;}
+.tc-replay{appearance:none;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);
+  color:#fff;font-size:38px;line-height:1;width:96px;height:96px;border-radius:50%;cursor:pointer;
+  transition:background .15s,border-color .15s,transform .1s;}
+.tc-replay:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.35);}
+.tc-replay:active{transform:scale(.95);}
+.tc-listensrc{margin:2px 0 0;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:rgba(255,255,255,.38);}
+/* The escape hatch, and what it costs: the line is on screen, so the answer is no longer
+   evidence about hearing it. */
+.tc-listenshown{margin:8px 0 0;font-size:24px;line-height:1.6;color:rgba(255,255,255,.85);text-align:center;}
+.tc-listenopts .tc-mcopt{min-height:var(--tap);display:flex;align-items:center;}
+.tc-listenrev{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;margin-top:14px;
+  padding-top:14px;border-top:1px solid rgba(255,255,255,.12);}
+.tc-listenjp{margin:0;font-size:26px;line-height:1.65;color:#fff;text-align:center;}
+.tc-listenen{margin:0;font-size:15px;line-height:1.5;color:var(--mut);text-align:center;max-width:34ch;}
+.tc-listentally{list-style:none;margin:12px auto 0;padding:0;width:min(100%,300px);display:flex;flex-direction:column;gap:6px;}
+.tc-listentally li{display:flex;justify-content:space-between;gap:10px;font-size:14px;color:var(--mut);
+  background:var(--surface-2);border-radius:var(--r-s);padding:8px 12px;}
+.tc-listentally b{color:var(--washi);}
+.tc-listennote{margin:10px 0 0;font-size:12px;color:var(--mut-2);}
+@media (max-width:460px){.tc-replay{width:88px;height:88px;font-size:34px;}.tc-listenjp{font-size:23px;}}
 .tc-write{display:flex;flex-direction:column;gap:14px;}
 .tc-canvaswrap{position:relative;width:100%;height:240px;background:#f7f3ea;border:0;border-radius:16px;overflow:hidden;box-shadow:inset 0 2px 10px rgba(0,0,0,.12);}
 .tc-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;display:block;}

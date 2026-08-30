@@ -32,6 +32,12 @@ export function skillForFormat(format) {
     case "recall": return "recognition";
     case "type": return "production";
     case "listen": return "listening";
+    /* The script listening mode (listening.mjs). All three of its questions are answered
+       from sound, so all three are evidence about the same ability whatever they ask
+       about — which is why the mode exists at all. */
+    case "listen_meaning":
+    case "listen_missing":
+    case "listen_speaker": return "listening";
     case "cloze": return "context";
     default: return null;                  // "learn" is exposure, not evidence
   }
@@ -115,6 +121,20 @@ export const FORMAT_MODES = {
   script_response: ["comprehension", "transfer"],
   script_order:    ["comprehension", "reconstruction"],
   script_cloze:    ["comprehension", "recognition"],
+
+  /* Script LISTENING (listening.mjs). The same three questions as some of the above, asked
+     of a line the learner has only heard — so every one of them carries `listening` on top
+     of whatever the read version demanded. Kept as separate formats rather than as a flag
+     on the script_* ones because "can I do this by ear" is the question the whole mode
+     exists to answer, and a shared format string would bury it. */
+  listen_meaning: ["listening", "comprehension"],
+  /* Recognition as well as comprehension: the options are on screen, so the word is
+     identified rather than retrieved — the same distinction the read cloze draws. */
+  listen_missing: ["listening", "comprehension", "recognition"],
+  /* Register, told apart by ear. Comprehension is absent on purpose: who said 頑張ります can
+     be answered from how it was said without understanding all of it, and claiming
+     comprehension here would be exactly the overcounting this table exists to prevent. */
+  listen_speaker: ["listening", "discrimination"],
 };
 
 /** What this format actually asks of the learner. Always an array, never null: a format

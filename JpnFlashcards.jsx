@@ -30,6 +30,8 @@ import { posOf, shortGloss } from "./tools/pos.mjs";
 import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
 import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
+import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
+         LISTEN_FORMATS, LISTEN_LABEL, LISTEN_DECK } from "./tools/listening.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -792,7 +794,9 @@ export default function JpnFlashcards() {
         ) : tab === "kana" ? (
           <Kana />
         ) : tab === "scripts" ? (
-          <Scripts />
+          /* The deck rides along for the listening mode's missing-word questions, which
+             blank a word the learner actually has a card for. */
+          <Scripts cards={cards} />
         ) : (
           <Browse cards={cards} onRemove={removeCard} onClear={clearAll} onRestore={restoreDeck} />
         )}
@@ -4253,9 +4257,207 @@ function SpeakBtn({ text, slow }) {
 }
 function lineText(tokens) { return (tokens || []).map((t) => t.t || "").join(""); }
 
+/* ───────────────────────────── SCRIPT LISTENING ─────────────────────────────
+   MP-14, spec §8. Every other exercise in the app puts Japanese on the screen. This one
+   plays a textbook line and keeps the text hidden until the answer is in, which is the only
+   way to find out whether the learner can catch it at speed rather than decode it at
+   leisure — and `listening` has been the emptiest column in the profile because of it.
+
+   Nothing here decides anything. tools/listening.mjs picks the lines, builds the three
+   question types out of the MP-15 generators, grades the answer and shapes the evidence
+   row; this component plays audio, renders what it is handed and calls the two logs the
+   rest of the app already writes to. The split is deliberate: an exercise whose Japanese
+   leaks onto the screen before it is answered is a reading exercise wearing a speaker
+   icon, and that is a property a test can only check on an object, not on JSX.
+
+   It lives on the Scripts tab because the material is the scripts, and because the tab
+   already owns the list of them (seed plus anything Matthew has pasted in). It is
+   deliberately NOT wired into the Study queue — that is MP-16's problem, and a listening
+   session that hijacked the recovery sequencer would be much harder to back out of. */
+
+// Eight questions. Short enough to finish on a phone between classes, long enough that the
+// three task types all appear (they rotate, so a six-question session sees each twice).
+const LISTEN_COUNT = 8;
+
+function ScriptListen({ scripts, cards, onExit }) {
+  const [evidence, setEvidence] = useState(null);      // null = still loading
+  // Bumped by "Go again", so a second session is a different draw rather than a replay.
+  const [seed, setSeed] = useState(() => Math.floor(Date.now() / 1000));
+  const [at, setAt] = useState(0);
+  const [verdict, setVerdict] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [slow, setSlow] = useState(false);
+  // Per-question: the learner asked to SEE the line because audio would not play. The
+  // question is still worth answering; it is no longer evidence about listening.
+  const [shown, setShown] = useState(false);
+  const [shownCount, setShownCount] = useState(0);
+  const shownAtRef = useRef(Date.now());
+
+  useEffect(() => {
+    let live = true;
+    loadEvidence().then((log) => { if (live) setEvidence(log.slice()); });
+    return () => { live = false; };
+  }, []);
+
+  /* The learner's own confusion pairs, so a missing-word question offers the words THIS
+     person actually mixes up. Same source the Study cloze uses. */
+  const confusion = useMemo(() => confusionFrom(evidence || []), [evidence]);
+
+  const set = useMemo(() => {
+    if (evidence === null) return [];
+    return listeningSet({ scripts, cards, evidence, confusion, seed, count: LISTEN_COUNT });
+  }, [scripts, cards, evidence, confusion, seed]);
+
+  const ex = set[at] || null;
+  const done = !!set.length && at >= set.length;
+
+  useEffect(() => { shownAtRef.current = Date.now(); }, [at, seed]);
+
+  useEffect(() => {                    // play the line as soon as the question appears
+    if (!ex || !voiceOn) return;
+    speakJa(ex.audio, slow ? 0.68 : 0.9);
+    const next = set[at + 1];          // warm the cache while this one is being answered
+    if (next) prefetchJa(next.audio, slow ? 0.68 : 0.9);
+    return stopJa;
+  }, [ex, voiceOn, slow]);
+
+  const replay = () => { ttsUnlock(); speakJa(ex.audio, slow ? 0.68 : 0.9); };
+
+  const answer = (choice) => {
+    if (verdict || !ex) return;
+    const g = gradeListening(ex, choice);
+    const ms = boundMs(Date.now() - shownAtRef.current);
+    setVerdict(g);
+    setRows((r) => [...r, { format: ex.format, ok: g.ok, counted: !shown }]);
+    /* A question answered off the written line is not listening evidence, and recording it
+       as such would flatter the one skill this whole mode exists to measure honestly. It is
+       dropped rather than filed under another format: there is no read equivalent of
+       "who said it" to file it as, and inventing one to avoid losing a row would put a
+       format in the log that no generator produces. */
+    if (shown) { setShownCount((n) => n + 1); return; }
+    logEvidence(makeEvidence(listeningEvidence(ex, g, ms)));
+    logDay({ ok: g.ok, ms, deck: LISTEN_DECK, area: "listening" });
+  };
+
+  const next = () => { setVerdict(null); setShown(false); setAt((i) => i + 1); };
+  const again = () => {
+    stopJa();
+    /* Re-read the log first. The session that just finished IS evidence about which acts
+       this learner has met, and a second round built from the snapshot taken at mount
+       would ignore it — which is precisely the case where curriculum-aware selection has
+       something to say. A copy, so nothing here churns while a session is live. */
+    loadEvidence().then((log) => setEvidence(log.slice()));
+    setSeed((s) => s + 1); setAt(0); setVerdict(null); setShown(false); setRows([]); setShownCount(0);
+  };
+
+  const head = (
+    <div className="tc-rehhead">
+      <button className="tc-btn tc-btn-sm" onClick={() => { stopJa(); onExit(); }}>← Scripts</button>
+      <span className="tc-rehname">Listen</span>
+    </div>
+  );
+
+  if (evidence === null) return <div className="tc-empty">Loading your listening history…</div>;
+
+  if (!set.length) {
+    return (
+      <div className="tc-sent">
+        {head}
+        <div className="tc-sentempty">
+          <p>No line in your scripts can carry a listening question yet — they need an English
+             translation, a second speaker, or a word from your deck in them.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (done) {
+    const sum = listeningSummary(rows.filter((r) => r.counted));
+    return (
+      <div className="tc-sent">
+        {head}
+        <div className="tc-done">
+          <p className="tc-eyebrow">Listening done 🎧</p>
+          <p className="tc-donerate"><b>{sum.correct}</b> of {sum.answered} by ear</p>
+          <ul className="tc-listentally">
+            {Object.keys(sum.byFormat).map((f) => (
+              <li key={f}><span>{LISTEN_LABEL[f] || f}</span><b>{sum.byFormat[f].ok}/{sum.byFormat[f].n}</b></li>
+            ))}
+          </ul>
+          {shownCount > 0 && (
+            <p className="tc-listennote">{shownCount} answered from the text — those are not counted as listening.</p>
+          )}
+          <div className="tc-donebtns">
+            <button className="tc-btn tc-btn-primary" onClick={again}>Go again</button>
+            <button className="tc-btn" onClick={() => { stopJa(); onExit(); }}>Back to scripts</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tc-sent">
+      {head}
+      <div className="tc-voicerow tc-listenbar">
+        <span className="tc-provchip">{ex.provenance.label}</span>
+        <button className={"tc-fchip" + (voiceOn ? " is-on" : "")}
+          onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>🔊 Voice {voiceOn ? "on" : "off"}</button>
+        <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}>🐢 Slow</button>
+      </div>
+
+      <div className="tc-card2">
+        <p className="tc-eyebrow">{LISTEN_LABEL[ex.format]} · {at + 1}/{set.length}</p>
+
+        <div className="tc-listenq">
+          <button type="button" className="tc-replay" onClick={replay} aria-label="Play the line again">🔊</button>
+          <p className="tc-learnnote">Tap to hear it again</p>
+          {/* Spec §29: the LINES are authentic NihonGO NOW!; the voice is a synthesiser.
+              Saying so is cheap and the alternative is a quiet misrepresentation of what
+              the learner is training their ear against. */}
+          <p className="tc-listensrc">generated voice · real textbook line</p>
+          {!verdict && !shown && (
+            <button type="button" className="tc-noaudio" onClick={() => { setShown(true); stopJa(); }}>
+              Can't play audio — show the line instead
+            </button>
+          )}
+          {shown && (
+            <p className="tc-listenshown tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
+          )}
+        </div>
+
+        <p className="tc-mchint">{ex.prompt}</p>
+        <div className="tc-mcopts tc-listenopts">
+          {ex.choices.map((c) => {
+            const chosen = verdict && verdict.chose === c;
+            const isAnswer = c === ex.answer;
+            const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
+            return (
+              <button key={c} type="button" className={"tc-mcopt" + cls + (ex.format === LISTEN_FORMATS.MISSING ? " tc-jp" : "")}
+                      disabled={!!verdict} onClick={() => answer(c)}>{c}</button>
+            );
+          })}
+        </div>
+
+        {verdict && (
+          <div className="tc-listenrev">
+            <p className="tc-listenjp tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
+            {ex.reveal.romaji && <p className="tc-sentans">{ex.reveal.romaji}</p>}
+            {ex.reveal.en && <p className="tc-listenen">{ex.reveal.speaker ? ex.reveal.speaker + ": " : ""}{ex.reveal.en}</p>}
+            <button className="tc-btn tc-btn-primary" onClick={next}>
+              {at + 1 >= set.length ? "Finish" : "Next →"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── active AI helpers ── */
 // hookPrompt/debriefPrompt lived here; those prompts now live in cf/src/ai.js (Worker-owned).
-function Scripts() {
+function Scripts({ cards = [] }) {
   const [scripts, setScripts] = useState([]);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState("list");
@@ -4372,6 +4574,12 @@ function Scripts() {
 
   if (!ready) return <div className="tc-empty">Loading your scripts…</div>;
 
+  /* ── LISTEN ──
+     A fourth mode alongside read / drill-your-part / both-sides, on the tab that already
+     owns the scripts. The rehearse ladder practises SAYING the lines; this practises
+     catching them. */
+  if (view === "listen") return <ScriptListen scripts={scripts} cards={cards} onExit={() => setView("list")} />;
+
   // ── NEW SCRIPT ──
   if (view === "new") {
     return (
@@ -4470,6 +4678,15 @@ function Scripts() {
         <button className="tc-btn tc-btn-primary tc-btn-sm" onClick={() => { setView("new"); setError(""); }}>+ New script</button>
       </div>
       {saveWarn && <div className="tc-senterr">{saveWarn}</div>}
+      {/* The tap that starts listening is also the tap iOS requires before any audio can
+          play at all, which is why the mode is entered from a button rather than from a
+          tab switch. */}
+      {scripts.length > 0 && (
+        <button className="tc-listenstart" onClick={() => { ttsUnlock(); setView("listen"); }}>
+          <span className="tc-listenstart-h">🎧 Listen</span>
+          <span className="tc-listenstart-s">A line plays; the Japanese stays hidden until you answer.</span>
+        </button>
+      )}
       {scripts.length === 0 ? (
         <div className="tc-sentempty">
           <p>Paste a dialogue you're rehearsing and it becomes a line-by-line, both-sides drill — with furigana over every kanji.</p>
