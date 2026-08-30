@@ -33,6 +33,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history: the build stamp is the commit count, and a
+                           # shallow clone counts 1, which fails the drift check
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -75,6 +78,8 @@ jobs:
           fi
       - uses: actions/checkout@v4
         if: steps.gate.outputs.armed == 'yes'
+        with:
+          fetch-depth: 0   # full history here too, or the deployed app would say b1
       - uses: actions/setup-node@v4
         if: steps.gate.outputs.armed == 'yes'
         with:
