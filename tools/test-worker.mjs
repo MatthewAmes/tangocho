@@ -320,18 +320,19 @@ async function main() {
         || JSON.stringify(b.generationConfig.responseSchema || {}).includes("propertyOrdering");
       return bad
         ? new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 })
-        : new Response(JSON.stringify(geminiSays('{"hook":"third rung"}')), { status: 200 });
+        : new Response(JSON.stringify(geminiSays('{"hook":"fourth rung"}')), { status: 200 });
     };
     try {
       const res = await handleAi(aiReq({ task: "hook", input: { term: "階" } }, token), aiEnv());
       eq(res.status, 200);
-      eq((await res.json()).result.hook, "third rung");
-      eq(bodies.length, 3, "should have stopped at the first rung that worked");
-      ok(bodies[0].generationConfig.thinkingConfig, "rung 0 asks for everything");
-      eq(bodies[2].generationConfig.thinkingConfig, undefined, "rung 2 dropped thinking");
-      eq(JSON.stringify(bodies[2].generationConfig.responseSchema).includes("propertyOrdering"), false, "and ordering");
-      ok(bodies[2].generationConfig.responseSchema, "but the schema survives — it is what makes the reply parseable");
-      ok(bodies[2].systemInstruction, "and the system role survives too");
+      eq((await res.json()).result.hook, "fourth rung");
+      eq(bodies.length, 4, "should have stopped at the first rung that worked");
+      eq(bodies[0].generationConfig.thinkingConfig.thinkingBudget, 0, "rung 0 asks for everything, budget-style");
+      eq(bodies[1].generationConfig.thinkingConfig.thinkingLevel, "low", "rung 1 retries the knob under its 3.x name");
+      eq(bodies[3].generationConfig.thinkingConfig, undefined, "rung 3 dropped thinking");
+      eq(JSON.stringify(bodies[3].generationConfig.responseSchema).includes("propertyOrdering"), false, "and ordering");
+      ok(bodies[3].generationConfig.responseSchema, "but the schema survives — it is what makes the reply parseable");
+      ok(bodies[3].systemInstruction, "and the system role survives too");
     } finally { globalThis.fetch = realFetch; }
   });
   await t("dropping thinkingConfig buys the budget headroom to survive it", async () => {
@@ -356,6 +357,32 @@ async function main() {
       eq(withThinking.generationConfig.maxOutputTokens, 300, "hook's own budget when thinking is off");
       ok(without.generationConfig.maxOutputTokens > 300 * 3,
          "…and far more when it cannot be, got " + without.generationConfig.maxOutputTokens);
+    } finally { globalThis.fetch = realFetch; }
+  });
+  await t("a model that rejects thinkingBudget is offered thinkingLevel before giving up on the knob", async () => {
+    // Gemini 3.x renamed the thinking control rather than removing it. Dropping the whole
+    // thinkingConfig on the first 400 left the model thinking at full default depth on every
+    // call — the 30-second sentence generations. The middle rung asks again by the new name;
+    // its budget only needs low-thinking headroom, not the uncontrolled-thinking multiple.
+    const token = await signSession("test-secret", "sub-level", null);
+    const realFetch = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (url, opts) => {
+      const b = JSON.parse(opts.body); bodies.push(b);
+      const tc = b.generationConfig.thinkingConfig;
+      if (tc && tc.thinkingBudget !== undefined) {
+        return new Response(JSON.stringify({ error: { message: "Request contains an invalid argument." } }), { status: 400 });
+      }
+      return new Response(JSON.stringify(geminiSays('{"hook":"thought a little"}')), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "hook", input: { term: "念" } }, token), aiEnv());
+      eq(res.status, 200);
+      eq((await res.json()).result.hook, "thought a little");
+      eq(bodies.length, 2, "budget rung fails, level rung lands");
+      eq(bodies[1].generationConfig.thinkingConfig.thinkingLevel, "low", "the knob under its new name");
+      ok(bodies[1].generationConfig.maxOutputTokens < 2048,
+         "low thinking needs modest headroom, not the no-control multiple; got " + bodies[1].generationConfig.maxOutputTokens);
     } finally { globalThis.fetch = realFetch; }
   });
   await t("every failure explains itself — a bare 502 is unfixable from outside", async () => {
@@ -392,7 +419,7 @@ async function main() {
     try {
       const first = await handleAi(aiReq({ task: "hook", input: { term: "一" } }, token), env);
       eq(first.status, 200);
-      eq(calls, 2, "first request pays for the ladder");
+      eq(calls, 3, "first request pays for the ladder (budget rung, level rung, then bare thinking)");
       calls = 0;
       const second = await handleAi(aiReq({ task: "hook", input: { term: "二" } }, token), env);
       eq(second.status, 200);
@@ -403,7 +430,7 @@ async function main() {
     const token = await signSession("test-secret", "sub-memo2", null);
     const realFetch = globalThis.fetch;
     const env = aiEnv();
-    await env.TTS.put("ai:shape:gemini-3.6-flash", "no-thinking");
+    await env.TTS.put("ai:shape2:gemini-3.6-flash", "no-thinking");
     const bodies = [];
     globalThis.fetch = async (url, opts) => {
       const b = JSON.parse(opts.body); bodies.push(b);

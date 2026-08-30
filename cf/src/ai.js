@@ -263,8 +263,17 @@ export async function handleAi(req, env) {
     }
     return x;
   };
+  /* Between full and no-thinking sits the rung the first ladder missed: Gemini's 3.x
+     generation RENAMED the thinking knob rather than removing it — thinkingBudget became
+     thinkingLevel — so a model that 400s {thinkingBudget: 0} may still accept
+     {thinkingLevel: "low"}. Dropping thinkingConfig entirely was treating the whole object
+     as the offender when only the field name had changed, and the cost was enormous:
+     with no thinking control at all, Flash thinks at its default depth on every call —
+     thousands of thought tokens before one N5 sentence — which is where the 30-second
+     generations came from. "low" rather than off because 3.x has no off. */
   const SHAPES = [
     { name: "full", thinking: true, ordering: true, schema: true, systemRole: true },
+    { name: "thinking-level", thinkingLevel: true, ordering: true, schema: true, systemRole: true },
     { name: "no-thinking", thinking: false, ordering: true, schema: true, systemRole: true },
     { name: "no-ordering", thinking: false, ordering: false, schema: true, systemRole: true },
     { name: "no-schema", thinking: false, ordering: false, schema: false, systemRole: true },
@@ -278,10 +287,16 @@ export async function handleAi(req, env) {
        of maxOutputTokens — a 300-token hook budget then buys some reasoning and no answer,
        and the reply comes back with no text at all. Turning thinking off is the cheap fix;
        when the model will not accept that, paying for headroom is the other one. */
-    const budget = shape.thinking ? maxTokens : Math.max(maxTokens * 4, 2048);
+    /* Three budget tiers, one per amount of uninvited thinking: off costs nothing extra,
+       "low" spends a little, and uncontrolled thinking needs the most headroom of all —
+       maxOutputTokens is a cap the thinking bills against, not a target. */
+    const budget = shape.thinking ? maxTokens
+      : shape.thinkingLevel ? Math.max(maxTokens * 2, 1024)
+      : Math.max(maxTokens * 4, 2048);
     const generationConfig = { maxOutputTokens: budget, temperature: 0.7, responseMimeType: "application/json" };
     if (shape.schema) generationConfig.responseSchema = shape.ordering ? task.schema : strip(task.schema);
     if (shape.thinking) generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    else if (shape.thinkingLevel) generationConfig.thinkingConfig = { thinkingLevel: "low" };
     const userText = shape.systemRole
       ? task.user(body.input)
       : task.system + "\n\nReply with ONLY a JSON object.\n\n" + task.user(body.input);
@@ -338,7 +353,11 @@ export async function handleAi(req, env) {
     status === 429 || status === 503 || /high demand|overloaded|try again later|unavailable/i.test(msg || "");
   const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-  const shapeNoteKey = (m) => "ai:shape:" + m;
+  /* v2: adding a rung changes what the note means, and a remembered "no-thinking" from
+     before the thinking-level rung existed would skip PAST the new rung for up to a day —
+     exactly the rung the deploy was for. A new key namespace makes every model re-run the
+     ladder once after this deploy; the old ai:shape:* notes just expire. */
+  const shapeNoteKey = (m) => "ai:shape2:" + m;
   const rememberedRung = async (m) => {
     try {
       const name = await env.TTS.get(shapeNoteKey(m));
@@ -348,7 +367,7 @@ export async function handleAi(req, env) {
   };
 
   const callResilient = async (maxTokens) => {
-    let last = null, lastShape = SHAPES[0], lastMsg = "";
+    let last = null, lastShape = SHAPES[0], lastMsg = "", lastWhich = models[0];
     for (const which of models) {
       const startAt = await rememberedRung(which);
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -360,16 +379,16 @@ export async function handleAi(req, env) {
           if (SHAPES.indexOf(shape) !== startAt) {
             try { await env.TTS.put(shapeNoteKey(which), shape.name, { expirationTtl: 86400 }); } catch (e) {}
           }
-          return { r, shape };
+          return { r, shape, which };
         }
-        last = r; lastShape = shape;
+        last = r; lastShape = shape; lastWhich = which;
         try { lastMsg = ((await r.clone().json()).error || {}).message || ""; } catch (e) { lastMsg = ""; }
         if (!isBusy(r.status, lastMsg)) return { r, shape };      // a real failure: stop
         if (attempt < 2) await sleep(attempt === 0 ? 700 : 1800);
       }
       console.warn(JSON.stringify({ ev: "ai_model_busy", model: which, detail: lastMsg.slice(0, 200) }));
     }
-    return { r: last, shape: lastShape };
+    return { r: last, shape: lastShape, which: lastWhich };
   };
 
   const textOf = (d) => {
@@ -379,10 +398,12 @@ export async function handleAi(req, env) {
   };
   const reasonOf = (d) => (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || "";
 
-  let data, shape = SHAPES[0];        // hoisted: the failure paths below name the shape that answered
+  let data, shape = SHAPES[0], served = model;   // hoisted: the failure paths below name the shape that answered
+  const t0 = Date.now();              // wall-clock for the ai_gen log — "slow" must be measurable from a tail
+  let retried = false;
   try {
     const res0 = await callResilient(task.max_tokens);
-    const r = res0.r; shape = res0.shape;
+    const r = res0.r; shape = res0.shape; served = res0.which || model;
     if (!r.ok) {
       // The body carries Google's actual complaint (bad key, disabled API, bad schema) and
       // it is worth having in the log — a bare 400 here is unfixable from the outside.
@@ -399,7 +420,8 @@ export async function handleAi(req, env) {
     // Truncated or silent: retry once with more room. The shape that just worked is reused —
     // the budget was the problem, not the request.
     if (reasonOf(data) === "MAX_TOKENS" || !textOf(data)) {
-      const again = await call(Math.round(task.max_tokens * 1.5), shape);
+      retried = true;
+      const again = await call(Math.round(task.max_tokens * 1.5), shape, served);
       if (!again.ok) return json({ error: "upstream " + again.status, detail: "retry for more room came back " + again.status }, 502);
       data = await again.json();
     }
@@ -420,10 +442,10 @@ export async function handleAi(req, env) {
      "empty reply" reaches the learner as an unadorned "Couldn't reach Gemini", which is
      indistinguishable from the network being down and sends the next hour in the wrong
      direction. What the model actually returned is the whole diagnosis. */
-  const shapeNote = " [" + shape.name + ", " + model + ", finish=" + (reason || "none") + "]";
+  const shapeNote = " [" + shape.name + ", " + served + ", finish=" + (reason || "none") + "]";
   const text = textOf(data);
   if (!text) {
-    console.warn(JSON.stringify({ ev: "ai_empty", task: body.task, model, shape: shape.name, reason, usage: data && data.usageMetadata }));
+    console.warn(JSON.stringify({ ev: "ai_empty", task: body.task, model: served, shape: shape.name, reason, usage: data && data.usageMetadata }));
     return json({ error: "empty reply", detail: "the model returned no text" + shapeNote }, 502);
   }
 
@@ -436,7 +458,7 @@ export async function handleAi(req, env) {
     if (s !== -1 && en !== -1 && en > s) t = t.slice(s, en + 1);
     try { result = JSON.parse(t); }
     catch (e2) {
-      console.warn(JSON.stringify({ ev: "ai_unparseable", task: body.task, model, shape: shape.name, head: text.slice(0, 200) }));
+      console.warn(JSON.stringify({ ev: "ai_unparseable", task: body.task, model: served, shape: shape.name, head: text.slice(0, 200) }));
       return json({ error: "unparseable reply", detail: "reply was not JSON" + shapeNote + ": " + text.slice(0, 120) }, 502);
     }
   }
@@ -447,11 +469,17 @@ export async function handleAi(req, env) {
      to blank out. Caching an answer like that would make one bad generation permanent, so the
      check runs before the write, not after. */
   if (typeof task.validate === "function" && !task.validate(result, body.input)) {
-    console.warn(JSON.stringify({ ev: "ai_invalid", task: body.task, model, result: JSON.stringify(result).slice(0, 200) }));
+    console.warn(JSON.stringify({ ev: "ai_invalid", task: body.task, model: served, result: JSON.stringify(result).slice(0, 200) }));
     return json({ error: "unusable reply", detail: "the model's answer did not satisfy this task's requirements" }, 502);
   }
 
   await env.TTS.put(key, JSON.stringify(result), task.ttl ? { expirationTtl: task.ttl } : undefined);
-  console.log(JSON.stringify({ ev: "ai_gen", task: body.task, model }));
+  /* ms and usageMetadata make "why is this slow" answerable from `wrangler tail` alone:
+     usage.thoughtsTokenCount is the thinking burn, and a big one on a no-thinking shape
+     says the model ignored — or was never sent — a working thinking control. */
+  console.log(JSON.stringify({
+    ev: "ai_gen", task: body.task, model: served, shape: shape.name,
+    ms: Date.now() - t0, retried: retried || undefined, usage: (data && data.usageMetadata) || undefined,
+  }));
   return json({ result, cached: false });
 }
