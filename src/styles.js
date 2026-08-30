@@ -642,6 +642,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .kn-ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px;line-height:1;color:rgba(31,45,84,.15);pointer-events:none;user-select:none;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .kn-ghost-strong{color:rgba(216,72,47,.5);}
 .tc-build{font-size:11px;font-weight:600;color:var(--mut-2);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);padding:2px 7px;border-radius:99px;vertical-align:middle;letter-spacing:.04em;}
+.tc-verfoot{margin:28px 0 10px;text-align:center;font-size:10.5px;letter-spacing:.08em;color:var(--mut-2);opacity:.55;user-select:none;}
 .tc-backbtn{border-color:rgba(255,255,255,.3);font-weight:600;min-width:84px;}
 .tc-hookbtn{appearance:none;margin-top:10px;border:0;background:rgba(255,255,255,.12);color:rgba(255,255,255,.75);font:inherit;font-size:13px;font-weight:500;min-height:34px;padding:6px 14px;border-radius:99px;cursor:pointer;transition:background .15s,transform .1s;}
 .tc-hookbtn:active{transform:scale(.95);}

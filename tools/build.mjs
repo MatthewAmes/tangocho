@@ -29,6 +29,27 @@ const ROOT = path.resolve(TOOLS, "..");
 const SRC = path.join(ROOT, "JpnFlashcards.jsx");
 const HTML = path.join(ROOT, "index.html");
 
+// ── build stamp ───────────────────────────────────────────────────────────────
+// The version pill used to be a hand-edited string ("b59"), which drifted the moment
+// anyone forgot to bump it — a version number that can silently lie is worse than none.
+// The commit count is monotonic, needs no bookkeeping, and answers the only question the
+// pill exists to answer: "is the app in front of me the latest deploy?"
+// A dirty tree stamps count+1 — the number of the commit this build is about to land in.
+// That one prediction is what makes the artifact reproducible: the committed index.html
+// then matches a clean rebuild at its own HEAD byte for byte, so deploying right after a
+// commit does not re-dirty the tree and a future CI drift check needs no stamp carve-out.
+// (A dirty build that never gets committed wears a number the next real commit will take
+// over — the normal flow here always commits, so that stays theoretical.)
+import { execSync } from "node:child_process";
+let STAMP;
+try {
+  const git = (cmd) => execSync(cmd, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  const n = Number(git("git rev-list --count HEAD"));
+  STAMP = "b" + (git("git status --porcelain") ? n + 1 : n);
+} catch (e) {
+  STAMP = "b-" + new Date().toISOString().slice(0, 10);   // no git (tarball checkout): date beats lying
+}
+
 const result = await build({
   entryPoints: [SRC],
   bundle: true,
@@ -39,6 +60,7 @@ const result = await build({
   // The source sits in the project root but node_modules lives here in tools/, and
   // esbuild resolves bare imports relative to the importing file. Point it at ours.
   nodePaths: [path.join(TOOLS, "node_modules")],
+  define: { __BUILD__: JSON.stringify(STAMP) },
   write: false,
   logLevel: "warning",
 });
@@ -139,5 +161,5 @@ if (fs.existsSync(VIDEOS)) {
 }
 
 const kb = (n) => (n / 1024).toFixed(1) + "kb";
-console.log(`ok  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public`
+console.log(`ok  ${STAMP}  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public`
   + (videoCount ? `, ${videoCount} videos` : ", NO video index") + ")");

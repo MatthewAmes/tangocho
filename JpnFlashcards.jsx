@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 
+/* Injected by tools/build.mjs (esbuild `define`): "b<commit count>", "+" if the tree was
+   dirty at build time. "dev" only when running unbundled, where no stamp exists to show. */
+const BUILD = typeof __BUILD__ === "undefined" ? "dev" : __BUILD__;
+
 /* ──────────────────────────────────────────────────────────────────────────
    単語帳 — JPN 101 flashcards
    Persistent vocab study tool. Cards are saved with window.storage so they
@@ -737,7 +741,7 @@ export default function JpnFlashcards() {
           <div className="tc-brandblock">
             <span className="tc-seal" aria-hidden="true">朱</span>
             <div>
-              <h1 className="tc-wordmark">単語帳 <span className="tc-build">b59</span></h1>
+              <h1 className="tc-wordmark">単語帳 <span className="tc-build">{BUILD}</span></h1>
               <p className="tc-sub">JPN 101 · flashcards · <span className="tc-count">{cards.length} words</span></p>
             </div>
           </div>
@@ -790,6 +794,9 @@ export default function JpnFlashcards() {
           <Browse cards={cards} onRemove={removeCard} onClear={clearAll} onRestore={restoreDeck} />
         )}
       </div>
+      {/* Version at the foot of every tab, so "am I on the latest deploy?" is answerable
+          from any phone by scrolling down — the number increments with every commit. */}
+      <footer className="tc-verfoot">単語帳 {BUILD}</footer>
     </div>
   );
 }
