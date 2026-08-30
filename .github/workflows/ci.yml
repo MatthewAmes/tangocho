@@ -1,0 +1,85 @@
+# CI for tangocho.
+#
+# Two jobs:
+#   check  — every push and PR: install, run the test suites, rebuild index.html and fail
+#            if the committed artifact does not match the source ("drift"). The build stamp
+#            is derived from the commit count with a clean-tree rebuild matching the
+#            committed file byte for byte (see tools/build.mjs), so the drift check is a
+#            plain `git diff` with no carve-outs.
+#   deploy — pushes to dev only, after check passes: build and `wrangler deploy` to
+#            Matthew's Cloudflare account. It needs the CLOUDFLARE_API_TOKEN repository
+#            secret (Settings → Secrets and variables → Actions); until that secret
+#            exists the job is skipped, so this file is safe to merge first and arm later.
+#            Once armed, "deploy from a phone" is just pushing/merging to dev — or the
+#            Run-workflow button on this workflow.
+#
+# The account id is not a secret (it appears in every dashboard URL); pinning it here
+# keeps wrangler from ever guessing an account the way a cached login once did locally.
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install (root + tools via postinstall)
+        run: npm ci
+      - name: Tests
+        # Node 24.7 on macOS intermittently SIGSEGVs during exit teardown after suites
+        # pass (tools/build.mjs documents it). If the same flake appears on Linux, one
+        # retry distinguishes it from a real failure: assertions are deterministic here,
+        # so a suite that truly fails, fails twice.
+        run: npm test || npm test
+      - name: Build
+        run: npm run build
+      - name: Committed index.html matches the source (drift check)
+        run: |
+          git diff --stat --exit-code index.html \
+            || { echo "::error::index.html is stale — run 'npm run build' and commit the result"; exit 1; }
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ffd64fb4b387772974d585ea73ce155f
+    steps:
+      - name: Check the deploy secret exists
+        id: gate
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "armed=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "armed=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN secret not set — skipping deploy (CI checks still ran)."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.armed == 'yes'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.armed == 'yes'
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install
+        if: steps.gate.outputs.armed == 'yes'
+        run: npm ci
+      - name: Build and deploy
+        if: steps.gate.outputs.armed == 'yes'
+        run: npm run deploy
