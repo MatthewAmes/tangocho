@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 
+/* Injected by tools/build.mjs (esbuild `define`): "b<commit count>", "+" if the tree was
+   dirty at build time. "dev" only when running unbundled, where no stamp exists to show. */
+const BUILD = typeof __BUILD__ === "undefined" ? "dev" : __BUILD__;
+
 /* ──────────────────────────────────────────────────────────────────────────
    単語帳 — JPN 101 flashcards
    Persistent vocab study tool. Cards are saved with window.storage so they
@@ -737,7 +741,7 @@ export default function JpnFlashcards() {
           <div className="tc-brandblock">
             <span className="tc-seal" aria-hidden="true">朱</span>
             <div>
-              <h1 className="tc-wordmark">単語帳 <span className="tc-build">b59</span></h1>
+              <h1 className="tc-wordmark">単語帳 <span className="tc-build">{BUILD}</span></h1>
               <p className="tc-sub">JPN 101 · flashcards · <span className="tc-count">{cards.length} words</span></p>
             </div>
           </div>
@@ -790,6 +794,9 @@ export default function JpnFlashcards() {
           <Browse cards={cards} onRemove={removeCard} onClear={clearAll} onRestore={restoreDeck} />
         )}
       </div>
+      {/* Version at the foot of every tab, so "am I on the latest deploy?" is answerable
+          from any phone by scrolling down — the number increments with every commit. */}
+      <footer className="tc-verfoot">単語帳 {BUILD}</footer>
     </div>
   );
 }
@@ -3438,13 +3445,31 @@ function Sentences({ cards, onResult }) {
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
 
+  /* One exercise of lookahead. A live generation costs seconds even on a good day, and the
+     student spends far longer answering than the model spends writing — so the next
+     exercise is requested the moment the current one is on screen, and "Next sentence"
+     usually finds it already waiting. One deep, per mode. A failed prefetch resolves to
+     null and simply means the button pays the old price; it never surfaces an error of its
+     own. Prefetching only follows a LIVE success, so a signed-out or offline session never
+     spawns a background call it knows will fail. */
+  const nextRef = useRef({});
+  const fetchExercise = useCallback(
+    (m) => callAI(m === "fill" ? "sentence_fill" : "sentence_trans", { vocab: vocabSample(cards) }),
+    [cards]);
+  const prefetch = useCallback((m) => {
+    if (!nextRef.current[m]) nextRef.current[m] = fetchExercise(m).catch(() => null);
+  }, [fetchExercise]);
+
   const generate = useCallback(async () => {
     setLoading(true); setError(""); setOffline(false); setEx(null); setChecked(false);
     setAnswer(""); setResult(null); setShowHint(false);
+    const pending = nextRef.current[mode];
+    nextRef.current[mode] = null;
     try {
-      const { result } = await callAI(mode === "fill" ? "sentence_fill" : "sentence_trans",
-                                      { vocab: vocabSample(cards) });
+      const got = pending ? await pending : null;   // null when there was no prefetch, or it failed
+      const { result } = got || await fetchExercise(mode);
       setEx(result);
+      prefetch(mode);                               // start writing the one after, while this one is answered
     } catch (e) {
       try {                                  // live generator unreachable → build one locally from the deck
         setEx(mode === "fill" ? localFill(cards) : localTrans(cards));
@@ -3457,7 +3482,7 @@ function Sentences({ cards, onResult }) {
         setError("Couldn't generate (" + (e.message || "error") + "). Tap “Generate” to retry.");
       }
     } finally { setLoading(false); }
-  }, [mode, cards]);
+  }, [mode, cards, fetchExercise, prefetch]);
 
   const switchMode = (m) => { setMode(m); setEx(null); setChecked(false); setAnswer(""); setResult(null); setError(""); setOffline(false); };
 

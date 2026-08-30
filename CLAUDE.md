@@ -64,6 +64,17 @@ config rather than resting on a file staying absent.
 npm run deploy         # builds first, then deploys
 ```
 
+CI (`.github/workflows/ci.yml`) also deploys **every push to `dev`** once the
+`CLOUDFLARE_API_TOKEN` repository secret is set (create the token from the "Edit
+Cloudflare Workers" template; the account id is pinned in the workflow). Until the secret
+exists the deploy job skips itself and CI just runs tests + build + a drift check that
+`index.html` matches the source. With the secret in place, pushing dev IS deploying —
+including from a phone via a merged PR — so don't push dev mid-experiment; that's what
+local `npm run deploy` and branches are for. A local deploy needs credentials for
+MATTHEW's Cloudflare account: on his machines the stored wrangler login is right; on
+anyone else's, export his `CLOUDFLARE_API_TOKEN` in that terminal window first (never
+commit it, never paste it into a Claude chat).
+
 Cloudflare Workers serves `cf/public/` as static assets and handles `/api/sync`, `/api/tts`
 and `/api/feed` in `cf/src/index.js`. State lives in two KV namespaces (`SYNC`, `TTS`).
 

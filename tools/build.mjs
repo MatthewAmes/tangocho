@@ -29,6 +29,35 @@ const ROOT = path.resolve(TOOLS, "..");
 const SRC = path.join(ROOT, "JpnFlashcards.jsx");
 const HTML = path.join(ROOT, "index.html");
 
+// ── build stamp ───────────────────────────────────────────────────────────────
+// The version pill used to be a hand-edited string ("b59"), which drifted the moment
+// anyone forgot to bump it — a version number that can silently lie is worse than none.
+// The commit count is monotonic, needs no bookkeeping, and answers the only question the
+// pill exists to answer: "is the app in front of me the latest deploy?"
+// A dirty tree stamps count+1 — the number of the commit this build is about to land in.
+// That one prediction is what makes the artifact reproducible: the committed index.html
+// then matches a clean rebuild at its own HEAD byte for byte, so deploying right after a
+// commit does not re-dirty the tree and a future CI drift check needs no stamp carve-out.
+// (A dirty build that never gets committed wears a number the next real commit will take
+// over — the normal flow here always commits, so that stays theoretical.)
+import { execFileSync } from "node:child_process";
+let STAMP;
+try {
+  /* execFileSync with an argv array, not execSync with a string: this also runs on the
+     Windows machine, where cmd.exe would not honour single-quoted pathspecs. */
+  const git = (...args) => execFileSync("git", args, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  /* Count only commits that can change this artifact. A CI or docs commit must NOT bump
+     the stamp: it does not rebuild index.html, so a plain count would leave the committed
+     artifact one number behind and the drift check red on every such commit — which is
+     exactly how the first CI run failed. Same pathspec for the dirty check, so a
+     docs-only edit does not predict a version bump either. */
+  const SCOPE = ["--", ".", ":(exclude).github", ":(exclude)docs", ":(exclude,glob)**/*.md"];
+  const n = Number(git("rev-list", "--count", "HEAD", ...SCOPE));
+  STAMP = "b" + (git("status", "--porcelain", ...SCOPE) ? n + 1 : n);
+} catch (e) {
+  STAMP = "b-" + new Date().toISOString().slice(0, 10);   // no git (tarball checkout): date beats lying
+}
+
 const result = await build({
   entryPoints: [SRC],
   bundle: true,
@@ -39,6 +68,7 @@ const result = await build({
   // The source sits in the project root but node_modules lives here in tools/, and
   // esbuild resolves bare imports relative to the importing file. Point it at ours.
   nodePaths: [path.join(TOOLS, "node_modules")],
+  define: { __BUILD__: JSON.stringify(STAMP) },
   write: false,
   logLevel: "warning",
 });
@@ -85,10 +115,17 @@ await import("./check-oral-kana.mjs");
    every build rather than only when someone remembers to run the tests. */
 for (const suite of ["test-counters.mjs", "test-romaji.mjs"]) {
   const r = spawnSync(process.execPath, [path.join(ROOT, "tools", suite)], { encoding: "utf8" });
-  if (r.status !== 0) {
+  /* Node 24.7 on macOS intermittently SIGSEGVs during exit teardown — AFTER the suite has
+     printed "N passed, 0 failed" and called process.exit(0). That crash carries no
+     information about the readings; refusing to build on it just makes deploys flaky.
+     So: a signal death is tolerated IFF the suite's own summary says nothing failed.
+     A real assertion failure still exits 1 with "N failed" and still refuses to build. */
+  const crashedCleanly = r.signal === "SIGSEGV" && /\b0 failed\b/.test(r.stdout || "");
+  if (r.status !== 0 && !crashedCleanly) {
     console.error(`\n${suite} FAILED — refusing to build\n${r.stdout || ""}${r.stderr || ""}`);
     process.exit(1);
   }
+  if (crashedCleanly) console.warn(`    (${suite} passed, then hit the Node teardown segfault — tolerated)`);
   console.log(`    ${suite.replace(/^test-|\.mjs$/g, "")} ${(r.stdout.match(/(\d+) passed/) || [])[1]} readings verified`);
 }
 
@@ -139,5 +176,5 @@ if (fs.existsSync(VIDEOS)) {
 }
 
 const kb = (n) => (n / 1024).toFixed(1) + "kb";
-console.log(`ok  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public`
+console.log(`ok  ${STAMP}  bundle ${kb(code.length)}  ->  index.html ${kb(out.length)}  (+ cf/public`
   + (videoCount ? `, ${videoCount} videos` : ", NO video index") + ")");
