@@ -34,9 +34,10 @@ import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
-  pushRecent, confusionFrom, buildRecovery, scoreAnswer, isMemoryCheck, latencyNorms, latencyVerdict,
+  pushRecent, confusionFrom, scoreAnswer, isMemoryCheck, latencyNorms, latencyVerdict,
   posterior, stateOf, STATE, STATE_LABEL, abilityFrom,
 } from "./tools/learner.mjs";
+import { sequenceRecovery, dropSolved } from "./tools/recovery.mjs";
 import {
   buildItems as buildDateItems, sequenceForm, dateForm, timeForm, weekdayForm,
   acceptedReadings, COUNTERS, DAY_READING, MONTH_READING, MONTH_KANJI, HOUR_READING,
@@ -879,7 +880,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       return !f;
     });
   }, []);
-  const REQUEUE_GAP = 3, REQUEUE_CAP = 3;
+  // How many times one item may be rescued in a session. Where the rescue LANDS is
+  // recovery.mjs's business (REQUEUE_GAP there); this is only the give-up count.
+  const REQUEUE_CAP = 3;
 
   const weak = useMemo(() => cards.filter(isWeak), [cards]);
 
@@ -1337,6 +1340,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const c = queue[pos];
     if (!c) return;
     setHook(null);
+    /* A re-exposure is not an answer. The rescue puts the word back on screen before asking
+       for it again, and there is nothing to measure in looking at something — grading it as
+       correct would clear the failure that had just been recorded and push a 1 into the
+       rolling history for a retrieval nobody performed. Advance, record nothing. */
+    if (c._rescue && c._rescue.reexposure) {
+      setFlipped(false); setTyped(""); setVerdict(null); setShowWhy(false);
+      setPos((p) => p + 1);
+      return;
+    }
     const think = thinkRef.current || 0;
     // The combo counts instant recall, not merely correct answers — it rewards the thing
     // that actually correlates with remembering the word tomorrow.
@@ -1421,6 +1433,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           ? intervention.expected : recallChance(c, Date.now()),
         pRecall: recallChance(c, Date.now()),
         s0: stab.s0, s1: stab.s1,
+        // Which rung of which rescue this was, so the repair chain reads back out of the
+        // log rather than having to be reconstructed from a bonus and a timestamp.
+        recovery: (c._rescue && c._rescue.tag) || null,
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
@@ -1442,33 +1457,29 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       setPassed((prev) => { const n = new Set(prev); n.add(c.id); return n; });
-      // Planned learning steps survive; only miss-requeue duplicates are dropped.
-      if (!stepIds.has(c.id)) setQueue((prev) => prev.filter((x, idx) => idx <= pos || x.id !== c.id));
+      // Planned learning steps survive; only miss-requeue duplicates are dropped. Rescue
+      // rungs survive too — clearing them here meant a ladder ended the moment its FIRST
+      // rung landed, which is the start of the climb, not the top of it.
+      if (!stepIds.has(c.id)) setQueue((prev) => dropSolved(prev, pos, c.id));
     } else {
       setStruggled((prev) => { const n = new Set(prev); n.add(c.id); return n; });
       const m = (missRef.current[c.id] || 0) + 1;
       missRef.current[c.id] = m;
       if (m <= REQUEUE_CAP) {
-        /* A miss now schedules a RECOVERY: a short ladder starting below what just beat you
-           and climbing back, so the item is last met as a SUCCESS. Successful retrieval is
-           what builds stability — a failed one builds very little — so ending on the win is
-           the better memory outcome as well as the better beat. Stages go in back-to-back
-           immediately; a rescue only works while the miss is still live in mind. Falls back
-           to the old spaced requeue when there is no sensible ladder. */
-        const stages = buildRecovery(outcome && outcome.failure, {
+        /* A miss schedules a RECOVERY: a short ladder starting below what just beat you and
+           climbing back, so the item is last met as a SUCCESS. Successful retrieval is what
+           builds stability — a failed one builds very little — so ending on the win is the
+           better memory outcome as well as the better beat. The sequencing lives in
+           tools/recovery.mjs: which rungs, where they land, and what happens when a rung is
+           missed in its turn. Falls back to the old spaced requeue when there is no ladder
+           worth running. */
+        setQueue((prev) => sequenceRecovery({
+          queue: prev, pos, card: c,
+          failure: outcome && outcome.failure,
+          failedFormat: fmt,
           failedCue: intervention ? intervention.cue : null,
           caps: (c._pick && c._pick.caps) || {},
-        });
-        setQueue((prev) => {
-          const next = prev.slice();
-          if (stages.length) {
-            next.splice(Math.min(pos + 1, next.length), 0,
-                        ...stages.map((s) => ({ ...c, _rescue: s, _step: 0 })));
-          } else {
-            next.splice(Math.min(pos + 1 + REQUEUE_GAP, next.length), 0, c);
-          }
-          return next;
-        });
+        }).queue);
       }
     }
     setFlipped(false);
@@ -1873,7 +1884,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
              aria-label="Continue"
              onClick={() => grade(true)}
              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); grade(true); } }}>
-          <span className="tc-kindchip tc-learnchip">new word</span>
+          {/* The same renderer serves first contact and the bottom rung of a rescue, and
+              they are not the same event — calling a word you have been studying for weeks
+              a "new word" because you just missed it is the small dishonesty that makes an
+              app feel like it is not paying attention. */}
+          <span className="tc-kindchip tc-learnchip">{card._rescue ? "here it is" : "new word"}</span>
           {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
           <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
           <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>

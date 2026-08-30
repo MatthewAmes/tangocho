@@ -130,7 +130,7 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1 }) {
+export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
@@ -155,6 +155,12 @@ export function makeEvidence({ id, deck, format, skill, cue, ok, ms, failure, pr
        parallel copy of the scheduler is a metric that can quietly stop matching it. */
     s0: typeof s0 === "number" && isFinite(s0) ? Math.round(s0 * 1000) / 1000 : null,
     s1: typeof s1 === "number" && isFinite(s1) ? Math.round(s1 * 1000) / 1000 : null,
+    /* Which rung of a rescue this answer was, when it was one: "production:2/3" — the
+       failure that started the chain, and how far up it this beat sits. A flat string for
+       the same reason `recent` is one. Without it a repair is invisible in the log: a
+       comeback bonus shows in the score and the CHAIN that earned it — what broke, what
+       was asked instead, in what order — could only be guessed at from timestamps. */
+    recovery: typeof recovery === "string" && recovery ? recovery : null,
     at: at || Date.now(),
   };
 }
