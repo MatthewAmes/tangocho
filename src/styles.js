@@ -454,9 +454,30 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-covernum{font-family:var(--mono);font-size:12px;color:var(--mut-2);text-align:right;}
 .tc-covergap{margin:12px 0 0;font-size:14px;line-height:1.6;color:#ffd0c8;background:rgba(255,110,90,.12);
   border-radius:8px;padding:10px 13px;}
+/* ── lesson mastery, by act-scene ──
+   The bar itself is the profile bar reused verbatim: tc-coverband is the credible interval,
+   tc-coverfill the estimate. Same posteriors, same drawing, so the two panels read as one
+   claim rather than as two competing scores. Only the frame around them is new. */
+.tc-scenes{display:flex;flex-direction:column;gap:10px;}
+.tc-scene{display:flex;flex-direction:column;gap:9px;background:rgba(0,0,0,.2);
+  border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:12px 13px;}
+.tc-scenehead{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;}
+.tc-scenename{font-size:15px;font-weight:650;color:#fff;}
+/* Progress and mastery sit on one line and must never look like one number, so the pair is
+   set in the mono caps used for every other measured quantity on this page. */
+.tc-scenemeta{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut-2);}
+.tc-scenebars{display:flex;flex-direction:column;gap:6px;}
+.tc-scenerow{display:grid;grid-template-columns:92px 1fr 36px;align-items:center;gap:9px;}
+.tc-scenesk{font-size:13px;color:rgba(255,255,255,.8);}
+.tc-scenebar{position:relative;height:8px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden;}
+.tc-scenenum{font-family:var(--mono);font-size:11px;color:var(--mut-2);text-align:right;}
+.tc-scenenote{margin:0;font-size:13px;line-height:1.55;color:var(--mut-2);}
+.tc-scenenote b{color:#fff;font-weight:600;}
+.tc-scenemore{align-self:flex-start;}
 .tc-planlist{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.6;color:var(--mut-2);}
 .tc-planlist b{color:#fff;font-weight:600;}
-@media(max-width:560px){.tc-coverrow{grid-template-columns:110px 1fr 32px;}}
+@media(max-width:560px){.tc-coverrow{grid-template-columns:110px 1fr 32px;}
+  .tc-scenerow{grid-template-columns:84px 1fr 32px;gap:8px;}}
 .tc-setupline{font-size:14px;color:var(--mut-2);line-height:1.6;margin:0 0 22px;max-width:48ch;}
 .tc-rpill{appearance:none;border:1px solid var(--outline-2);background:var(--surface-2);
   color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;

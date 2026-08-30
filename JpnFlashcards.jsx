@@ -28,6 +28,7 @@ import { contrastSet } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
 import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
+import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -2435,6 +2436,13 @@ function Plan({ cards = [] }) {
   const gainFmt = useMemo(() => gainBy(gainWindow, "format"), [gainWindow]);
   const gainBest = useMemo(() => bestUse(gainWindow, "format"), [gainWindow]);
   const gainFade = useMemo(() => fadePoint(gainWindow, 5), [gainWindow]);
+  /* Where the learner stands in the BOOK, which is a different question from what they can
+     do in general. Same 60-day window as the profile above, and the same posteriors — the
+     only thing that changes is that the evidence is split by act-scene first. */
+  const mastery = useMemo(() => masteryByLesson(evidence, cards, { days: 60 }), [evidence, cards]);
+  const scenesStudied = useMemo(() => mastery.scenes.filter((s) => s.started), [mastery]);
+  const scenesFresh = useMemo(() => mastery.scenes.filter((s) => !s.started), [mastery]);
+  const [allScenes, setAllScenes] = useState(false);
   /* The two reference points that give the number a scale. Computed from the same
      function the metric uses, so the explanation cannot drift from the measure. */
   const gainRef = useMemo(() => ({
@@ -2596,6 +2604,105 @@ function Plan({ cards = [] }) {
             return SKILL_LABEL[k] + ": " + STATE_LABEL[stateOf(posterior(row.ok || 0, (row.n || 0) - (row.ok || 0)))];
           }).join(" · ")}
         </p>
+      </section>
+
+      {/* ── where you stand in the textbook ──
+          The section above answers "what can you do"; this one answers it per act-scene,
+          which is the form the question actually takes when there is a class on Tuesday.
+          The two numbers are deliberately never merged: SEEN is progress through the book
+          and comes from a count, MASTERED comes only from the posteriors. Completing every
+          card in a scene moves the first and cannot move the second. */}
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Where you stand in the textbook <span className="tc-planh-sub">by act &amp; scene</span></h2>
+        <p className="tc-planhint">
+          <b>Seen</b> is how much of a scene you've met at all — that's progress through the
+          book, and it's a count. <b>Mastered</b> is what your answers say you can do, per
+          ability, and it's the model's estimate. A scene can read "seen 100% · still
+          evaluating": going through the cards is not evidence that you can produce any of it.
+        </p>
+        {scenesStudied.length === 0 ? (
+          <p className="tc-planhint">
+            Nothing studied yet — this fills in scene by scene. {mastery.scenes.length} sections
+            are waiting in the deck.
+          </p>
+        ) : (
+          <div className="tc-scenes">
+            {(allScenes ? scenesStudied : scenesStudied.slice(0, SCENE_CAP)).map((s) => {
+              const said = describeScene(s);
+              return (
+                <div key={s.scene} className="tc-scene">
+                  <div className="tc-scenehead">
+                    <span className="tc-scenename">{s.title}</span>
+                    {/* The mastery figure never travels without the number of abilities it
+                        was drawn from: 71% across two of five is a different claim from 71%
+                        across all five, and the shorter one flatters. */}
+                    <span className="tc-scenemeta">
+                      {said.seen} · {said.mastered}
+                      {s.mastered != null ? " · " + s.measured + "/" + s.of + " abilities" : ""}
+                    </span>
+                  </div>
+                  <div className="tc-scenebars">
+                    {SKILLS.map((k) => {
+                      const r = s.skills[k];
+                      const pct = Math.round(r.mean * 100);
+                      const lo = Math.round(r.lo * 100), hi = Math.round(r.hi * 100);
+                      /* The same three-layer bar as the profile above: the pale band is the
+                         credible interval, and the fill only appears once the estimate is
+                         narrow enough to mean something. An unmeasured ability shows its
+                         answer count instead — progress towards being measurable, not a
+                         percentage nobody should act on. */
+                      const tip = r.n
+                        ? r.ok + "/" + r.n + " — likely between " + lo + "% and " + hi + "%"
+                        : "no answers in this scene yet";
+                      return (
+                        <div key={k} className="tc-scenerow">
+                          <span className="tc-scenesk">{SKILL_LABEL[k]}</span>
+                          <div className="tc-scenebar" title={tip}>
+                            {r.n > 0 && (
+                              <div className="tc-coverband" style={{ left: lo + "%", width: Math.max(2, hi - lo) + "%" }} />
+                            )}
+                            {r.measured && (
+                              <div className={"tc-coverfill" + (r.state === STATE.WEAK ? " is-gap" : "")}
+                                style={{ width: pct + "%" }} />
+                            )}
+                          </div>
+                          <span className="tc-scenenum">{r.measured ? pct + "%" : r.n > 0 ? r.n : "—"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="tc-scenenote">
+                    {s.weakest
+                      ? <>Weakest here: <b>{SKILL_LABEL[s.weakest.skill]}</b>, about {Math.round(s.weakest.spread * 100)} points
+                        behind your {SKILL_LABEL[s.weakest.ahead].toLowerCase()}.</>
+                      : s.mastered != null
+                        ? <>No clear weak spot here yet — what's been measured in this scene is close together.</>
+                        : s.answers > 0
+                          ? <>Still evaluating — {s.answers} answers here so far, not enough to call any of it mastered.</>
+                          : <>Studied, but not in the last 60 days. Nothing current enough to measure.</>}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {allScenes && scenesFresh.length > 0 && (
+          <p className="tc-planhint">
+            Not started: {scenesFresh.map((s) => s.title).join(" · ")}
+          </p>
+        )}
+        {(scenesStudied.length > SCENE_CAP || scenesFresh.length > 0) && (
+          <button className="tc-btn tc-scenemore" onClick={() => setAllScenes((v) => !v)}>
+            {allScenes ? "Show fewer" : "Show all " + mastery.scenes.length + " sections"}
+          </button>
+        )}
+        {mastery.unplaced > 0 && (
+          <p className="tc-planhint" style={{ opacity: 0.7 }}>
+            {mastery.unplaced} answers aren't counted here — kana, kanji and frequency
+            practice sit outside the textbook sections, as does anything you've since
+            removed from the deck.
+          </p>
+        )}
       </section>
 
       <section className="tc-plansec">
@@ -3010,6 +3117,11 @@ const PACES = [
   ["normal", "Normal", 10, "The daily default — enough to make real progress."],
   ["deep", "Deep", 20, "Motivated and have the time. Bigger backlog, more new words."],
 ];
+
+/* How many studied scenes the mastery panel shows before it asks. The deck spans ninety-odd
+   sections; a page that renders all of them on a phone is a page nobody scrolls to the end
+   of, and the ones being studied now are at the top. */
+const SCENE_CAP = 8;
 
 const PLAN_DEFAULT = {
   vision: { fiveYear: "", oneYear: "", term: "" },
