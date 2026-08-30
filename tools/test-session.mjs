@@ -6,9 +6,10 @@
 import {
   DEFAULTS, need, daysSince, isStale, pacePerItem, budgetFor,
   candidates, buildSession, describe, formatFor, withFormats, FORMATS, pacePerDeck,
-  normaliseScope, scopeShiftFor, SCOPE_MODES,
+  normaliseScope, scopeShiftFor, SCOPE_MODES, skillOf,
 } from "./session.mjs";
 import { provenanceOf } from "./curriculum.mjs";
+import { abilityFrom, predictSuccess, CUE } from "./learner.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
@@ -967,6 +968,24 @@ t("stale items are reported so the ceiling is visible", () => {
   }];
   const d = describe(buildSession(src, { now: NOW, size: 10 }));
   gt(d.stale, 0, "faded items should be surfaced in the summary");
+});
+
+t("skillOf carries the rolling windows the estimators read", () => {
+  const st = { seen: 20, correct: 16, recent: "0000011111", fsrs: { S: 5, last: NOW },
+               rseen: 20, rcorrect: 16, rrecent: "1111100000", rfsrs: { S: 5, last: NOW } };
+  eq(skillOf(st, "fsrs").recent, "0000011111", "recognition projection keeps st.recent");
+  eq(skillOf(st, "rfsrs").recent, "1111100000", "production projection keeps st.rrecent");
+  // The property that was dead before: identical lifetime records whose last-five answers
+  // disagree must predict differently through the live projection. (abilityFrom reads the
+  // whole 10-window; predictSuccess weights the last five — that is where order matters.)
+  const slump = { ...st, recent: "1111100000" };
+  gt(predictSuccess(skillOf(st, "fsrs"), CUE.CHOOSE),
+     predictSuccess(skillOf(slump, "fsrs"), CUE.CHOOSE),
+     "a recent slump predicts lower than a recent streak at the same lifetime accuracy");
+  // A record predating the windows still projects without the field, and still estimates.
+  const legacy = { seen: 10, correct: 9, fsrs: { S: 4, last: NOW } };
+  eq("recent" in skillOf(legacy, "fsrs"), false, "no window → no field, not an empty one");
+  ok(abilityFrom(skillOf(legacy, "fsrs")).mean > 0, "legacy records still estimate");
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} session tests passed`);

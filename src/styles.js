@@ -122,12 +122,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-controls{display:flex;flex-direction:column;gap:20px;margin-bottom:24px;}
 .tc-field{border:0;margin:0;padding:0;}
 .tc-field legend{font-size:13px;color:var(--mut-2);margin-bottom:9px;padding:0;}
-.tc-seg{display:flex;gap:8px;flex-wrap:wrap;}
 .tc-segbtn{appearance:none;border:0;background:rgba(255,255,255,.07);color:var(--washi);
   font:inherit;font-size:14px;font-weight:500;min-height:40px;padding:9px 16px;border-radius:var(--r-s);cursor:pointer;transition:border-color .15s,background .15s,transform .1s;}
 .tc-segbtn:active{transform:scale(.96);}
 .tc-segbtn:hover{background:rgba(255,255,255,.14);}
-.tc-segbtn.is-on{background:var(--surface-3);border-color:var(--info);color:var(--washi);font-weight:600;}
+/* The armed state once asked for border-color on a rule that sets border:0, so it came
+   down to a background that reads DARKER than the translucent unarmed one. The token it
+   wanted is drawn as an inset ring instead — no layout box, no new colour. */
+.tc-segbtn.is-on{background:var(--surface-3);box-shadow:inset 0 0 0 1px var(--info);color:var(--washi);font-weight:600;}
 .tc-toggle{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--washi);cursor:pointer;}
 .tc-toggle input{width:17px;height:17px;accent-color:var(--shu);}
 .tc-start{width:100%;}
@@ -601,18 +603,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-smart-btn:hover{filter:brightness(1.12);}
 /* The practice-mode picker that sits above Smart Review. It borrows every colour from
    .tc-segbtn so the three modes read as the same control as the pickers on Sentences and
-   Scripts, and keeps that rule's 40px touch target.
-   It carries its own flex, deliberately: .tc-seg is declared twice in this file — as a
-   segmented-control row up top and, further down, as the 20x4px progress pip the streak
-   rail is made of — and the pip wins. Reusing the name here collapsed the whole row to
-   20px wide underneath the Smart Review button. */
+   Scripts, and keeps that rule's 40px touch target. (The dead flex .tc-seg row rule and
+   the border-color-on-border:0 armed state this block once worked around are fixed at the
+   source now — the 20x4px pip in Browse is the only .tc-seg left.) */
 .tc-modeseg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;}
 .tc-modeseg .tc-segbtn{flex:1 1 28%;min-width:96px;padding:9px 10px;font-size:13px;text-align:center;}
-/* .tc-segbtn.is-on asks for border-color:var(--info) on a rule that also sets border:0, so
-   the armed state comes down to a solid --surface-3 that reads DARKER than the translucent
-   unarmed one — on a control whose only job is to say which mode is on. The token it wanted
-   is drawn here as an inset ring instead, which needs no layout box and no new colour. */
-.tc-modeseg .tc-segbtn.is-on{box-shadow:inset 0 0 0 1px var(--info);}
 /* The act override on the Plan tab. Borrows the goal dropdown's colours; only the size
    changes, because that one sits inline in a goal row and this one is a settings control
    with a thumb aimed at it. */

@@ -115,7 +115,14 @@ export function skillOf(st, which = "fsrs") {
   const seen = (st && (rec ? st.seen : st.rseen)) || 0;
   const correct = (st && (rec ? st.correct : st.rcorrect)) || 0;
   const f = st && (rec ? (st.fsrs || seedFromHistory(st)) : st.rfsrs);
-  return { seen, acc: seen > 0 ? correct / seen : 0, S: (f && f.S) || 0, tried: seen > 0 };
+  /* The rolling window rides along, because abilityFrom and predictSuccess both read
+     `.recent` and treat its absence as "no rolling history" — dropping it here meant the
+     recency weighting they were written around never engaged on the live path, and
+     estimates moved only via lifetime totals. A record from before the windows existed
+     still has neither field, and both consumers already handle that. */
+  const recent = st && (rec ? st.recent : st.rrecent);
+  return { seen, acc: seen > 0 ? correct / seen : 0, S: (f && f.S) || 0, tried: seen > 0,
+           ...(typeof recent === "string" && recent ? { recent } : {}) };
 }
 
 /* What an item can actually be ASKED. Reserving a slot for typing from stability alone
