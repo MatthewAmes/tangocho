@@ -24,6 +24,7 @@ import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs"
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
+import { pickDistractors } from "./tools/distractors.mjs";
 import { contrastSet } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
 import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
@@ -1272,32 +1273,34 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   );
   const choices = useMemo(() => {
     if (!card || (fmt !== "mc" && fmt !== "listen")) return [];
-    const pool = cards.filter((c) => c.id !== card.id && c.meaning);
-    /* Distractors this learner has ACTUALLY mixed up with this word come first. A good
-       distractor is plausible to this person and wrong in this context; "same length" is
-       only a stand-in for that, used when there is no confusion history yet. */
-    const known = (confusion.get(card.id) || [])
-      .map((id) => pool.find((c) => c.id === id)).filter(Boolean);
-    /* Group by PART OF SPEECH. This line used to filter on `kind`, which is the writing
+    /* A card whose gloss IS the answer's gloss makes a question with two right options —
+       and it has to be the SHORT gloss, because that is what the buttons render while the
+       question is live. "work; job" and "work; job (polite)" are different meanings and
+       both show as "work". That was a rarity while distractors were drawn from the whole
+       deck; sourcing them from the same act-scene makes near-synonyms neighbours, and it
+       went from one such question in the deck to twenty-nine. */
+    const myGloss = shortGloss(card.meaning);
+    const pool = cards.filter((c) => c.id !== card.id && c.meaning
+                                  && c.meaning !== card.meaning && shortGloss(c.meaning) !== myGloss);
+    /* Group by PART OF SPEECH. This used to filter on `kind`, which is the writing
        system (hiragana/katakana/kanji) — so "same kind" matched orthography and did nothing
        for plausibility. Asking for 急ぎます against {to hurry, Who is it that cleaned up?,
        Vietnamese (language), break} is not a vocabulary question: one option is a verb and
        the prompt visibly ends in ます, so it is answerable from grammar alone.
-       Falls back to the whole pool when a category is too thin to fill four slots. */
+       Passed as a restriction rather than a pre-filter so that pickDistractors can widen
+       past it if a category is too thin to fill four slots — and so that a word this
+       learner has actually confused with this one is offered whatever its part of speech. */
     const myPos = posOf(card);
-    const samePos = pool.filter((c) => posOf(c) === myPos);
-    const near = samePos.length >= 12 ? samePos : pool.filter((c) => c.kind === card.kind);
-    const bag = (near.length >= 12 ? near : pool);
     const seed = String(card.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0) + (card._step || 0);
-    const picked = [];
-    const used = new Set();
-    for (let i = 0; i < bag.length && picked.length < 3; i++) {
-      const c = bag[(seed * 7 + i * 13) % bag.length];
-      if (!c || used.has(c.id) || c.meaning === card.meaning) continue;
-      used.add(c.id); picked.push(c);
-    }
-    const all = [...known.slice(0, 2), ...picked, card].slice(0, 4);
-    if (!all.includes(card)) all[all.length - 1] = card;
+    /* Wrong answers by curriculum priority: this learner's own confusion pairs, then the
+       same NihonGO NOW! act-scene, then nearby scenes, then words that sound or look
+       alike. Each pick carries the tier it came from; the UI shows only the word. */
+    const picked = pickDistractors(card, pool, 3, {
+      confusedWith: confusion.get(card.id) || [],
+      seed,
+      restrict: (c) => posOf(c) === myPos,
+    });
+    const all = [...picked.map((p) => p.card), card];
     // Deterministic shuffle: the answer must not always land in the same slot.
     return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
   }, [card, fmt, cards, confusion]);

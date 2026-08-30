@@ -15,6 +15,8 @@
    appears in a dialogue gets no contextual exercise, and the model reports "no evidence"
    for its context dimension rather than pretending otherwise. */
 
+import { pickDistractors } from "./distractors.mjs";
+
 /* Flatten a script line into plain Japanese text. */
 export function lineText(line) {
   return ((line && line.tokens) || []).map((t) => t.t || "").join("");
@@ -101,24 +103,12 @@ export function clozeFor(index, card, opts = {}) {
   };
 }
 
-/* Distractors for a contextual multiple choice: same kind, similar length, never a word
-   that would also be correct in the blank. */
+/* Options for a contextual multiple choice, answer included and deterministically shuffled.
+   The wrong ones come from pickDistractors, so they are drawn by curriculum priority —
+   confusion history, then the same act-scene, then nearby scenes, then words that sound
+   alike — rather than the "same kind, similar length" stand-in this used before. */
 export function clozeChoices(card, cards, n = 3, seed = 0, confusedWith = []) {
-  const pool = cards.filter((c) => c.id !== card.id && c.term && c.term !== card.term);
-  /* Words this learner has actually mixed up with this one come first. A distractor is
-     supposed to be plausible TO THIS PERSON and wrong in this context; matching on length
-     is only a stand-in used until there is confusion history to draw on. */
-  const known = (confusedWith || []).map((id) => pool.find((c) => c.id === id)).filter(Boolean);
-  const near = pool.filter((c) => c.kind === card.kind && Math.abs(c.term.length - card.term.length) <= 1);
-  const bag = near.length >= n * 3 ? near : pool;
-  const out = [...known.slice(0, Math.max(0, n - 1))];
-  const used = new Set(out.map((c) => c.id));
-  for (let i = 0; i < bag.length && out.length < n; i++) {
-    const c = bag[(seed * 7 + i * 13) % bag.length];
-    if (!c || used.has(c.id)) continue;
-    used.add(c.id);
-    out.push(c);
-  }
-  const all = [...out, card];
+  const picked = pickDistractors(card, cards, n, { confusedWith, seed });
+  const all = [...picked.map((p) => p.card), card];
   return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
 }

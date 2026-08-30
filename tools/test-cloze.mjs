@@ -84,6 +84,15 @@ t("a tiny deck degrades instead of crashing", () => {
   const opts = clozeChoices(CARDS[0], [CARDS[0]], 3, 1);
   ok(opts.some((c) => c.id === "a"));
 });
+t("a word the learner has confused with this one is offered", () => {
+  // The tiering lives in distractors.mjs (tested there); this only proves the wiring.
+  const opts = clozeChoices(CARDS[0], CARDS, 3, 4, ["f"]);
+  ok(opts.some((c) => c.id === "f"), "expected 本 among " + opts.map((c) => c.term).join(", "));
+});
+t("the same seed gives the same options in the same order", () => {
+  const a = clozeChoices(CARDS[0], CARDS, 3, 4).map((c) => c.id).join(",");
+  eq(clozeChoices(CARDS[0], CARDS, 3, 4).map((c) => c.id).join(","), a);
+});
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} cloze tests passed`);
 process.exit(fail ? 1 : 0);
