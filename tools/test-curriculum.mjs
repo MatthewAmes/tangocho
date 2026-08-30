@@ -11,6 +11,7 @@ import {
   provenanceOf, provenanceOfScript, parseSection, sourceTypeOf, volumeOfAct,
   buildLessonActs, actForLesson, buildOccurrenceIndex, occurrencesOf, lineForms,
   coordsOf, curriculumIndex, sameScene, sceneDistance, actDistance, currentAct,
+  mergeOccurrences, OCCURRENCE_SOURCES,
   TEXTBOOK_ID, SCENES_PER_ACT, VOLUME_ACTS,
 } from "./curriculum.mjs";
 import { SEED } from "../src/data/seed.js";
@@ -298,6 +299,51 @@ t("occurrences land in the act the word belongs to", () => {
   const where = occurrencesOf("大丈夫").map((o) => provenanceOfScript(SCRIPT_SEED.find((s) => s.id === o.scriptId)));
   eq(home.act, 2);
   ok(where.some((p) => p.act === home.act), "at least one occurrence is in its own act");
+});
+
+t("a script occurrence states where it is, not only which script it is in", () => {
+  // The shared record shape: term, source, act, scene, then the fields only a script line
+  // has. A glossary row (tools/import-nihongo.mjs) fills the same four, which is what lets
+  // one consumer merge the two without knowing which produced what.
+  const o = occurrencesOf("大丈夫")[0];
+  eq(o.term, "大丈夫", "the record is self-describing outside its map key;");
+  eq(o.source, "script");
+  eq(o.act, 2); eq(o.scene, 1);
+  eq(o.scriptId, "seed-2-1");
+  ok(OCCURRENCE_SOURCES.includes(o.source));
+});
+t("every occurrence in the real index carries a source the module names", () => {
+  for (const list of INDEX.values()) {
+    for (const o of list) ok(OCCURRENCE_SOURCES.includes(o.source), `unnamed source ${o.source}`);
+  }
+});
+t("an occurrence resolves through the same helpers a card does", () => {
+  const o = occurrencesOf("大丈夫")[0];
+  eq(coordsOf(o).act, 2);
+  eq(curriculumIndex(o), 2 * SCENES_PER_ACT + 1);
+  eq(sameScene(o, "2-1"), true);
+});
+t("a glossary occurrence is not mistaken for a card by coordsOf", () => {
+  // Both carry a `term`, and provenanceOf would look that term up in SECTION_MAP — which
+  // answers about where the word is FIRST taught, not about the occurrence in hand.
+  eq(coordsOf({ term: "だいじょうぶ", source: "glossary", act: 9, scene: 4 }).act, 9);
+});
+t("merging the two producers gives one list per term, in curriculum order", () => {
+  const glossary = [
+    { term: "大丈夫", source: "glossary", act: 2, scene: 1, section: "2-1" },
+    { term: "大丈夫", source: "glossary", act: 9, scene: 4, section: "9-4" },
+  ];
+  const merged = mergeOccurrences(INDEX, glossary);
+  const list = merged.get("大丈夫");
+  eq(list.length, occurrencesOf("大丈夫").length + 2);
+  eq(list[list.length - 1].act, 9, "the act 9 glossary row is the furthest place;");
+  const order = list.map((o) => curriculumIndex(o) ?? Infinity);
+  ok(order.every((v, i) => i === 0 || v >= order[i - 1]), "not in curriculum order");
+});
+t("merging changes nothing when there is only one producer", () => {
+  const merged = mergeOccurrences(INDEX);
+  eq(merged.size, INDEX.size);
+  eq(merged.get("大丈夫").length, INDEX.get("大丈夫").length);
 });
 
 console.log("=== scene helpers, for curriculum-aware distractors ===");

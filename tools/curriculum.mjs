@@ -70,7 +70,28 @@
 
    Spec §26: a word in three places is one knowledge entity with three occurrences, not
    three cards. `buildOccurrenceIndex` scans the 227 script lines for deck terms and their
-   readings and returns term → [{scriptId, lineIdx}].
+   readings and returns term → [occurrence].
+
+   ONE RECORD SHAPE, TWO PRODUCERS. The scripts are not the only place a word occurs: the
+   BYU glossary lists a word again every time the book teaches it again, and the importer
+   now hands those rows over instead of dropping them (MP-02). Both producers emit the same
+   four fields, so a consumer asking "where does this word appear" merges the two lists
+   without knowing which is which:
+
+     { term, source, act, scene, ...where }
+
+       source   "script" or "glossary" — WHICH KIND of place, so a caller that does care
+                can tell them apart instead of guessing from the extra fields.
+       act/scene  the textbook coordinates, derived the same way for both: a script gets
+                them from provenanceOfScript, a glossary row from its own act and scene
+                columns. Either may be null, and null means unknown, never zero.
+       where    the fields only that kind has — scriptId/lineIdx for a script line,
+                section for a glossary row.
+
+   `term` rides on every record even though the index is keyed by term, because a flat list
+   of occurrences is the shape the importer produces and `mergeOccurrences` accepts. A
+   record that only means something once you know which key it was filed under is a record
+   that cannot be passed anywhere.
 
    This is deliberately NOT tools/cloze.mjs's index, which keys by card id, caps at four
    hits, needs an English gloss and drops lines that ARE the word — all correct for picking
@@ -312,8 +333,15 @@ export function lineForms(line) {
   };
 }
 
-/* term → [{ scriptId, lineIdx }], in script and line order. One entry per line even when
-   the term and its reading both match — this counts places, not matches. */
+/* The kinds of place a word can occur. Both are real sources in this repo; there is no
+   catch-all, so a third producer has to name itself here before it can be merged. */
+export const OCCURRENCE_SOURCES = ["script", "glossary"];
+
+/* term → [occurrence], in script and line order. One entry per line even when the term and
+   its reading both match — this counts places, not matches.
+
+   Each record carries the act and scene of the SCRIPT it was found in, so a script hit and
+   a glossary row can be compared without the caller re-deriving either. */
 export function buildOccurrenceIndex(scripts = SCRIPT_SEED, cards = SEED) {
   const wanted = new Map();
   for (const card of cards || []) {
@@ -329,17 +357,47 @@ export function buildOccurrenceIndex(scripts = SCRIPT_SEED, cards = SEED) {
   for (const script of scripts || []) {
     const scriptId = (script && script.id) || null;
     const lines = (script && script.lines) || [];
+    // Once per script, not once per line: the position is a property of the dialogue.
+    const { act, scene } = provenanceOfScript(script);
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       const { surface, kana } = lineForms(lines[lineIdx]);
       if (!surface) continue;
       for (const [term, reading] of wanted) {
         if (!surface.includes(term) && !(reading && kana.includes(reading))) continue;
         if (!index.has(term)) index.set(term, []);
-        index.get(term).push({ scriptId, lineIdx });
+        index.get(term).push({ term, source: "script", act, scene, scriptId, lineIdx });
       }
     }
   }
   return index;
+}
+
+/* Fold any number of occurrence lists into one term → [occurrence] index.
+
+   Accepts either producer's output shape: a Map already keyed by term (buildOccurrenceIndex)
+   or a flat array of records (what parseGlossary returns). Both carry `term` on the record,
+   so the flat case needs no extra argument saying what it is a list of.
+
+   Ordered by curriculum position, which is what makes a merged list readable as a history:
+   the first entry is where the book introduced the word and the last is the furthest it is
+   still being used. The sort is stable, so line order inside one script survives, and an
+   occurrence with no position sorts last rather than being dropped — an unplaced hit is
+   still a place the word appears. */
+export function mergeOccurrences(...lists) {
+  const out = new Map();
+  const add = (occ) => {
+    if (!occ || !occ.term) return;
+    if (!out.has(occ.term)) out.set(occ.term, []);
+    out.get(occ.term).push(occ);
+  };
+  for (const list of lists) {
+    if (!list) continue;
+    if (list instanceof Map) { for (const group of list.values()) for (const occ of group || []) add(occ); }
+    else for (const occ of list) add(occ);
+  }
+  const rank = (occ) => { const i = curriculumIndex(occ); return i === null ? Infinity : i; };
+  for (const group of out.values()) group.sort((a, b) => rank(a) - rank(b));
+  return out;
 }
 
 let occurrenceCache = null;
@@ -357,9 +415,9 @@ export function occurrencesOf(term, index) {
 
 /* ── scene comparison, for curriculum-aware distractors (spec §17) ── */
 
-/* Accepts a card, a script, a provenance record, or a section label written as a string
-   ("3-5", or a script id "seed-3-5"). Returns { act, scene } with nulls for what is not
-   known, so a caller never has to know which of the four it is holding. */
+/* Accepts a card, a script, a provenance record, an occurrence, or a section label written
+   as a string ("3-5", or a script id "seed-3-5"). Returns { act, scene } with nulls for what
+   is not known, so a caller never has to know which of the five it is holding. */
 export function coordsOf(x) {
   if (x == null) return { act: null, scene: null };
   if (typeof x === "string") {
@@ -368,6 +426,10 @@ export function coordsOf(x) {
   }
   if (typeof x !== "object") return { act: null, scene: null };
   if ("textbookId" in x) return { act: x.act ?? null, scene: x.scene ?? null };
+  /* An occurrence already states its coordinates. Checked before the card branch below,
+     because a glossary occurrence carries a `term` and provenanceOf would otherwise look it
+     up in SECTION_MAP and answer about the wrong place entirely. */
+  if (OCCURRENCE_SOURCES.includes(x.source)) return { act: x.act ?? null, scene: x.scene ?? null };
   const record = Array.isArray(x.lines) ? provenanceOfScript(x) : provenanceOf(x);
   return { act: record.act, scene: record.scene };
 }
