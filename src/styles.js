@@ -222,6 +222,24 @@ body{min-height:100%;overscroll-behavior-y:none;}
   backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
   box-shadow:var(--gloss);animation:tc-award-in .4s cubic-bezier(.2,.8,.3,1);}
 .tc-stopnote{margin:-6px auto 16px;max-width:34ch;font-size:14px;line-height:1.5;color:var(--mut-2);}
+/* The offer to stop, above the next card. Deliberately quieter than .tc-memcheck and
+   .tc-award: those celebrate something that happened, this asks a question, and a nudge
+   that shouts is a nudge that gets resented by the third time it appears. Amber because
+   it is the "worth your attention" accent, not an error and not a reward. */
+.tc-stopoffer{margin:0 0 14px;padding:12px 14px;border-radius:12px;
+  color:var(--washi);background:rgba(245,158,11,.10);
+  box-shadow:inset 0 0 0 1px rgba(245,158,11,.30),var(--gloss);
+  backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  animation:tc-rescue-in .32s cubic-bezier(.2,.8,.3,1);}
+.tc-stoptitle{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--warn);}
+.tc-stoptext{margin:6px 0 0;font-size:14px;line-height:1.5;color:var(--mut);}
+/* Keep going is the wider button, and it comes first. The system is guessing; the learner
+   is not, and the layout should say which of the two the app trusts more. */
+.tc-stopacts{display:flex;gap:8px;margin-top:11px;}
+.tc-stopacts .tc-btn{flex:1 1 40%;min-height:40px;}
+.tc-stopacts .tc-btn-primary{flex:1 1 60%;}
+@media (prefers-reduced-motion:reduce){ .tc-stopoffer{animation:none;} }
 .tc-donexp{margin:-10px 0 14px;font-family:var(--mono);font-size:15px;font-weight:700;
   color:rgb(232,191,90);letter-spacing:.04em;}
 .tc-donexp span{font-size:11px;font-weight:600;opacity:.65;letter-spacing:.14em;text-transform:uppercase;}
@@ -612,6 +630,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
    source now — the 20x4px pip in Browse is the only .tc-seg left.) */
 .tc-modeseg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;}
 .tc-modeseg .tc-segbtn{flex:1 1 28%;min-width:96px;padding:9px 10px;font-size:13px;text-align:center;}
+/* The minutes a pace buys, set inside its own button. Said quietly: the label is the
+   choice ("Short"), the number is only the evidence for it. */
+.tc-modeseg .tc-segbtn i{font-style:normal;font-family:var(--mono);font-size:11px;opacity:.6;}
 /* The act override on the Plan tab. Borrows the goal dropdown's colours; only the size
    changes, because that one sits inline in a goal row and this one is a settings control
    with a thumb aimed at it. */

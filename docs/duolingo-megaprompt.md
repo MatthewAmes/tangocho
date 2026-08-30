@@ -74,7 +74,8 @@ for already exists** — future sessions must not rebuild these:
 | Recovery ladders (§18) | Built as **data** (`RECOVERY_LADDERS`, `buildRecovery`) — **not wired into the live session queue** (roadmap Slice 2) |
 | Confusion graph (§17) | Built — `confusionFrom(evidence)` personal confusion matrix |
 | Latency norms | Built — per skill+format, personal baseline |
-| Fatigue model (§38) | Built as module (`tools/fatigue.mjs`, `shouldStop`) — **not wired into the app** |
+| Fatigue model (§38) | Built — `tools/fatigue.mjs`; wired into the live session through `tools/pacing.mjs` (MP-11), logged on every evidence row |
+| Pacing + early stop (§39) | Built — three presets (`PACES`) reaching `session.mjs`'s `minutes`, and a dismissible stopping point on fatigue / time spent / gain fade (MP-12) |
 | Calibration (§40) | Built as module (`tools/calibration.mjs`) |
 | Learning value metric (§42) | Built — `tools/gain.mjs`, gain/minute in stability doublings |
 | Session builder (§22, §36) | Built — `tools/session.mjs`: learning steps, staleness ceiling, new-item budget, multi-deck interleaving |

@@ -27,7 +27,7 @@ import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } 
 import { pickDistractors } from "./tools/distractors.mjs";
 import { contrastSet } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
-import { fatigueFrom, shouldStop, STOP_NOTE } from "./tools/fatigue.mjs";
+import { stopOffer, easedTarget, PACING, PACES, paceMinutes } from "./tools/pacing.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
 import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
 import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
@@ -859,9 +859,30 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* One mark per QUEUE POSITION, not per card: an item can legitimately appear several
      times in a session as learning steps, and each showing is its own beat of progress. */
   const fatigueLog = useRef([]);
+  const startedAtRef = useRef(0);                 // wall clock at the start, for the pace budget
+  const snoozeRef = useRef(0);                    // answers a declined nudge stays quiet for
   const startStateRef = useRef(null);
   const [xp, setXp] = useState(0);
-  const [stopped, setStopped] = useState(null);   // {reason} once the session ends early
+  /* The offer, and the ending, kept apart on purpose. `nudge` is a dismissible suggestion
+     that the session could stop here; `stopped` is the learner having accepted one. Wiring
+     the fatigue check straight to the ending — which is what this did — meant the model
+     could quietly cancel your evening on a signal it is explicitly unsure about. */
+  const [nudge, setNudge] = useState(null);       // {reason, note, fatigue} while it is on screen
+  /* Mirrored into a ref because grade() has to know whether a nudge is already up, and it
+     is memoised on the queue — reading the state there would be reading whatever it was
+     when the callback was last built. */
+  const nudgeRef = useRef(null);
+  const showNudge = useCallback((v) => { nudgeRef.current = v; setNudge(v); }, []);
+  /* Waving the offer away — by tapping Keep going, or simply by answering the next
+     question — buys a quiet stretch rather than the same question on the next card. */
+  const declineNudge = useCallback(() => {
+    snoozeRef.current = fatigueLog.current.length + PACING.snooze;
+    showNudge(null);
+  }, [showNudge]);
+  const [stopped, setStopped] = useState(null);   // {reason, note} once the session ends early
+  /* How tired the session currently looks, in state rather than in the ref, because the
+     next exercise is chosen from it — see easedTarget in the intervention below. */
+  const [fatigueNow, setFatigueNow] = useState(0);
   const [award, setAward] = useState(null);      // {points, reasons, memory} for the flyup
   const [marks, setMarks] = useState([]);
   const [combo, setCombo] = useState(0);
@@ -955,6 +976,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      zone, which is a blank page rather than a stale one. */
   useEffect(() => { loadForeignDecks(cards, plan.enrichment).then(setForeign).catch(() => {}); },
             [cards.length, foreignEpoch, plan.enrichment]);
+  /* The pace as a ref as well as state. grade() checks the session against it between
+     questions and is memoised on the queue, so a plain closure over `plan` would hold the
+     pace the session started with only by accident. */
+  const paceMsRef = useRef(paceMinutes(PLAN_DEFAULT.pace) * 60000);
+  useEffect(() => { paceMsRef.current = paceMinutes(plan.pace) * 60000; }, [plan.pace]);
+  /* Persisted on tap like the practice mode, so the pace picked at the start of a session
+     is still there tomorrow. Same writer as the Plan tab's own picker — one setting, two
+     places it can be reached. */
+  const setPace = (pace) => { const next = { ...plan, pace }; setPlan(next); savePlan(next); };
   /* Where Matthew is in the book. Derived from what he has actually answered rather than
      asked for, because a position he has to remember to update is a position that will be
      wrong by the second week — and it reads the deck's own history as well as the evidence
@@ -1183,7 +1213,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setMarks([]);
     setXp(0); setAward(null);
     fatigueLog.current = [];
-    setStopped(null);
+    startedAtRef.current = Date.now();
+    snoozeRef.current = 0;
+    setStopped(null); nudgeRef.current = null; setNudge(null); setFatigueNow(0);
     /* Snapshot the memory state the session STARTS from, so the summary can report what
        actually moved. Accuracy answers "how did I do at answering"; this answers "what
        changed in my memory", which is the only thing a review session is for. */
@@ -1264,13 +1296,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     }
     const base = card._pick;
     if (!base) return null;                       // came from a section drill, not Smart Review
+    /* As fatigue rises the questions get more support, not fewer of them (spec §38). One
+       knob does it: chooseIntervention picks the hardest cue this ability can still
+       succeed at, so asking for a higher success rate buys a lower cue — a cold recall
+       becomes a multiple choice, typing becomes a supported form. Shorter and likelier to
+       land, which is what someone who has just declined the offer to stop needs. The
+       reasoning, and why it is the cue rather than a rival format picker, is in
+       tools/pacing.mjs. */
     return interventionFor(
       { ...base, st: live, step: card._step || 0,
         recognition: skillOf(live, "fsrs"), production: skillOf(live, "rfsrs"),
         lastFailure: (live && live.lastFailure) || null },
-      { allowListen },
+      { allowListen, targetSuccess: easedTarget(fatigueNow) },
     );
-  }, [card, live, allowListen]);
+  }, [card, live, allowListen, fatigueNow]);
 
   const rawFmt = card
     ? ((intervention && intervention.format) || (prodSet.has(card.id) ? "type" : "recall"))
@@ -1428,6 +1467,45 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       setXp((n) => n + sc.points);
       setAward({ ...sc, memory: isMemoryCheck(stabDays, got), at: Date.now() });
     }
+    /* ── pacing, decided before the record is written so the record can carry it ──
+       Answering the next question with the offer still on screen IS declining it, and is
+       treated as one — otherwise a learner who simply carries on keeps a band above every
+       card for the rest of the session, which is how a gentle nudge becomes nagging.
+
+       Fatigue needs the learner's OWN fast threshold, not a constant: a quick thinker
+       answering in 800ms is not guessing, and a deliberate one at 4s is not tired. The
+       norm is per skill+format and already maintained.
+
+       Falls back to a floor when there is no norm yet. A norm needs eight correct answers
+       of that skill+format, so a new learner (or a new exercise type) has none — and
+       without a threshold the rapid-guess signal can never fire, which made fatigue
+       undetectable for exactly the people most likely to bail. The floor is deliberately
+       conservative: reading four options and choosing takes longer than 1.2s for anyone,
+       so a WRONG answer inside it was not a considered one.
+
+       Only exercises that are EVIDENCE count. A first-contact card is shown, not asked,
+       and it is always "right" and always quick — feeding those to the fatigue window
+       would dilute the rapid-guess rate with answers nobody gave. */
+    if (nudgeRef.current) declineNudge();
+    if (evSkill) {
+      const norm = latencyNormsRef.current && latencyNormsRef.current[evSkill + "|" + fmt];
+      fatigueLog.current.push({ ok: got, ms: think, fastMs: norm ? norm.fast : 1200 });
+    }
+    /* Ask whether this is a good place to stop, rather than marching to a fixed count.
+       More questions is not more learning, and the honest end of a session is when the
+       learner stops retrieving and starts tapping. The gain rows are the session so far,
+       one answer behind — the fade signal is a whole-session trend read in buckets of
+       five, so the row being written right now cannot change it. */
+    const pace = stopOffer({
+      events: fatigueLog.current,
+      planned: queue.length,
+      elapsedMs: Date.now() - (startedAtRef.current || Date.now()),
+      plannedMinutes: paceMsRef.current / 60000,
+      gainRows: sessionLog.current,
+      remainingValue: 1,     // TODO: fold in the real remaining practice value
+      snoozedUntil: snoozeRef.current,
+    });
+    setFatigueNow(pace.fatigue.level);
     if (evSkill) {
       const rec = makeEvidence({
         id: c.id, deck: c.src || "vocab", format: fmt, skill: evSkill,
@@ -1460,23 +1538,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         // Which rung of which rescue this was, so the repair chain reads back out of the
         // log rather than having to be reconstructed from a bonus and a timestamp.
         recovery: (c._rescue && c._rescue.tag) || null,
+        /* How tired the session looked when this answer was given. Recorded for the same
+           reason `predicted` is: the fatigue model is a model, and the only way to find
+           out whether its level means anything is to be able to ask later what actually
+           happened to accuracy and latency at each level (spec §40, MP-22). */
+        fatigue: pace.fatigue.confident ? pace.fatigue.level : null,
       });
       logEvidence(rec);
       sessionLog.current.push(rec);
-      /* Fatigue needs the learner's OWN fast threshold, not a constant: a quick thinker
-         answering in 800ms is not guessing, and a deliberate one at 4s is not tired. The
-         norm is per skill+format and already maintained. */
-      {
-        /* Falls back to a floor when there is no norm yet. A norm needs eight correct
-           answers of that skill+format, so a new learner (or a new exercise type) has
-           none — and without a threshold the rapid-guess signal can never fire, which
-           made fatigue undetectable for exactly the people most likely to bail. The floor
-           is deliberately conservative: reading four options and choosing takes longer
-           than 1.2s for anyone, so a WRONG answer inside it was not a considered one. */
-        const n = latencyNormsRef.current && latencyNormsRef.current[evSkill + "|" + fmt];
-        fatigueLog.current.push({ ok: got, ms: think, fastMs: n ? n.fast : 1200 });
-      }
-
     }
     if (got) {
       if (!missRef.current[c.id]) setFirstTry((prev) => { const n = new Set(prev); n.add(c.id); return n; });
@@ -1508,23 +1577,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     }
     setFlipped(false);
     setTyped(""); setVerdict(null); setShowWhy(false);
-    /* Ask whether this is a good place to stop, rather than marching to a fixed count.
-       More questions is not more learning, and the honest end of a session is when the
-       learner stops retrieving and starts tapping. */
-    {
-      const fat = fatigueFrom(fatigueLog.current);
-      const verdictStop = shouldStop({
-        done: fatigueLog.current.length,
-        planned: queue.length,
-        fatigue: fat.level,
-        remainingValue: 1,     // TODO: fold in the real remaining practice value
-      });
-      if (verdictStop.stop && verdictStop.reason !== "done") {
-        setStopped({ reason: verdictStop.reason, note: STOP_NOTE[verdictStop.reason], fatigue: fat });
-      }
-    }
+    /* The offer, put on screen rather than acted on. It sits above the next card, the
+       learner picks, and the session carries on either way — see the nudge block in the
+       session view for what declining costs (a quieter stretch, and easier questions). */
+    if (pace.offer) showNudge({ reason: pace.reason, note: pace.note, fatigue: pace.fatigue });
     setPos((p) => p + 1);
-  }, [queue, pos, onResult]);
+  }, [queue, pos, onResult, declineNudge, showNudge]);
 
   /* ── spelling ──
      A production card used to be self-graded: see the English, think of the Japanese,
@@ -1617,6 +1675,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               <button key={key} className={"tc-segbtn" + (plan.practice === key ? " is-on" : "")}
                       aria-pressed={plan.practice === key} title={note}
                       onClick={() => setPractice(key)}>{label}</button>
+            ))}
+          </div>
+        )}
+        {/* How long today (spec §39). The same setting the Plan tab owns — same three
+            paces, same writer — offered here as well because this is the screen where the
+            answer is actually known. A pace chosen on a settings page three taps away is a
+            pace that gets set once and then silently misdescribes every session after it,
+            and the button underneath changes size as soon as this is tapped. */}
+        {smartPool.length > 0 && (
+          <div className="tc-modeseg" role="group" aria-label="Session length">
+            {PACES.map(([key, label, mins, note]) => (
+              <button key={key} className={"tc-segbtn" + (plan.pace === key ? " is-on" : "")}
+                      aria-pressed={plan.pace === key} title={note}
+                      onClick={() => setPace(key)}>{label} <i>≈{mins}m</i></button>
             ))}
           </div>
         )}
@@ -1882,6 +1954,33 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           🔊 Voice {voiceOn ? "on" : "off"}
         </button>
       </div>
+
+      {/* ── a good place to stop (spec §38, §39) ──
+          An OFFER, never an ending. The three things that raise it — answers turning into
+          taps, the requested minutes spent, the learning rate falling off — are all real
+          signals and none of them knows what the learner's evening is for, so the session
+          says what it noticed and hands the decision back. "Keep going" is the wider
+          button on purpose.
+
+          Declining is not free and not ignored: the nudge goes quiet for a stretch instead
+          of asking again on the next card, and the questions after it aim for more support
+          (easedTarget, above). Simplify and shorten first; ask again only if that did not
+          help. */}
+      {nudge && (
+        <div className="tc-stopoffer" role="status">
+          <p className="tc-stoptitle">Good place to stop</p>
+          <p className="tc-stoptext">{nudge.note}</p>
+          <div className="tc-stopacts">
+            <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={declineNudge}>
+              Keep going
+            </button>
+            <button className="tc-btn tc-btn-sm"
+              onClick={() => { setStopped({ reason: nudge.reason, note: nudge.note }); showNudge(null); }}>
+              Finish here
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* The moment spacing visibly paid off. The scheduler had left this item alone for
           weeks precisely because it predicted the memory would hold — this is that
@@ -3227,14 +3326,9 @@ function areaForDeck(deck) {
   return "vocabulary";
 }
 
-/* Three honest paces, because some days are not study days. The professor's point about
-   "small and simple things" is the default: five focused minutes, three times a day,
-   beats one heroic session you will not repeat. */
-const PACES = [
-  ["short", "Short", 5, "Tired, busy, or between things. Five minutes still counts."],
-  ["normal", "Normal", 10, "The daily default — enough to make real progress."],
-  ["deep", "Deep", 20, "Motivated and have the time. Bigger backlog, more new words."],
-];
+/* The three paces (spec §39) live in tools/pacing.mjs alongside the early-stop check that
+   measures a session against them — the label and the minutes it buys are one decision,
+   and splitting them across a component and a module is how they drift apart. */
 
 /* How many studied scenes the mastery panel shows before it asks. The deck spans ninety-odd
    sections; a page that renders all of them on a phone is a page nobody scrolls to the end
@@ -3324,11 +3418,6 @@ function subscribePlan(fn) { _planWatchers.add(fn); return () => _planWatchers.d
 function savePlan(plan) {
   sSet(PLAN_KEY, JSON.stringify(plan));
   for (const fn of _planWatchers) { try { fn(plan); } catch (e) {} }
-}
-
-function paceMinutes(pace) {
-  const row = PACES.find(([k]) => k === pace);
-  return row ? row[2] : 10;
 }
 
 /* Priorities become deck weights, so a stated priority actually changes the session.

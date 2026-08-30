@@ -253,6 +253,17 @@ t("two formats can look varied and be the same work", () => {
   eq(s.byMode.recognition.n, 2, "both screens asked for recognition");
 });
 
+console.log("\n=== the fatigue estimate rides on the evidence (MP-11, spec §40) ===");
+t("an answer records how tired the session looked when it was given", () => {
+  eq(makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true, fatigue: 0.4237 }).fatigue, 0.42);
+});
+t("an unmeasurable session records null rather than a confident zero", () => {
+  // fatigueFrom refuses to say anything below its minimum sample, and "not enough
+  // evidence" and "wide awake" must not arrive in the log as the same number.
+  eq(makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true }).fatigue, null);
+  eq(makeEvidence({ id: "a", deck: "vocab", format: "mc", ok: true, fatigue: null }).fatigue, null);
+});
+
 console.log("\n=== cognitive mode rides on the evidence ===");
 t("an answer records what it actually asked for", () => {
   const e = makeEvidence({ id: "a", deck: "vocab", format: "type", ok: true });

@@ -238,7 +238,7 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery }) {
+export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue }) {
   return {
     id, deck, format,
     skill: skill || skillForFormat(format),
@@ -278,6 +278,13 @@ export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failu
        comeback bonus shows in the score and the CHAIN that earned it — what broke, what
        was asked instead, in what order — could only be guessed at from timestamps. */
     recovery: typeof recovery === "string" && recovery ? recovery : null,
+    /* How tired the session looked when this answer was given, 0..1 from fatigue.mjs, or
+       null when there was not yet enough of a session to say. Recorded for the same reason
+       `predicted` is: fatigue is a MODEL, and it is only calibratable if the level it
+       claimed at the time survives next to what actually happened (spec §40). Nothing
+       reads it yet — that is the point of writing it now rather than later. */
+    fatigue: typeof fatigue === "number" && isFinite(fatigue)
+      ? Math.round(fatigue * 100) / 100 : null,
     at: at || Date.now(),
   };
 }
