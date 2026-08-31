@@ -105,6 +105,7 @@ await import("./check-feeds.mjs");
 // A SEED key collision silently collapses two distinct cards into one on the next
 // seed-merge (see applySeed in tools/merge.mjs) — catch it before it ships.
 await import("./check-seed.mjs");
+await import("./check-readings.mjs");
 
 // The Oral tab is rehearsed out loud by someone who cannot read kanji yet, so a stray
 // character there is not a cosmetic problem — it is a line he cannot practise.

@@ -2769,7 +2769,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                       "to hurry (u-verb; past: 急いだ)" among three bare nouns is the longest
                       and most decorated option on screen, which is a second way to pick the
                       answer without knowing the word. The full gloss returns once answered. */}
-                  {verdict ? c.meaning : shortGloss(c.meaning)}
+                  {/* The full meaning, before and after answering. It used to be trimmed while
+                      you chose and expanded once you had — which removed a real tell (a
+                      long gloss among short ones is usually the answer) but read as the
+                      question changing its mind, and got reported as a bug twice. An
+                      inconsistency the learner has to explain to themselves costs more than
+                      the tell does; the tell is worth fixing by evening the LENGTHS, not by
+                      hiding half the sentence. */}
+                  {c.meaning}
                 </button>
               );
             })}
