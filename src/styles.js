@@ -1455,4 +1455,27 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcwrap,.tc-clozewrap,.tc-prod{
   min-height:340px;display:flex;flex-direction:column;justify-content:space-between;}
 .tc-grade{min-height:var(--tap);display:flex;gap:10px;align-items:center;justify-content:center;}
+
+/* ── course progress ──
+   Two stacked fills in one track: the pale one is everything met, the bright one is what is
+   also holding. The gap between them is the point of the whole widget — it is the work
+   already started and not yet finished, and a single-fill bar cannot show it. */
+.tc-volrow{margin:0 0 16px;}
+.tc-volhead{appearance:none;background:none;border:0;padding:0;width:100%;display:flex;
+  align-items:baseline;justify-content:space-between;cursor:pointer;color:var(--washi);}
+.tc-volname{font:var(--t-md);}
+.tc-volpct{font:var(--t-lg);color:var(--ok);font-variant-numeric:tabular-nums;}
+.tc-volbar{position:relative;height:10px;border-radius:99px;background:var(--surface-3);
+  overflow:hidden;margin:6px 0 6px;}
+.tc-volbar-sm{height:6px;margin:0;flex:1;}
+.tc-volseen{position:absolute;inset:0 auto 0 0;background:var(--surface-4);transition:width .5s ease;}
+.tc-voldone{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--info),var(--ok));
+  transition:width .5s ease;}
+.tc-volnote{margin:0;font:var(--t-body-sm);color:var(--mut);}
+.tc-volacts{margin:10px 0 0 2px;display:flex;flex-direction:column;gap:7px;}
+.tc-actrow{display:flex;align-items:center;gap:10px;}
+.tc-actname{font:var(--t-caps);letter-spacing:.05em;color:var(--mut-2);min-width:48px;}
+.tc-actpct{font:var(--t-body-sm);color:var(--mut);min-width:38px;text-align:right;
+  font-variant-numeric:tabular-nums;}
+@media (prefers-reduced-motion:reduce){ .tc-volseen,.tc-voldone{transition:none;} }
 `;

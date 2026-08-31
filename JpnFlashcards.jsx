@@ -38,6 +38,7 @@ import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
 import { playableScripts, buildDialogue, gradeTurn, downshift, turnEvidence, scoreTurn,
          dialogueSummary, nextStep, TURN, STEP, DIALOGUE_DECK } from "./tools/dialogue.mjs";
 import { currentAct, volumeOfAct, VOLUME_ACTS } from "./tools/curriculum.mjs";
+import { volumeProgress, actProgress, describeVolume } from "./tools/progress.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -3346,6 +3347,15 @@ function Plan({ cards = [] }) {
   /* What the app worked out on its own, shown next to the override so the setting is a
      correction rather than a guess. Same call the Study tab makes. */
   const derivedAct = useMemo(() => currentAct(evidence, cards), [evidence, cards]);
+  /* The same evidence rolled up the curriculum tree: scene -> act -> volume. Nothing new
+     is measured here; the question is just asked at the altitude the learner asks it at. */
+  const volumes = useMemo(() => volumeProgress(mastery), [mastery]);
+  const [openVolume, setOpenVolume] = useState(null);
+  const actsOfOpen = useMemo(
+    () => (openVolume ? actProgress(mastery, openVolume) : []),
+    [mastery, openVolume],
+  );
+
   const scenesStudied = useMemo(() => mastery.scenes.filter((s) => s.started), [mastery]);
   const scenesFresh = useMemo(() => mastery.scenes.filter((s) => !s.started), [mastery]);
   const [allScenes, setAllScenes] = useState(false);
@@ -3556,6 +3566,69 @@ function Plan({ cards = [] }) {
             return SKILL_LABEL[k] + ": " + STATE_LABEL[stateOf(posterior(row.ok || 0, (row.n || 0) - (row.ok || 0)))];
           }).join(" · ")}
         </p>
+      </section>
+
+      {/* ── the whole course, in two bars ──
+          The section below answers this per act-scene, which is the right altitude for
+          "what do I study tonight" and the wrong one for "how far through the book am I".
+
+          Three numbers, deliberately not merged into one. SEEN is a count of words met and
+          only ever goes up. MASTERED is the model's estimate of what is holding, and can
+          fall. The BAR is the two multiplied, because that is the only figure that answers
+          "how much of Volume 2 do I know" without a qualifier — and the only one that
+          cannot be moved by clicking through cards. */}
+      <section className="tc-plansec">
+        <h2 className="tc-planh">How much of the course <span className="tc-planh-sub">NihonGO NOW! Level 1</span></h2>
+        {volumes.volumes.every((v) => !v.items) ? (
+          <p className="tc-planhint">No act-tagged words in the deck yet, so there is nothing to measure against the book.</p>
+        ) : (
+          <>
+            {volumes.volumes.map((v) => {
+              const pct = v.done == null ? 0 : Math.round(v.done * 100);
+              const open = openVolume === v.volume;
+              return (
+                <div key={v.volume} className="tc-volrow">
+                  <button type="button" className="tc-volhead"
+                          onClick={() => setOpenVolume(open ? null : v.volume)}
+                          aria-expanded={open}>
+                    <span className="tc-volname">Volume {v.volume}</span>
+                    <span className="tc-volpct">{v.done == null ? "—" : pct + "%"}</span>
+                  </button>
+                  <div className="tc-volbar" role="progressbar" aria-valuemin={0} aria-valuemax={100}
+                       aria-valuenow={pct} aria-label={"Volume " + v.volume + " progress"}>
+                    {/* Seen sits UNDER mastered, so the gap between them is visible: it is
+                        exactly the material met but not yet holding. */}
+                    <div className="tc-volseen" style={{ width: Math.round((v.coverage || 0) * 100) + "%" }} />
+                    <div className="tc-voldone" style={{ width: pct + "%" }} />
+                  </div>
+                  <p className="tc-volnote">
+                    {describeVolume(v)}
+                    {v.measuring > 0 ? ` · ${v.measuring} scene${v.measuring === 1 ? "" : "s"} still being measured` : ""}
+                  </p>
+                  {open && (
+                    <div className="tc-volacts">
+                      {actsOfOpen.map((a) => (
+                        <div key={a.act} className="tc-actrow">
+                          <span className="tc-actname">Act {a.act}</span>
+                          <div className="tc-volbar tc-volbar-sm">
+                            <div className="tc-volseen" style={{ width: Math.round((a.coverage || 0) * 100) + "%" }} />
+                            <div className="tc-voldone" style={{ width: (a.done == null ? 0 : Math.round(a.done * 100)) + "%" }} />
+                          </div>
+                          <span className="tc-actpct">{a.done == null ? (a.started ? "…" : "—") : Math.round(a.done * 100) + "%"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <p className="tc-planhint" style={{ marginTop: 10 }}>
+              The bar is how much of the volume you've met <i>and</i> are holding — the pale
+              part behind it is everything you've met. A dash means nothing there has been
+              measured yet, which is not the same as none of it being known.
+            </p>
+          </>
+        )}
       </section>
 
       {/* ── where you stand in the textbook ──
