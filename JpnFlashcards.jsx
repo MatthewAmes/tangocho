@@ -19,7 +19,8 @@ import { buildSession, interventionFor, skillOf, describe as describeSession } f
 import { calibrationReport } from "./tools/calibration.mjs";
 import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./tools/mining.mjs";
 import { inContext, splitAround, contextCoverage } from "./tools/kanjicontext.mjs";
-import { drillSet, gradeDrill } from "./tools/production.mjs";
+import { drillSet, gradeDrill, orderDrill, buildDrill, fillDrill, usableChunks } from "./tools/production.mjs";
+import { ACTIVITY, activityFor, arrange, describeComposition } from "./tools/compose.mjs";
 import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
@@ -857,6 +858,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const baselineRef = useRef(null);
   // Bumped when a generated sentence lands, so the exercise picks it up without a reload.
   const [contextTick, setContextTick] = useState(0);
+  // What DrillPad currently has assembled, read at Check time. A ref rather than state:
+  // every tile tap would otherwise re-render the whole card.
+  const drillAnswer = useRef(null);
   const hooksRef = useRef(null);                       // term -> memory hook (cached forever)
   const [hook, setHook] = useState(null);              // {term, text|"...", err}
   const [debrief, setDebrief] = useState(null);        // {text} | {err} | {busy:true}
@@ -1424,6 +1428,49 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     : "recall";
   const fmt = rawFmt === "listen" && noAudio ? "mc" : rawFmt;
   const cueLevel = intervention ? intervention.cue : null;
+
+  /* ── the composer ──
+     The intervention engine has said WHAT to practise and roughly what kind of question.
+     This turns that into the concrete activity, which depends on material the engine knows
+     nothing about: a production ask with a sentence and an English gloss can be a word bank
+     or a scramble, and without them can only be free typing. See tools/compose.mjs. */
+  const sentenceOf = useCallback((id) => {
+    const c = queue.find((q) => q && q.id === id) || card;
+    if (!c) return null;
+    // Real textbook material first; a generated sentence only where there is none.
+    const cz = clozeFor(clozeIndex, c);
+    if (cz) return { sentence: cz.before + c.term + cz.after, en: cz.en || "" };
+    const gen = contextFor(id);
+    return gen && gen.sentence ? { sentence: gen.sentence, en: gen.en || "" } : null;
+  }, [queue, card, clozeIndex]);
+
+  const knownWords = useMemo(() => cards.map((c) => c.term), [cards]);
+  const material = useMemo(() => ({
+    sentenceFor: sentenceOf,
+    chunkCount: (s) => (s && s.sentence ? usableChunks(s.sentence, { known: knownWords }).length : 0),
+    // Only claim a particle gap when the generator can actually produce one to grade.
+    hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
+  }), [sentenceOf, knownWords]);
+
+  const activity = useMemo(
+    () => (card ? activityFor({ id: card.id, format: fmt, cue: cueLevel }, material) : fmt),
+    [card, fmt, cueLevel, material],
+  );
+
+  /* The drill itself, for the three activities that are assembled rather than answered.
+     Null is a normal outcome — the renderer falls back the same way a sentence-less cloze
+     does, because an activity that cannot be built must never leave a blank screen. */
+  const sessionDrill = useMemo(() => {
+    if (!card) return null;
+    if (![ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity)) return null;
+    const s = sentenceOf(card.id);
+    if (!s) return null;
+    const seed = (card._step || 0) + String(card.id).length;
+    const opts = { en: s.en, seed, known: knownWords };
+    if (activity === ACTIVITY.ORDER) return orderDrill(s.sentence, opts);
+    if (activity === ACTIVITY.TAPFILL) return fillDrill(s.sentence, opts);
+    return buildDrill(s.sentence, { ...opts, distractors: knownWords.slice(0, 3) });
+  }, [card, activity, sentenceOf, knownWords]);
   const whyThis = intervention ? explainPick({ ...card._pick, ...intervention, st: live }) : null;
   const isProd = fmt === "type";
   const done = running && (pos >= queue.length || !!stopped);
@@ -2316,7 +2363,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           as a failure. The introduction shows everything at once — character, reading,
           meaning, picture, sound — and the testing starts on its next appearance, a few
           cards later, while it is still warm. */}
-      {fmt === "learn" && (
+      {activity === ACTIVITY.LEARN && (
         /* An introduction has nothing to reveal and only one way forward, so the whole
            card is the control. Tapping anywhere continues, and the audio button stops
            the click from bubbling so hearing it does not skip past it. */
@@ -2353,7 +2400,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           A blank in a real sentence the learner has already studied, with the English
           alongside so the task is "which word belongs here" rather than "guess the
           sentence". This is the only exercise that tests usage rather than translation. */}
-      {fmt === "cloze" && clozeEx && (
+      {activity === ACTIVITY.CLOZE && clozeEx && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className="tc-kindchip tc-clozechip">in context</span>
           <p className="tc-clozeen">{clozeEx.en}</p>
@@ -2388,12 +2435,41 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         </div>
       )}
 
+      {/* ── assembled answers: word bank, scramble, particle tap ──
+          The three activities the format list could not reach. Same tile surface as the
+          post-session block, but graded here through the ordinary path, so building a
+          sentence moves the card's memory exactly as answering a flashcard does — which is
+          the whole reason for pulling them into the session rather than leaving them beside
+          it. */}
+      {sessionDrill && (
+        <div className="tc-mcwrap" style={masteryStyle(live || card)}>
+          <span className="tc-kindchip tc-clozechip">
+            {activity === ACTIVITY.ORDER ? "put it in order"
+              : activity === ACTIVITY.TAPFILL ? "which particle?" : "build the sentence"}
+          </span>
+          {sessionDrill.prompt ? <p className="tc-clozeen">{sessionDrill.prompt}</p> : null}
+          <DrillPad drill={sessionDrill} locked={!!verdict} onReady={(a) => { drillAnswer.current = a; }} />
+          {!verdict && (
+            <button className="tc-btn tc-btn-sm tc-btn-primary" style={{ marginTop: 10 }}
+              onClick={() => {
+                const r = gradeDrill(sessionDrill, drillAnswer.current || (sessionDrill.type === "fill" ? "" : []));
+                setVerdict({ ok: !!r.ok, got: Array.isArray(drillAnswer.current) ? drillAnswer.current.join("") : drillAnswer.current, want: r.expected });
+                setFlipped(true);
+              }}>Check</button>
+          )}
+          {verdict && !verdict.ok && <p className="tc-prodsent">{sessionDrill.sentence}</p>}
+        </div>
+      )}
+
       {/* A cloze with no sentence renders nothing at all — an empty card with buttons under
           it. The capability gate is meant to make that impossible, but the gate reads a
           store that could be mid-load or hold an entry whose word no longer appears in its
           sentence, and "impossible" is not a good enough reason to leave a blank screen as
-          the failure mode. Falls through to multiple choice, which every word can do. */}
-      {((fmt === "mc" || fmt === "listen") || (fmt === "cloze" && !clozeEx)) && (
+          the failure mode. Falls through to multiple choice, which every word can do.
+          An assembled activity whose drill could not be built lands here too. */}
+      {((activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN)
+        || (activity === ACTIVITY.CLOZE && !clozeEx)
+        || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !sessionDrill)) && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className={"tc-kindchip " + (fmt === "listen" ? "tc-listenchip" : "tc-mcchip")}>
             {fmt === "listen" ? "listen" : "which one?"}
@@ -2446,7 +2522,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         </div>
       )}
 
-      {(fmt === "recall" || fmt === "type") && (
+      {/* Reads `activity`, not `format`: a production ask the composer turned into a word bank
+          is still format "type", and gating on that rendered the typing pad UNDER the tiles. */}
+      {(activity === ACTIVITY.RECALL || activity === ACTIVITY.TYPE) && (
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
            style={masteryStyle(live || card)}
            role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
@@ -2782,6 +2860,64 @@ function Checkpoint({ cards = [], heldOut }) {
 
    It cannot judge whether a different sentence is also correct, so it does not pretend to:
    it accepts the sentence that was written and shows the difference when they diverge. */
+// Tile keys are text + NUL + index: NUL because it cannot occur inside a tile, where a
+// space can — と か would split at the wrong place and grade a correct answer as wrong.
+const TILE_SEP = String.fromCharCode(0);
+
+/* The tile surface, on its own so the session and the post-session block are the same
+   exercise rather than two that look alike. It owns what the learner has assembled and
+   nothing else — checking, grading and what happens next belong to whoever mounted it,
+   because in a session those go through the normal FSRS path and here they do not. */
+function DrillPad({ drill, locked, onReady }) {
+  const [built, setBuilt] = useState([]);
+  const [typed, setTyped] = useState("");
+  const d = drill;
+  // Reset when the drill changes, or the next card inherits the last one's tiles.
+  useEffect(() => { setBuilt([]); setTyped(""); }, [d]);
+  /* `built` holds KEYED tiles (text + NUL + index) so two identical pieces stay distinct
+     while placing them. The grader compares against the raw chunk list, so the key has to
+     come off first — passing the keyed strings made every build/order drill grade as wrong
+     no matter what was assembled, while the display (which does strip the key) showed a
+     perfectly correct sentence. */
+  const answer = d && d.type === "fill" ? typed : built.map((b) => b.split(" ")[0]);
+  useEffect(() => { if (onReady) onReady(answer); }, [built, typed]);   // eslint-disable-line
+  if (!d) return null;
+
+  return d.type === "fill" ? (
+    <>
+      <div className="tc-prodsent">{d.before}<span className="tc-prodblank">＿</span>{d.after}</div>
+      <div className="tc-prodtiles">
+        {d.choices.map((c) => (
+          <button key={c} type="button" className={"tc-fchip" + (typed === c ? " is-on" : "")}
+            onClick={() => setTyped(c)} disabled={locked}>{c}</button>
+        ))}
+      </div>
+    </>
+  ) : (
+    <>
+      <div className="tc-prodsent">
+        {built.length
+          ? built.map((b) => b.split(" ")[0]).join("")
+          : <span className="tc-prodblank">tap the pieces in order</span>}
+      </div>
+      <div className="tc-prodtiles">
+        {d.tiles.map((tile, i) => {
+          const key = tile + " " + i;
+          const used = built.includes(key);
+          return (
+            <button key={key} type="button" className={"tc-fchip" + (used ? " is-used" : "")}
+              disabled={used || locked} onClick={() => setBuilt([...built, key])}>{tile}</button>
+          );
+        })}
+      </div>
+      {built.length > 0 && !locked && (
+        <button className="tc-btn tc-btn-sm" type="button" onClick={() => setBuilt(built.slice(0, -1))}>undo</button>
+      )}
+      {d.hasDistractors ? <p className="tc-smarthint">Not every piece belongs.</p> : null}
+    </>
+  );
+}
+
 function ProductionBlock({ drills, onDone }) {
   const [at, setAt] = useState(0);
   const [built, setBuilt] = useState([]);
