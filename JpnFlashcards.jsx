@@ -1633,6 +1633,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      render. Two conditions that must agree, written twice, is what produced the mismatch. */
   const showsChoices = !!card && (
     activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN
+    /* A grid whose board could not be built lands here too, and this line is the whole bug
+       the Comeback card hit: the MATCH renderer requires a board, and the control deck's
+       MATCH branch renders nothing on purpose (the grid advances itself) — so a null board
+       meant no exercise AND no button. A card with no way forward.
+
+       Two fixes from earlier today combined to cause it. Cards answered on a board now
+       leave the queue, and the board's pool IS the queue — so late in a session there are
+       fewer than MIN_PAIRS cards left to build from and matchBoard correctly returns null.
+       Each fix was right; neither knew about the other. */
+    || (activity === ACTIVITY.MATCH && !grid)
     || (activity === ACTIVITY.CLOZE && !clozeEx)
     || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !sessionDrill)
   );
@@ -1691,6 +1701,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     // Deterministic shuffle: the answer must not always land in the same slot.
     return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
   }, [card, fmt, cards, confusion, showsChoices]);
+
+  /* What actually gets rendered, which is not always what the composer chose.
+
+     An activity that needs options and has none is a DEAD CARD: the block hides itself,
+     the control deck offers a hint rather than a button, and there is nothing on screen to
+     tap and no way forward. That is strictly worse than the empty-badge bug it replaced —
+     an empty badge is at least visibly wrong, whereas this looks like the app simply
+     stopped. It reached a real session as a Comeback card with nothing under the banner.
+
+     So the fallback chain ends somewhere that always works. Every card in the deck has a
+     term and a meaning, so the flip card is always renderable; that is the floor. */
+  const renderActivity = showsChoices && choices.length === 0 ? ACTIVITY.RECALL : activity;
 
   const answerChoice = useCallback((choice) => {
     if (verdict) return;
@@ -2635,7 +2657,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           the rest of the grid is what this learner mixes it up with. Every pair grades —
           the anchor through the ordinary path when the grid is finished, the others
           straight to their own memory, because they were genuinely answered. */}
-      {activity === ACTIVITY.MATCH && grid && (
+      {renderActivity === ACTIVITY.MATCH && grid && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className="tc-kindchip tc-mcchip">
             {grid.adversarial ? "tell them apart" : "match them up"}
@@ -2684,8 +2706,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {sessionDrill && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className="tc-kindchip tc-clozechip">
-            {activity === ACTIVITY.ORDER ? "put it in order"
-              : activity === ACTIVITY.TAPFILL ? "which particle?" : "build the sentence"}
+            {renderActivity === ACTIVITY.ORDER ? "put it in order"
+              : renderActivity === ACTIVITY.TAPFILL ? "which particle?" : "build the sentence"}
           </span>
           {sessionDrill.prompt ? <p className="tc-clozeen">{sessionDrill.prompt}</p> : null}
           <DrillPad drill={sessionDrill} locked={!!verdict} onReady={(a) => { drillAnswer.current = a; }} />
@@ -2709,10 +2731,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           An assembled activity whose drill could not be built lands here too. */}
       {showsChoices && choices.length > 0 && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
-          <span className={"tc-kindchip " + (activity === ACTIVITY.LISTEN ? "tc-listenchip" : "tc-mcchip")}>
-            {activity === ACTIVITY.LISTEN ? "listen" : "which one?"}
+          <span className={"tc-kindchip " + (renderActivity === ACTIVITY.LISTEN ? "tc-listenchip" : "tc-mcchip")}>
+            {renderActivity === ACTIVITY.LISTEN ? "listen" : "which one?"}
           </span>
-          {activity === ACTIVITY.LISTEN ? (
+          {renderActivity === ACTIVITY.LISTEN ? (
             <div className="tc-listenprompt">
               <SpeakBtn text={card.reading || card.term} />
               <p className="tc-learnnote">Tap to hear it again</p>
@@ -2752,7 +2774,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               );
             })}
           </div>
-          {verdict && activity === ACTIVITY.LISTEN && (
+          {verdict && renderActivity === ACTIVITY.LISTEN && (
             <div className="tc-listenreveal">
               {card.term} · {card.reading}
             </div>
@@ -2762,7 +2784,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
       {/* Reads `activity`, not `format`: a production ask the composer turned into a word bank
           is still format "type", and gating on that rendered the typing pad UNDER the tiles. */}
-      {(activity === ACTIVITY.RECALL || activity === ACTIVITY.TYPE) && (
+      {(renderActivity === ACTIVITY.RECALL || renderActivity === ACTIVITY.TYPE) && (
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
            style={masteryStyle(live || card)}
            role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
@@ -2885,21 +2907,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           bottom control until it has been answered. Reveal / Missed / Got it belong to the
           flip card alone, because it is the only format where the learner grades themselves. */}
       <div className="tc-grade">
-        {activity === ACTIVITY.MATCH ? (
+        {renderActivity === ACTIVITY.MATCH && grid ? (
           // The grid answers itself and auto-advances; a button here would be a second way
           // to leave, competing with the one the learner is already using.
           null
-        ) : activity === ACTIVITY.LEARN ? (
+        ) : renderActivity === ACTIVITY.LEARN ? (
           <button type="button" className="tc-btn tc-btn-wide tc-btn-got"
                   onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it — next →</button>
-        ) : ANSWERED_BY_TAPPING.includes(activity) ? (
+        ) : ANSWERED_BY_TAPPING.includes(renderActivity) ? (
           verdict ? (
             <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
                     onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
               {verdict.ok ? "Next →" : "Noted — next →"}
             </button>
           ) : (
-            <p className="tc-mchint">{PROMPT_FOR[activity] || "Pick the answer"}</p>
+            <p className="tc-mchint">{PROMPT_FOR[renderActivity] || "Pick the answer"}</p>
           )
         ) : !flipped ? (
           <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); flip(); }}>Reveal answer</button>
