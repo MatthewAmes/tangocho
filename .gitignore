@@ -36,3 +36,9 @@ secrets.*
 tools/.glossary-cache.html
 *.book.txt
 books/
+
+# Textbook-derived content. Matthew owns the books; the repo is public, and committing
+# these would publish them. The build mirrors this into cf/public/ (also ignored) so
+# Cloudflare serves it — the app gets the content, git never does.
+# Regenerate: node tools/build-scripts-asset.mjs <dir with pdftotext output>
+data/private/

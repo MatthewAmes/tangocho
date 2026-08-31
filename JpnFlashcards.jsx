@@ -987,9 +987,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      Japanese, already levelled to the course, already carrying English — and free, which
      a language model writing sentences on demand is not. Coverage is whatever the scripts
      happen to contain, and a word they never use simply gets no context exercise. */
+  /* The asset arrives after first paint, so the cloze index has to be told. Without this
+     the textbook scenes load into memory and nothing ever reads them — the session would
+     keep drawing on the Vol 1 scenes alone and look exactly as if the import had failed. */
+  const [booksReady, setBooksReady] = useState(false);
+  useEffect(() => { loadBookScripts().then((l) => { if (l.length) setBooksReady(true); }); }, []);
+
   const clozeIndex = useMemo(
-    () => addMinedSources(buildClozeIndex(SCRIPT_SEED, cards), cards),
-    [cards],
+    /* Both sets of scenes. This is the line that puts the textbook into Smart Review: the
+       cloze index is what the context rung draws its sentences from, so every scene added
+       here becomes material the session can build an exercise out of. */
+    () => addMinedSources(buildClozeIndex([...SCRIPT_SEED, ...bookScripts()], cards), cards),
+    [cards, booksReady],
   );
   /* The evidence log, read here for the two things it now feeds back into the session:
      which words this learner confuses, and how fast they normally answer each KIND of
@@ -3938,6 +3947,27 @@ async function saveRuns(list) { await sSet(BENCH_KEY, JSON.stringify(list)); }
    for a cloze that then has to be fetched is how you get a blank card in the middle of a
    session; instead, sentences are fetched ahead of time for words approaching the rung, and
    a word becomes context-capable the moment its sentence lands. */
+/* ── textbook scripts ──
+   Served by Cloudflare from cf/public, never committed: the scenes are book content and
+   this repo is public. A fresh clone has no asset and the app runs on the hand-entered Vol 1
+   scenes alone, which is why every use of this is additive and none of it is awaited.
+
+   Cached in memory for the session. It is ~60 KB of static text that never changes between
+   deploys, so the browser cache does the rest. */
+let _bookScripts = null;
+let _bookScriptsPromise = null;
+function loadBookScripts() {
+  if (_bookScripts) return Promise.resolve(_bookScripts);
+  if (!_bookScriptsPromise) {
+    _bookScriptsPromise = fetch("/scripts-books.json", { cache: "force-cache" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => { _bookScripts = Array.isArray(list) ? list : []; return _bookScripts; })
+      .catch(() => { _bookScripts = []; return _bookScripts; });
+  }
+  return _bookScriptsPromise;
+}
+function bookScripts() { return _bookScripts || []; }
+
 const CONTEXT_KEY = "jpn101:context";
 let _context = null;
 async function loadContext() {
@@ -5848,6 +5878,12 @@ function Scripts({ cards = [] }) {
       let changed = recovered || list.length !== before;
       const names = new Set(list.map((s) => s.name));
       SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; changed = true; } });
+      /* Textbook scenes, merged by NAME like the seed ones — so a scene already present
+         (hand-entered, or edited by hand) is never replaced by the parsed version. Awaited
+         here because this list is what gets written back to storage, and a merge that
+         raced the fetch would persist a list missing half its scenes. */
+      const fromBooks = await loadBookScripts();
+      fromBooks.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); changed = true; } });
       if (changed && (r || r2)) { const json = JSON.stringify(list); sSet("jpn101:scripts", json); sSet("jpn101:scripts:mirror", json); }   // never overwrite storage after failed/empty reads
       setScripts(list); setReady(true);
     })();

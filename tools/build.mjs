@@ -161,6 +161,24 @@ fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
 // data that changes on a completely different schedule from the code, and keeping it out
 // means the app still starts instantly if it fails to load.
 // data assets that ship alongside the bundle
+/* Textbook scripts, when they have been generated. Optional by design: the file is
+   gitignored (it is book content and this repo is public), so a fresh clone builds fine
+   without it and the app simply falls back to the hand-entered Vol 1 scenes. */
+{
+  const priv = path.join(ROOT, "data", "private", "scripts-books.json");
+  if (fs.existsSync(priv)) {
+    const raw = fs.readFileSync(priv, "utf8");
+    try {
+      const n = JSON.parse(raw).length;
+      fs.writeFileSync(path.join(CF_PUBLIC, "scripts-books.json"), raw, "utf8");
+      console.log(`    scripts ${n} textbook scenes -> cf/public (not committed)`);
+    } catch (e) {
+      console.error("BUILD ABORTED — data/private/scripts-books.json is not valid JSON.");
+      process.exit(1);
+    }
+  }
+}
+
 for (const asset of ["kanji.json", "freq.json"]) {
   const src = path.join(ROOT, "data", asset);
   if (fs.existsSync(src)) fs.writeFileSync(path.join(CF_PUBLIC, asset), fs.readFileSync(src, "utf8"), "utf8");
