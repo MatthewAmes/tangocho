@@ -29,3 +29,10 @@ tools/.freqlist-cache.txt
 *.key
 secrets.*
 **/apikey*
+
+# Extracted textbook text. The PDFs are Matthew's licensed copies of a Routledge title;
+# their contents do not belong in a public repo. tools/book-readings.mjs regenerates the
+# reading dictionary from them on demand, so nothing here is load-bearing.
+tools/.glossary-cache.html
+*.book.txt
+books/
