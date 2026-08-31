@@ -1365,4 +1365,85 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-batchchip:hover::after{opacity:.9;}
 @media (prefers-reduced-motion:reduce){ .tc-batchchip::after{transition:none;} }
 
+
+/* ── tiles: word bank, sentence pieces, matching grid ──
+   The same liquid glass as .tc-btn — a glass fill under a foil rim drawn by a masked
+   ::before, so the border is a gradient rather than a colour. Kept as one .tc-tile rule
+   rather than three near-copies, because three near-copies is how the rims drifted apart
+   last time. */
+.tc-tile{
+  appearance:none;border:0;position:relative;
+  background:var(--glass);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  color:var(--washi);font:var(--t-body);line-height:1.3;
+  min-height:var(--tap);padding:10px 14px;border-radius:var(--r-m);
+  box-shadow:var(--gloss);
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  transition:background .15s,box-shadow .15s,transform .1s,opacity .2s;}
+.tc-tile::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--foil);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;
+          mask-composite:exclude;
+  opacity:.42;pointer-events:none;transition:opacity .18s ease;}
+.tc-tile:hover:not(:disabled){background:var(--glass-hi);}
+.tc-tile:hover:not(:disabled)::before{opacity:.9;}
+.tc-tile:active:not(:disabled){transform:scale(.97);}
+.tc-tile small{font:var(--t-caps);letter-spacing:.04em;color:var(--mut-2);text-transform:none;}
+.tc-tile-jp{font-size:19px;}
+
+/* Selected: the rim goes full strength rather than the fill changing colour, so the
+   selection reads at a glance without leaving the palette. */
+.tc-tile.is-picked{background:var(--glass-hi);}
+.tc-tile.is-picked::before{opacity:1;padding:2px;}
+
+/* Solved pairs stay on the board, dimmed. Removing them makes the grid jump under the
+   finger mid-answer, and re-flows the tile you were about to tap out from under you. */
+.tc-tile.is-done{opacity:.32;cursor:default;box-shadow:none;}
+.tc-tile.is-done::before{opacity:.14;}
+.tc-tile:disabled{cursor:default;}
+
+/* ── a wrong tap ──
+   No red X, no stop. A short shake and a red glow from INSIDE the tile — the rim stays
+   rainbow, so a mistake never breaks the surface the rest of the session is made of. */
+@keyframes tc-nudge{
+  0%,100%{transform:translateX(0);}
+  20%{transform:translateX(-5px);} 40%{transform:translateX(4px);}
+  60%{transform:translateX(-3px);} 80%{transform:translateX(2px);}
+}
+.tc-tile.is-wrong{
+  animation:tc-nudge .38s cubic-bezier(.36,.07,.19,.97);
+  box-shadow:var(--gloss), inset 0 0 22px -4px rgba(224,101,90,.75);}
+
+.tc-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--gutter);margin:12px 0 4px;}
+.tc-gridcol{display:flex;flex-direction:column;gap:10px;}
+.tc-wordbank{display:flex;flex-wrap:wrap;gap:9px;justify-content:center;margin:10px 0;}
+
+/* ── the combo accelerator ──
+   --combo is set on the session root as a 0..1 ramp. It only ever raises the opacity of a
+   rim that is already there and speeds up a sweep that is already running: at combo 0 every
+   surface is exactly what it was, which is the point — the reward has to be the change, not
+   a permanently louder screen. */
+@keyframes tc-foilsweep{ to{ background-position:200% 50%; } }
+.tc-hot .tc-tile::before,
+.tc-hot .tc-btn::before,
+.tc-hot .tc-card2::before{
+  opacity:calc(.42 + var(--combo, 0) * .58);
+  background-size:200% 100%;
+  animation:tc-foilsweep calc(9s - var(--combo, 0) * 6s) linear infinite;}
+.tc-hot .tc-btn-primary{
+  box-shadow:var(--gloss),
+             0 10px 26px -14px rgba(59,130,246,calc(.55 + var(--combo, 0) * .45)),
+             0 0 calc(var(--combo, 0) * 22px) -6px rgba(255,255,255,calc(var(--combo, 0) * .35));}
+
+@media (prefers-reduced-motion:reduce){
+  .tc-tile.is-wrong{animation:none;}
+  .tc-hot .tc-tile::before,.tc-hot .tc-btn::before,.tc-hot .tc-card2::before{animation:none;}
+}
+
+/* The redemption round announces itself once, at the top, and then gets out of the way. */
+.tc-redeem{border-color:var(--info);color:var(--washi);font-weight:600;}
 `;

@@ -34,6 +34,7 @@ import { CUE } from "./learner.mjs";
 export const ACTIVITY = {
   LEARN: "learn",       // first contact — shown, not tested
   MC: "mc",             // recognise among neighbours
+  MATCH: "match",       // a grid of words against meanings, stacked with confusables
   RECALL: "recall",     // the flip card
   LISTEN: "listen",     // hear it, then say what it was
   CLOZE: "cloze",       // a blank in a real sentence, answered by choosing a word
@@ -46,7 +47,7 @@ export const ACTIVITY = {
 /* Support, most to least. Used to escalate within a session and to pick the finale — the
    ordering is the point, the numbers are not. */
 export const SUPPORT = {
-  [ACTIVITY.LEARN]: 0, [ACTIVITY.MC]: 1, [ACTIVITY.LISTEN]: 2, [ACTIVITY.CLOZE]: 3,
+  [ACTIVITY.LEARN]: 0, [ACTIVITY.MC]: 1, [ACTIVITY.MATCH]: 2, [ACTIVITY.LISTEN]: 2, [ACTIVITY.CLOZE]: 3,
   [ACTIVITY.TAPFILL]: 3, [ACTIVITY.ORDER]: 4, [ACTIVITY.BUILD]: 5, [ACTIVITY.RECALL]: 5,
   [ACTIVITY.TYPE]: 6,
 };
@@ -87,6 +88,12 @@ export function activityFor(pick, material = {}, opts = {}) {
     if (cue === CUE.PARTIAL) return ACTIVITY.BUILD;
     return ACTIVITY.TYPE;
   }
+
+  /* Recognition becomes a matching grid when a worthwhile board can be built — one that
+     holds a word this learner actually mixes up with the anchor. Four unrelated words in a
+     grid is four recognition questions shown at once, which is EASIER than asking them one
+     at a time; the confusable is what makes it an exercise. No confusable, no grid. */
+  if (fmt === "mc" && material.canMatch && material.canMatch(pick.id)) return ACTIVITY.MATCH;
 
   return fmt in SUPPORT ? fmt : ACTIVITY.MC;
 }

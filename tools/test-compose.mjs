@@ -63,6 +63,13 @@ t("an unknown format never escapes as an unrenderable activity", () => {
   eq(activityFor(pick({ format: "nonsense" }), withSentence), ACTIVITY.MC);
 });
 
+t("recognition becomes a grid only when a real confusable is on the board", () => {
+  const withConf = { ...withSentence, canMatch: () => true };
+  eq(activityFor(pick({ format: "mc" }), withConf), ACTIVITY.MATCH);
+  // and stays plain multiple choice when there is nothing to discriminate against
+  eq(activityFor(pick({ format: "mc" }), withSentence), ACTIVITY.MC);
+});
+
 console.log("=== the arc ===");
 const item = (activity, extra = {}) => ({ id: activity + Math.random(), activity, ...extra });
 t("opens on something winnable, not on free production", () => {

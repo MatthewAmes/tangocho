@@ -21,6 +21,7 @@ import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./to
 import { inContext, splitAround, contextCoverage } from "./tools/kanjicontext.mjs";
 import { drillSet, gradeDrill, orderDrill, buildDrill, fillDrill, usableChunks } from "./tools/production.mjs";
 import { ACTIVITY, activityFor, arrange, describeComposition } from "./tools/compose.mjs";
+import { matchBoard, canMatch as canMatchBoard, tapResult } from "./tools/matchgrid.mjs";
 import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
@@ -861,6 +862,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   // What DrillPad currently has assembled, read at Check time. A ref rather than state:
   // every tile tap would otherwise re-render the whole card.
   const drillAnswer = useRef(null);
+
+  /* ── the matching grid ──
+     Board state lives here rather than in a child so a re-render cannot reshuffle it, and
+     so the misses can go straight into the session's evidence. */
+  const [picked, setPicked] = useState(null);
+  const [paired, setPaired] = useState(() => new Set());
+  const [shakeKey, setShakeKey] = useState(null);
+  const gridMiss = useRef(new Set());        // cards fumbled on THIS board
+  const gridSolved = useRef([]);             // non-anchor cards to grade once it is finished
   const hooksRef = useRef(null);                       // term -> memory hook (cached forever)
   const [hook, setHook] = useState(null);              // {term, text|"...", err}
   const [debrief, setDebrief] = useState(null);        // {text} | {err} | {busy:true}
@@ -1318,7 +1328,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        learner asked for by name, and reordering it would be answering a question nobody
        asked; those cards also carry no _pick, so there is nothing to compose from. */
     const composable = ordered.some((c) => c && c._pick);
-    setQueue(composable ? composeQueue(ordered, clozeIndex, ordered.map((c) => c.term)) : ordered);
+    setQueue(composable ? composeQueue(ordered, clozeIndex, ordered.map((c) => c.term), confusion) : ordered);
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
@@ -1353,6 +1363,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setFlipped(false); setTyped(""); setVerdict(null); setShowWhy(false); setRunning(true);
     sessionLog.current = [];
     baselineRef.current = null;
+    setRedeemed(false);
     loadEvidence().then((list) => {
       const g = gainPerMinute((list || []).filter((r) => r && r.at > Date.now() - 30 * 86400000));
       baselineRef.current = g.rate != null && g.n >= MIN_ROWS ? g : null;
@@ -1454,7 +1465,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     chunkCount: (s) => (s && s.sentence ? usableChunks(s.sentence, { known: knownWords }).length : 0),
     // Only claim a particle gap when the generator can actually produce one to grade.
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
-  }), [sentenceOf, knownWords]);
+    canMatch: (id) => canMatchBoard(queue.find((q) => q && q.id === id), cards, confusion),
+  }), [sentenceOf, knownWords, queue, cards, confusion]);
 
   /* The composer decided this when the session was built; recomputing here would risk a
      different answer from the one the arrangement was based on. Cards that never went
@@ -1467,6 +1479,68 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* The drill itself, for the three activities that are assembled rather than answered.
      Null is a normal outcome — the renderer falls back the same way a sentence-less cloze
      does, because an activity that cannot be built must never leave a blank screen. */
+  const grid = useMemo(() => {
+    if (!card || activity !== ACTIVITY.MATCH) return null;
+    return matchBoard(card, cards, confusion, { seed: (card._step || 0) + String(card.id).length });
+  }, [card, activity, cards, confusion]);
+
+  /* A new CARD is a clean board — deliberately not a new board OBJECT. The memo behind it
+     depends on `cards`, so grading anything rebuilt the board, which fired this, which wiped
+     the pairs the learner had just made. The board looked frozen: every correct pair
+     registered and was erased in the same tick. */
+  useEffect(() => {
+    setPicked(null); setPaired(new Set()); setShakeKey(null); gridMiss.current = new Set();
+  }, [card && card.id, activity]);
+
+  /* One tap. A wrong pair does NOT stop anything: the tile shakes, the phone buzzes if it
+     can, the miss is remembered against that card, and the learner carries on and fixes it.
+     Stopping the session to say "no" is the thing that makes a mistake feel like a penalty
+     rather than part of the exercise. */
+  const onTile = useCallback((tile) => {
+    if (!grid) return;
+    const r = tapResult(picked, tile);
+    if (r.action === "select" || r.action === "deselect") { setPicked(r.picked); return; }
+    if (r.action === "pair") {
+      setPicked(null);
+      setPaired((prev) => new Set(prev).add(r.id));
+      if (r.id !== grid.anchorId) gridSolved.current.push(r.id);
+      return;
+    }
+    if (r.action === "miss") {
+      gridMiss.current.add(r.id);
+      setPicked(null);
+      setShakeKey(tile.key);
+      setTimeout(() => setShakeKey(null), 420);
+      try { if (navigator.vibrate) navigator.vibrate(18); } catch (e) {}
+    }
+  }, [grid, picked, cards, onResult]);
+
+  /* The grid is finished when every pair is made. The anchor's own result is whether it
+     was paired without a fumble — the same standard every other card on the grid is held
+     to. Auto-advances rather than asking for a tap: the grid answers itself. */
+  /* The board is finished when every pair is made. Only NOW do the other cards on the board
+     get graded — they were genuinely answered and should move, but grading them as they were
+     solved changed `cards`, rebuilt the board, and erased the progress that had just been
+     made. Banked and flushed in one go instead.
+
+     The anchor goes through grade(), which owns the queue and the session log; the rest go
+     straight to their own memory. Each is judged the same way: paired without a fumble. */
+  useEffect(() => {
+    if (!grid || paired.size < grid.pairs.length) return;
+    const timer = setTimeout(() => {
+      for (const id of gridSolved.current) {
+        const c = cards.find((x) => x.id === id);
+        if (!c) continue;
+        const got = !gridMiss.current.has(id);
+        onResult(c.id, got, undefined, undefined, areaForDeck(c.src || "class"),
+                 { skill: "recognition", failure: got ? null : "meaning" });
+      }
+      gridSolved.current = [];
+      grade(!gridMiss.current.has(grid.anchorId));
+    }, 520);
+    return () => clearTimeout(timer);
+  }, [grid, paired]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const sessionDrill = useMemo(() => {
     if (!card) return null;
     if (![ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity)) return null;
@@ -1480,7 +1554,42 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   }, [card, activity, sentenceOf, knownWords]);
   const whyThis = intervention ? explainPick({ ...card._pick, ...intervention, st: live }) : null;
   const isProd = fmt === "type";
-  const done = running && (pos >= queue.length || !!stopped);
+  /* ── the redemption round ──
+     The queue is finished, but words were missed. Rather than closing on a summary that
+     lists them and a button that offers to start again, the session keeps going: the missed
+     words come back once, at a LOWER cue than the one that beat them, and only then does the
+     summary appear. A miss you repaired thirty seconds later is a different experience from
+     a miss you were told about at the end.
+
+     Appended to the same queue rather than kept in a parallel list. shownRef, the latency
+     timer, the progress bar and grade() all key off queue/pos, so a second queue would need
+     every one of them taught about it — and the first thing to be forgotten would be the
+     timer, which would then quietly record every redemption answer as instant. */
+  const [redeemed, setRedeemed] = useState(false);
+  const redemption = useMemo(() => {
+    if (!running || redeemed || stopped || pos < queue.length || !queue.length) return [];
+    const seen = new Set();
+    return queue.filter((c) => {
+      if (!c || !missRef.current[c.id] || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    }).map((c) => ({
+      ...c,
+      /* Served at a lower cue than the one that beat them: a production ask that failed
+         comes back as recognition. _redeem carries that down to the composer, which is the
+         only place that decides what a card is actually asked to do. */
+      _redeem: true, _activity: null, _step: 0,
+      _pick: c._pick ? { ...c._pick, cue: Math.max(0, (c._pick.cue || 1) - 2) } : c._pick,
+    }));
+  }, [running, redeemed, stopped, pos, queue]);
+
+  useEffect(() => {
+    if (!redemption.length) return;
+    setRedeemed(true);                       // once per session; a second miss is not a loop
+    setQueue((q) => q.concat(redemption));
+  }, [redemption]);
+
+  const done = running && (pos >= queue.length || !!stopped) && !redemption.length;
 
   /* A finished session is the moment the other decks' snapshot is certainly stale.
      This has to live with the other hooks: there are early returns further down, and a
@@ -2234,8 +2343,19 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     );
   }
 
+  /* ── the combo accelerator ──
+     A 0..1 ramp handed to CSS, which raises the foil rim opacity and speeds its sweep.
+     Deliberately a ramp rather than a set of tiers: crossing 3x should feel like the screen
+     warming up, not like a different skin being applied. Below 3 it is exactly zero, so an
+     ordinary session looks exactly as it did — the reward is the CHANGE, and a permanently
+     brighter screen is not a reward, it is just a brighter screen. */
+  const heat = combo < 3 ? 0 : Math.min(1, (combo - 3) / 7);
+
   return (
-    <div className="tc-study">
+    <div className={"tc-study" + (heat > 0 ? " tc-hot" : "")} style={{ "--combo": heat }}>
+      {card && card._redeem && (
+        <p className="tc-offnote tc-redeem">Let us fix the ones you missed.</p>
+      )}
       <div className="tc-progress">
         {/* One segment per beat of the session. Duolingo’s single most load-bearing UI
             element: it turns "this continues" into "this ends, and soon". */}
@@ -2442,6 +2562,51 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 : "from your " + clozeEx.source + " script"}
             </p>
           )}
+        </div>
+      )}
+
+      {/* ── the grid ──
+          One activity covering several cards. The anchor is the card the scheduler chose;
+          the rest of the grid is what this learner mixes it up with. Every pair grades —
+          the anchor through the ordinary path when the grid is finished, the others
+          straight to their own memory, because they were genuinely answered. */}
+      {activity === ACTIVITY.MATCH && grid && (
+        <div className="tc-mcwrap" style={masteryStyle(live || card)}>
+          <span className="tc-kindchip tc-mcchip">
+            {grid.adversarial ? "tell them apart" : "match them up"}
+          </span>
+          <div className="tc-grid">
+            <div className="tc-gridcol">
+              {grid.jp.map((tile) => (
+                <button key={tile.key} type="button"
+                  className={"tc-tile tc-tile-jp"
+                    + (paired.has(tile.id) ? " is-done" : "")
+                    + (picked && picked.key === tile.key ? " is-picked" : "")
+                    + (shakeKey === tile.key ? " is-wrong" : "")}
+                  disabled={paired.has(tile.id)} onClick={() => onTile(tile)}>
+                  <span className="tc-jp">{tile.text}</span>
+                  {tile.sub && tile.sub !== tile.text ? <small>{tile.sub}</small> : null}
+                </button>
+              ))}
+            </div>
+            <div className="tc-gridcol">
+              {grid.en.map((tile) => (
+                <button key={tile.key} type="button"
+                  className={"tc-tile"
+                    + (paired.has(tile.id) ? " is-done" : "")
+                    + (picked && picked.key === tile.key ? " is-picked" : "")
+                    + (shakeKey === tile.key ? " is-wrong" : "")}
+                  disabled={paired.has(tile.id)} onClick={() => onTile(tile)}>
+                  {tile.text}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="tc-mchint">
+            {paired.size >= grid.pairs.length
+              ? "All matched."
+              : `${grid.pairs.length - paired.size} left`}
+          </p>
         </div>
       )}
 
@@ -3710,12 +3875,13 @@ function sentenceForCard(card, clozeIndex) {
    repeats, and places a recovery item — it does not re-rank by difficulty, so the scheduler
    still decides WHAT is in the session and roughly how urgent each item is. What changes is
    the shape, which the scheduler was never expressing an opinion about. */
-function composeQueue(pool, clozeIndex, known) {
+function composeQueue(pool, clozeIndex, known, confusion) {
   const byId = new Map(pool.map((c) => [c.id, c]));
   const material = {
     sentenceFor: (id) => sentenceForCard(byId.get(id), clozeIndex),
     chunkCount: (s) => (s && s.sentence ? usableChunks(s.sentence, { known }).length : 0),
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
+    canMatch: (id) => canMatchBoard(byId.get(id), pool, confusion),
   };
   const items = pool.map((c) => {
     let format = "recall", cue = null;
@@ -6229,7 +6395,7 @@ function Add({ onAdd, count }) {
 /* ───────────────────────────── STYLES ───────────────────────────── */
 /* ─────────────────────────── CONJ DRILL ───────────────────────────
    Negative-form drill: ichidan (①), godan (⑤), irregular verbs,
-   い-adjectives, and nouns/な-adjectives. Rules per sensei's board:
+   い-adjectives, and nouns/な-adjectives. Rules per sensei's grid:
    ① drop る + ない · ⑤ shift to "a" row + ない · Adj: 〜い → くない ·
    Noun/なAdj: + じゃない · Polite: ます→ません OR ない+です      */
 
