@@ -121,6 +121,21 @@ t("empty and junk input are safe", () => {
   eq(arrange([null, undefined]).length, 0);
 });
 
+t("two grids never sit back to back", () => {
+  // A grid answers several cards at once, so two in a row cover a big slice of the session
+  // in one form — and drawn from the same due pool they look like the same board twice.
+  const items = [item(ACTIVITY.MATCH), item(ACTIVITY.MATCH), item(ACTIVITY.MATCH),
+                 item(ACTIVITY.MATCH), item(ACTIVITY.MATCH)];
+  const out = arrange(items);
+  eq(out.length, 5, "no item is dropped");
+  let backToBack = 0;
+  for (let i = 1; i < out.length; i++) {
+    if (out[i].activity === ACTIVITY.MATCH && out[i - 1].activity === ACTIVITY.MATCH) backToBack++;
+  }
+  eq(backToBack, 0, "a grid after a grid should downgrade to multiple choice");
+  ok(out.some((x) => x.activity === ACTIVITY.MATCH), "…but not ALL of them");
+});
+
 console.log("=== composeSession end to end ===");
 t("a realistic session comes back varied, ordered, and complete", () => {
   const picks = [

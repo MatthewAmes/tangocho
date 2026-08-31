@@ -153,7 +153,22 @@ export function arrange(items, opts = {}) {
     middle.splice(at, 0, recovery);
   }
 
-  return [opener, ...middle, ...(finale ? [finale] : [])].filter(Boolean);
+  return spaceOutGrids([opener, ...middle, ...(finale ? [finale] : [])].filter(Boolean));
+}
+
+/* A grid answers several cards at once, so back-to-back grids cover a large slice of the
+   session in one form — and drawn from the same due pool they look like the same board
+   twice. The no-two-alike pass cannot see this, because it compares neighbours and two
+   grids ARE different items; this is about what they contain. A grid that follows a grid
+   becomes ordinary multiple choice, which is the same question with one word in the
+   spotlight instead of four. */
+function spaceOutGrids(list) {
+  let prevWasGrid = false;
+  return list.map((x) => {
+    if (x.activity !== ACTIVITY.MATCH) { prevWasGrid = false; return x; }
+    if (!prevWasGrid) { prevWasGrid = true; return x; }
+    return { ...x, activity: ACTIVITY.MC };
+  });
 }
 
 /* The whole job: decide each activity, then arrange them. */

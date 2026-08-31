@@ -1535,6 +1535,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         onResult(c.id, got, undefined, undefined, areaForDeck(c.src || "class"),
                  { skill: "recognition", failure: got ? null : "meaning" });
       }
+      /* Take the cards this board just answered OUT of the rest of the queue. A grid
+         answers four cards but occupies ONE slot, so the other three stayed queued and each
+         came back as its own card — and since they are all due and all confusable with each
+         other, each built a near-identical board. Five grids in a row with one word swapped.
+         The arrangement's no-two-alike rule could not help: as far as it knew, that was one
+         match item, not five. */
+      const answered = new Set(gridSolved.current);
+      if (answered.size) setQueue((q) => q.filter((c, idx) => idx <= pos || !answered.has(c.id)));
       gridSolved.current = [];
       grade(!gridMiss.current.has(grid.anchorId));
     }, 520);
@@ -1640,7 +1648,28 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       seed,
       restrict: (c) => posOf(c) === myPos,
     });
-    const all = [...picked.map((p) => p.card), card];
+    /* Two DISTRACTORS that render identically is the other half of this bug, and the half
+       that shipped: the pool above only removes glosses that clash with the ANSWER, so
+       "by some chance; maybe" could be offered twice in the same question. One of them is
+       then unpickable, and the question looks broken because it is. Deduped on the SHORT
+       gloss — what the button actually shows — and topped back up, because losing a
+       distractor to the dedupe would leave a three-option question. */
+    const seenGloss = new Set([myGloss]);
+    const uniq = [];
+    for (const p of picked) {
+      const g = shortGloss(p.card.meaning);
+      if (!g || seenGloss.has(g)) continue;
+      seenGloss.add(g);
+      uniq.push(p.card);
+    }
+    for (const c of pool) {
+      if (uniq.length >= 3) break;
+      const g = shortGloss(c.meaning);
+      if (!g || seenGloss.has(g)) continue;
+      seenGloss.add(g);
+      uniq.push(c);
+    }
+    const all = [...uniq, card];
     // Deterministic shuffle: the answer must not always land in the same slot.
     return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
   }, [card, fmt, cards, confusion]);
