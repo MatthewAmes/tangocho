@@ -1314,7 +1314,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       .map((c) => ({ c, k: masteryScore(c) + Math.random() * 0.3 }))  // weakest (lowest) first; small stable jitter
       .sort((a, b) => a.k - b.k)
       .map((x) => x.c));
-    setQueue(ordered);
+    /* Only Smart Review is composed. A section drill or a Trouble-words run is a list the
+       learner asked for by name, and reordering it would be answering a question nobody
+       asked; those cards also carry no _pick, so there is nothing to compose from. */
+    const composable = ordered.some((c) => c && c._pick);
+    setQueue(composable ? composeQueue(ordered, clozeIndex, ordered.map((c) => c.term)) : ordered);
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
@@ -1452,8 +1456,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
   }), [sentenceOf, knownWords]);
 
+  /* The composer decided this when the session was built; recomputing here would risk a
+     different answer from the one the arrangement was based on. Cards that never went
+     through it — a section drill, a mid-session requeue — still get one on the spot. */
   const activity = useMemo(
-    () => (card ? activityFor({ id: card.id, format: fmt, cue: cueLevel }, material) : fmt),
+    () => (card ? (card._activity || activityFor({ id: card.id, format: fmt, cue: cueLevel }, material)) : fmt),
     [card, fmt, cueLevel, material],
   );
 
@@ -1493,7 +1500,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     [card, fmt, clozeIndex, contextTick],
   );
   const choices = useMemo(() => {
-    if (!card || (fmt !== "mc" && fmt !== "listen")) return [];
+    // Keyed on activity, not format: the gate above renders this block for a
+    // composer-chosen MC too, and keying the DATA off format left it with no options —
+    // a header saying "Pick the meaning" above nothing, and a session that could not advance.
+    if (!card || (activity !== ACTIVITY.MC && activity !== ACTIVITY.LISTEN)) return [];
     /* A card whose gloss IS the answer's gloss makes a question with two right options —
        and it has to be the SHORT gloss, because that is what the buttons render while the
        question is live. "work; job" and "work; job (polite)" are different meanings and
@@ -2471,10 +2481,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         || (activity === ACTIVITY.CLOZE && !clozeEx)
         || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !sessionDrill)) && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
-          <span className={"tc-kindchip " + (fmt === "listen" ? "tc-listenchip" : "tc-mcchip")}>
-            {fmt === "listen" ? "listen" : "which one?"}
+          <span className={"tc-kindchip " + (activity === ACTIVITY.LISTEN ? "tc-listenchip" : "tc-mcchip")}>
+            {activity === ACTIVITY.LISTEN ? "listen" : "which one?"}
           </span>
-          {fmt === "listen" ? (
+          {activity === ACTIVITY.LISTEN ? (
             <div className="tc-listenprompt">
               <SpeakBtn text={card.reading || card.term} />
               <p className="tc-learnnote">Tap to hear it again</p>
@@ -2514,7 +2524,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               );
             })}
           </div>
-          {verdict && fmt === "listen" && (
+          {verdict && activity === ACTIVITY.LISTEN && (
             <div className="tc-listenreveal">
               {card.term} · {card.reading}
             </div>
@@ -2639,13 +2649,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         {fmt === "learn" ? (
           <button type="button" className="tc-btn tc-btn-wide tc-btn-got"
                   onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it — next →</button>
-        ) : verdict && (fmt === "mc" || fmt === "listen") ? (
+        ) : verdict && (activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN) ? (
           <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
                   onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
             {verdict.ok ? "Next →" : "Noted — next →"}
           </button>
-        ) : (fmt === "mc" || fmt === "listen") ? (
-          <p className="tc-mchint">{fmt === "listen" ? "What did you hear?" : "Pick the meaning"}</p>
+        ) : (activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN) ? (
+          <p className="tc-mchint">{activity === ACTIVITY.LISTEN ? "What did you hear?" : "Pick the meaning"}</p>
         ) : !flipped ? (
           <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); flip(); }}>Reveal answer</button>
         ) : verdict ? (
@@ -3676,6 +3686,47 @@ function clozeFromSentence(card, entry) {
     blank, sentence: s.slice(0, at) + blank + s.slice(at + card.term.length),
     en: entry.en || "", source: "generated",
   };
+}
+
+/* The sentence a card can be practised in, textbook first. Real material the learner has
+   actually met beats a generated one; a generated one beats nothing, which is what 84% of
+   the deck had. */
+function sentenceForCard(card, clozeIndex) {
+  if (!card || !card.term) return null;
+  const cz = clozeFor(clozeIndex, card);
+  if (cz) return { sentence: cz.before + card.term + cz.after, en: cz.en || "" };
+  const gen = contextFor(card.id);
+  return gen && gen.sentence ? { sentence: gen.sentence, en: gen.en || "" } : null;
+}
+
+/* What each card can be asked to do, decided ONCE for the whole session and stored on the
+   card. Deciding it here rather than at render is what lets the session be arranged at all:
+   an arc is a property of the sequence, so the sequence has to know what its members are
+   before it can shape itself. It also removes a class of bug — an activity computed twice
+   from slightly different inputs is an activity that can disagree with its own arrangement.
+
+   The trade-off, stated because it is real: the scheduler orders by learning value, weakest
+   first, and this reorders that. It moves the opener and the finale, breaks adjacent
+   repeats, and places a recovery item — it does not re-rank by difficulty, so the scheduler
+   still decides WHAT is in the session and roughly how urgent each item is. What changes is
+   the shape, which the scheduler was never expressing an opinion about. */
+function composeQueue(pool, clozeIndex, known) {
+  const byId = new Map(pool.map((c) => [c.id, c]));
+  const material = {
+    sentenceFor: (id) => sentenceForCard(byId.get(id), clozeIndex),
+    chunkCount: (s) => (s && s.sentence ? usableChunks(s.sentence, { known }).length : 0),
+    hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
+  };
+  const items = pool.map((c) => {
+    let format = "recall", cue = null;
+    try {
+      const iv = c._pick ? interventionFor({ ...c._pick, st: c }) : null;
+      if (iv) { format = iv.format; cue = iv.cue; }
+    } catch (e) { /* an un-composable card is still a card; it keeps the default */ }
+    return { id: c.id, _card: c, format, cue, wasMissed: !!(c._rescue || c._recovery) };
+  });
+  const withActivity = items.map((x) => ({ ...x, activity: activityFor(x, material) }));
+  return arrange(withActivity).map((x) => ({ ...x._card, _activity: x.activity }));
 }
 
 const EVIDENCE_KEY = "jpn101:evidence";
