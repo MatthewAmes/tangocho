@@ -21,7 +21,7 @@ import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./to
 import { inContext, splitAround, contextCoverage } from "./tools/kanjicontext.mjs";
 import { drillSet, gradeDrill, orderDrill, buildDrill, fillDrill, usableChunks } from "./tools/production.mjs";
 import { ACTIVITY, activityFor, arrange, describeComposition } from "./tools/compose.mjs";
-import { matchBoard, canMatch as canMatchBoard, tapResult } from "./tools/matchgrid.mjs";
+import { matchBoard, canMatch as canMatchBoard, tapResult, GRID } from "./tools/matchgrid.mjs";
 import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
@@ -1481,8 +1481,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      does, because an activity that cannot be built must never leave a blank screen. */
   const grid = useMemo(() => {
     if (!card || activity !== ACTIVITY.MATCH) return null;
-    return matchBoard(card, cards, confusion, { seed: (card._step || 0) + String(card.id).length });
-  }, [card, activity, cards, confusion]);
+    /* The pool is THIS SESSION, not the whole deck. Handing it 1,647 cards meant the board
+       was built from words the learner is not currently studying — and, walking them in
+       order, the same four introductory words every time. The session is what is due, what
+       is cooling, and what is being learned right now, which is exactly what belongs on a
+       board. Falls back to the deck only if the session is too small to fill one. */
+    const inSession = queue.filter((c) => c && c.id !== card.id);
+    const pool = inSession.length >= GRID.MIN_PAIRS ? inSession : cards;
+    return matchBoard(card, pool, confusion, { seed: (card._step || 0) + String(card.id).length });
+  }, [card, activity, cards, confusion, queue]);
 
   /* A new CARD is a clean board — deliberately not a new board OBJECT. The memo behind it
      depends on `cards`, so grading anything rebuilt the board, which fired this, which wiped
@@ -1616,11 +1623,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       : null),
     [card, fmt, clozeIndex, contextTick],
   );
+  /* Multiple choice is also where three other activities LAND when their material is
+     missing: a cloze with no sentence, and a word bank or particle tap whose drill could not
+     be built. Those fallbacks are deliberate — the alternative is a blank card — but the
+     choices themselves were only computed for a real MC, so the fallback rendered the
+     "which one?" badge above nothing at all and the session could not advance.
+
+     One boolean now decides both whether the block renders and whether it has anything to
+     render. Two conditions that must agree, written twice, is what produced the mismatch. */
+  const showsChoices = !!card && (
+    activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN
+    || (activity === ACTIVITY.CLOZE && !clozeEx)
+    || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !sessionDrill)
+  );
+
   const choices = useMemo(() => {
-    // Keyed on activity, not format: the gate above renders this block for a
-    // composer-chosen MC too, and keying the DATA off format left it with no options —
-    // a header saying "Pick the meaning" above nothing, and a session that could not advance.
-    if (!card || (activity !== ACTIVITY.MC && activity !== ACTIVITY.LISTEN)) return [];
+    if (!showsChoices) return [];
     /* A card whose gloss IS the answer's gloss makes a question with two right options —
        and it has to be the SHORT gloss, because that is what the buttons render while the
        question is live. "work; job" and "work; job (polite)" are different meanings and
@@ -1672,7 +1690,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const all = [...uniq, card];
     // Deterministic shuffle: the answer must not always land in the same slot.
     return all.map((c, i) => ({ c, k: (seed + i * 31) % all.length })).sort((a, b) => a.k - b.k).map((x) => x.c);
-  }, [card, fmt, cards, confusion]);
+  }, [card, fmt, cards, confusion, showsChoices]);
 
   const answerChoice = useCallback((choice) => {
     if (verdict) return;
@@ -2380,6 +2398,24 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      brighter screen is not a reward, it is just a brighter screen. */
   const heat = combo < 3 ? 0 : Math.min(1, (combo - 3) / 7);
 
+  /* ── the one render with nothing to show ──
+     The queue can be momentarily exhausted while the session is NOT over: the redemption
+     round appends the missed cards, and an effect runs after the render that scheduled it.
+     So there is always one frame where pos is past the end, done is false, and card is
+     undefined — and everything below reads card.* freely. It read card.kind, threw, and
+     React unmounted the tree: a black screen at the exact moment the session ended.
+
+     A card is a precondition for this render, so it is checked like one. The placeholder is
+     for a single frame; the alternative is scattering `card &&` through eighty lines of JSX
+     and hoping none is ever missed. */
+  if (!card) {
+    return (
+      <div className="tc-study">
+        <p className="tc-offnote">One moment…</p>
+      </div>
+    );
+  }
+
   return (
     <div className={"tc-study" + (heat > 0 ? " tc-hot" : "")} style={{ "--combo": heat }}>
       {card && card._redeem && (
@@ -2671,9 +2707,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           sentence, and "impossible" is not a good enough reason to leave a blank screen as
           the failure mode. Falls through to multiple choice, which every word can do.
           An assembled activity whose drill could not be built lands here too. */}
-      {((activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN)
-        || (activity === ACTIVITY.CLOZE && !clozeEx)
-        || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !sessionDrill)) && (
+      {showsChoices && choices.length > 0 && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className={"tc-kindchip " + (activity === ACTIVITY.LISTEN ? "tc-listenchip" : "tc-mcchip")}>
             {activity === ACTIVITY.LISTEN ? "listen" : "which one?"}
@@ -2839,17 +2873,34 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       </div>
       )}
 
+      {/* ── the control deck ──
+          Driven by the ACTIVITY, explicitly, one branch each. It used to be a fall-through
+          chain ending in "if not flipped, offer Reveal answer" — and since only learn, mc
+          and listen were named above it, every other activity fell into that default. A
+          matching grid, a word bank and a cloze all rendered a Reveal answer button under
+          them, sometimes alongside their own controls. Three buttons, two of which did
+          nothing sensible.
+
+          The rule now: an activity that can be answered by tapping its own content shows no
+          bottom control until it has been answered. Reveal / Missed / Got it belong to the
+          flip card alone, because it is the only format where the learner grades themselves. */}
       <div className="tc-grade">
-        {fmt === "learn" ? (
+        {activity === ACTIVITY.MATCH ? (
+          // The grid answers itself and auto-advances; a button here would be a second way
+          // to leave, competing with the one the learner is already using.
+          null
+        ) : activity === ACTIVITY.LEARN ? (
           <button type="button" className="tc-btn tc-btn-wide tc-btn-got"
                   onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it — next →</button>
-        ) : verdict && (activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN) ? (
-          <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
-                  onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
-            {verdict.ok ? "Next →" : "Noted — next →"}
-          </button>
-        ) : (activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN) ? (
-          <p className="tc-mchint">{activity === ACTIVITY.LISTEN ? "What did you hear?" : "Pick the meaning"}</p>
+        ) : ANSWERED_BY_TAPPING.includes(activity) ? (
+          verdict ? (
+            <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
+                    onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
+              {verdict.ok ? "Next →" : "Noted — next →"}
+            </button>
+          ) : (
+            <p className="tc-mchint">{PROMPT_FOR[activity] || "Pick the answer"}</p>
+          )
         ) : !flipped ? (
           <button type="button" className="tc-btn tc-btn-wide" onClick={(e) => { e.stopPropagation(); flip(); }}>Reveal answer</button>
         ) : verdict ? (
@@ -3206,6 +3257,15 @@ function ProductionBlock({ drills, onDone }) {
     </div>
   );
 }
+
+/* Activities the learner answers by tapping the content itself — options, tiles, a word
+   bank. None of them wants a bottom control until it has been answered, because the answer
+   is already on screen and a second control is just a way to get it wrong. */
+const ANSWERED_BY_TAPPING = ["mc", "listen", "cloze", "tapfill", "build", "order"];
+const PROMPT_FOR = {
+  mc: "Pick the meaning", listen: "What did you hear?", cloze: "Which word belongs?",
+  tapfill: "Which particle?", build: "Build the sentence", order: "Put it in order",
+};
 
 /* Exercise formats, in learner words rather than internal ones. */
 const FORMAT_LABEL = {
@@ -3910,7 +3970,8 @@ function composeQueue(pool, clozeIndex, known, confusion) {
     sentenceFor: (id) => sentenceForCard(byId.get(id), clozeIndex),
     chunkCount: (s) => (s && s.sentence ? usableChunks(s.sentence, { known }).length : 0),
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
-    canMatch: (id) => canMatchBoard(byId.get(id), pool, confusion),
+    // Same pool the board will use, or the gate promises a grid the builder cannot make.
+    canMatch: (id) => canMatchBoard(byId.get(id), pool.filter((c) => c && c.id !== id), confusion),
   };
   const items = pool.map((c) => {
     let format = "recall", cue = null;
@@ -8818,4 +8879,47 @@ function fmtIn(ms) {
 
 /* ── mount ── */
 import ReactDOM from "react-dom/client";
-ReactDOM.createRoot(document.getElementById("root")).render(<JpnFlashcards />);
+/* ── the last line of defence ──
+   A render error anywhere unmounts the whole tree, and an unmounted tree is a black screen.
+   That happened for real: one frame at the end of a session had no card to show, something
+   read card.kind, and the app vanished mid-study with no way back except a reload the
+   learner had no reason to think would help.
+
+   The specific bug is fixed. This is here because the NEXT one should cost a message and a
+   button rather than the session — and because the error should be visible rather than
+   requiring a console to find. Deliberately not styled with the glass tokens: if the
+   stylesheet is what broke, this still has to render. */
+class Boundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) {
+    try { console.error("tangocho crashed:", err && err.message, info && info.componentStack); } catch (e) {}
+  }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", color: "#e5e2e1",
+                    background: "#141313", minHeight: "100vh" }}>
+        <h1 style={{ fontSize: 20, margin: "0 0 8px" }}>Something broke.</h1>
+        <p style={{ color: "#c4c7c7", margin: "0 0 16px", maxWidth: 460, lineHeight: 1.5 }}>
+          Your progress is saved — this is a display problem, not a lost session. Reloading
+          should put you back where you were.
+        </p>
+        <button onClick={() => window.location.reload()}
+                style={{ appearance: "none", border: "1px solid #3b82f6", background: "#201f1f",
+                         color: "#e5e2e1", borderRadius: 8, padding: "10px 18px", fontSize: 15,
+                         cursor: "pointer" }}>
+          Reload
+        </button>
+        <pre style={{ marginTop: 20, color: "#8e9192", fontSize: 12, whiteSpace: "pre-wrap",
+                      wordBreak: "break-word" }}>
+          {String((this.state.err && this.state.err.message) || this.state.err)}
+        </pre>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <Boundary><JpnFlashcards /></Boundary>
+);

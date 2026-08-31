@@ -1446,4 +1446,13 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 /* The redemption round announces itself once, at the top, and then gets out of the way. */
 .tc-redeem{border-color:var(--info);color:var(--washi);font-weight:600;}
+
+/* ── layout stability ──
+   Card types have wildly different natural heights: a learn card is a word and a meaning, a
+   matching grid is eight tiles. Letting each size itself made the page jump every time the
+   activity changed, which moves the buttons out from under a finger already on its way down.
+   A floor plus space-between holds the controls in one place whatever is above them. */
+.tc-mcwrap,.tc-clozewrap,.tc-prod{
+  min-height:340px;display:flex;flex-direction:column;justify-content:space-between;}
+.tc-grade{min-height:var(--tap);display:flex;gap:10px;align-items:center;justify-content:center;}
 `;

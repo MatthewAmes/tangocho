@@ -33,6 +33,36 @@ function shuffled(list, seed = 0) {
 
 const shortMeaning = (m) => String(m || "").split(/[;(（,]/)[0].trim();
 
+/* The term as it should APPEAR on a tile. Deck entries carry grammar annotations in the
+   term itself — やる（-U; やった） — which is useful on a flashcard and noise on a tile the
+   learner is asked to pair. */
+const tileTerm = (t) => String(t || "").split(/[（(]/)[0].trim() || String(t || "");
+
+/* Particles and bare grammatical markers. A matching board asks "which meaning belongs to
+   which word", and that question does not have an answer for か or こと — their glosses are
+   either a transliteration or a grammar note, so the board becomes unanswerable in a way
+   that looks like a bug rather than a hard question. This was live: a board offered
+   か against "acceptable" and こと against "koto". */
+const FUNCTION_WORDS = new Set([
+  "は", "が", "を", "に", "で", "へ", "と", "も", "の", "や", "か", "ね", "よ", "な", "ぞ", "ぜ",
+  "から", "まで", "より", "ので", "のに", "けど", "けれど", "こと", "もの", "ため", "まま", "ほう",
+  "など", "だけ", "しか", "でも", "ても", "たり", "ながら", "そう", "よう", "らしい", "みたい",
+]);
+
+/* Is this card worth putting on a board at all? */
+function boardWorthy(c) {
+  if (!c || !c.term) return false;
+  const term = tileTerm(c.term);
+  const meaning = shortMeaning(c.meaning);
+  if (!meaning) return false;
+  if (FUNCTION_WORDS.has(term)) return false;
+  // A "meaning" that is just the word's own romaji teaches nothing and pairs on sound.
+  const romaji = String(c.romaji || "").toLowerCase().replace(/[^a-z]/g, "");
+  const asAscii = meaning.toLowerCase().replace(/[^a-z]/g, "");
+  if (romaji && asAscii && romaji === asAscii) return false;
+  return true;
+}
+
 /** Can a worthwhile board be built around this card? Cheap enough to call from a gate. */
 export function canMatch(anchor, pool, confusion, opts = {}) {
   const o = { ...GRID, ...opts };
@@ -43,9 +73,9 @@ export function canMatch(anchor, pool, confusion, opts = {}) {
    asserting directly rather than only through the shuffled board. */
 export function pickPairs(anchor, pool, confusion, opts = {}) {
   const o = { ...GRID, ...opts };
-  if (!anchor || !anchor.term || !shortMeaning(anchor.meaning)) return [];
+  if (!boardWorthy(anchor)) return [];
   const byId = new Map((pool || []).filter((c) => c && c.id).map((c) => [c.id, c]));
-  const usable = (c) => c && c.term && shortMeaning(c.meaning) && c.id !== anchor.id;
+  const usable = (c) => boardWorthy(c) && c.id !== anchor.id;
 
   const out = [anchor];
   const takenMeanings = new Set([shortMeaning(anchor.meaning).toLowerCase()]);
@@ -72,9 +102,14 @@ export function pickPairs(anchor, pool, confusion, opts = {}) {
       if (Array.isArray(list) && list.includes(anchor.id)) add(byId.get(id));
     }
   }
-  // 3. fill from the pool, preferring the same writing system so the board cannot be
-  //    solved by shape alone — 猫 among three kana words needs no Japanese at all
-  const rest = (pool || []).filter(usable);
+  /* 3. Fill from the pool — SHUFFLED, and preferring the same writing system so the board
+        cannot be solved by shape alone (猫 among three kana words needs no Japanese at all).
+
+        The shuffle is the fix for the reported bug. This walked the pool in order, and the
+        pool it was handed was the whole deck, so filler was always the first few usable
+        cards in it: いただきます, ごちそうさま, おはよう, every single board, whatever the
+        anchor was. Seeded so a re-render still cannot move the tiles. */
+  const rest = shuffled((pool || []).filter(usable), (o.seed || 1) * 31 + 7);
   for (const c of rest.filter((c) => c.kind === anchor.kind)) {
     if (out.length >= o.MAX_PAIRS) break;
     add(c);
@@ -93,11 +128,11 @@ export function matchBoard(anchor, pool, confusion, opts = {}) {
   if (pairs.length < o.MIN_PAIRS) return null;
 
   const seed = o.seed || 1;
-  const jp = pairs.map((c) => ({ key: "jp:" + c.id, side: "jp", id: c.id, text: c.term, sub: c.reading || "" }));
+  const jp = pairs.map((c) => ({ key: "jp:" + c.id, side: "jp", id: c.id, text: tileTerm(c.term), sub: c.reading || "" }));
   const en = pairs.map((c) => ({ key: "en:" + c.id, side: "en", id: c.id, text: shortMeaning(c.meaning) }));
   return {
     anchorId: anchor.id,
-    pairs: pairs.map((c) => ({ id: c.id, term: c.term, meaning: shortMeaning(c.meaning) })),
+    pairs: pairs.map((c) => ({ id: c.id, term: tileTerm(c.term), meaning: shortMeaning(c.meaning) })),
     // Two independently shuffled columns: shuffling them together would sometimes stack a
     // word directly above its own meaning, which is a free pair.
     jp: shuffled(jp, seed),

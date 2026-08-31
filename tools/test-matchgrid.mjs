@@ -40,6 +40,21 @@ t("filler prefers the same writing system", () => {
   eq(pairs.some((c) => c.id === "e"), false, "kana filler should not beat kanji filler");
 });
 
+t("different anchors do NOT produce the same filler", () => {
+  // The reported bug: filler was taken in POOL ORDER, and the pool was the whole deck, so
+  // every board showed the same first few words whatever the anchor was.
+  const big = Array.from({ length: 40 }, (_, i) => card("p" + i, "語" + i, "meaning " + i));
+  const boards = big.slice(0, 6).map((a2, i) => pickPairs(a2, big, new Map(), { seed: i + 1 }));
+  const fillerSets = boards.map((b2) => b2.slice(1).map((c) => c.id).sort().join(","));
+  ok(new Set(fillerSets).size > 1, "every board drew identical filler: " + fillerSets[0]);
+});
+t("the same anchor and seed still give the same board", () => {
+  const big = Array.from({ length: 40 }, (_, i) => card("p" + i, "語" + i, "meaning " + i));
+  const one = pickPairs(big[0], big, new Map(), { seed: 5 }).map((c) => c.id).join(",");
+  const two = pickPairs(big[0], big, new Map(), { seed: 5 }).map((c) => c.id).join(",");
+  eq(one, two, "a re-render must not reshuffle the tiles");
+});
+
 console.log("=== a board must be answerable ===");
 t("two tiles never carry the same meaning", () => {
   const dup = [A, card("z", "みる", "to see", "hiragana")];
@@ -65,6 +80,25 @@ t("junk input is safe", () => {
   eq(matchBoard(null, pool, conf), null);
   eq(matchBoard(A, null, null), null);
   eq(pickPairs(A, undefined, undefined).length, 1);
+});
+
+t("function words never reach a board", () => {
+  // Live: a board offered か against "acceptable" and こと against "koto". A matching board
+  // asks which meaning belongs to which word, and particles do not have one.
+  const fns = [card("k1","か","question particle","hiragana"), card("k2","こと","koto","hiragana"),
+               card("k3","まま","as is","hiragana"), card("k4","は","topic marker","hiragana")];
+  const pairs = pickPairs(A, fns.concat(pool), new Map());
+  eq(pairs.some((c) => ["k1","k2","k3","k4"].includes(c.id)), false, "got " + pairs.map(c=>c.term).join(","));
+});
+t("a card whose meaning is just its own romaji is not usable", () => {
+  const romajiOnly = { id: "r1", term: "こと", meaning: "koto", romaji: "koto", kind: "hiragana" };
+  eq(pickPairs(romajiOnly, pool, new Map()).length, 0, "it cannot even be the anchor");
+});
+t("grammar annotations are stripped from the tile, not shown on it", () => {
+  const v = card("v1", "やる（-U; やった）", "to give", "hiragana");
+  const b2 = matchBoard(v, pool.concat([v]), new Map(), { seed: 2 });
+  const tile = b2.jp.find((x) => x.id === "v1");
+  eq(tile.text, "やる", "the tile should read やる, got " + tile.text);
 });
 
 console.log("=== the two columns ===");
