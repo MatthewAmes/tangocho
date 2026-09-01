@@ -4648,18 +4648,18 @@ function withFrontier(items, stats, key = (x) => x.srcId) {
 
 async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
   const out = [];
-  /* Kana IS pooled now. It used to be held back on the reasoning that hiragana is memorised
-     and a kana slot spends one a word needed — but that decided in advance that kana can
-     never be the most valuable thing to practise, which is exactly the judgement the memory
-     model is there to make. If kana has genuinely rotted it should come up; if it has not,
-     its need score is low and it will not. The frontier keeps the 100-odd unmet characters
-     from arriving all at once. */
-  try {
-    const raw = await sGet(KANA_KEY);
-    const stats = raw ? JSON.parse(raw) : {};
-    const items = withFrontier(kanaAll().map((k) => foreignCard("kana", k)), stats);
-    out.push({ deck: "kana", items, stats: remapStats(stats, "kana") });
-  } catch (e) {}
+  /* Kana is NOT pooled. It was, briefly, on the reasoning that holding it back decides in
+     advance that kana can never be the most valuable thing to practise — which is normally
+     the memory model's judgement to make, not the code's.
+
+     It is not a judgement call here. Matthew knows both syllabaries; the model does not,
+     because it has almost no evidence either way, so it scored 250-odd characters as unmet
+     and filled Smart Review with ケ against ke/ka/ki/ku. That is the model being ignorant
+     rather than the learner being weak, and no amount of need-sorting fixes it.
+
+     Kana still has its own tab, still keeps its own stats, and still counts toward Volume 1
+     in the progress bars. What it no longer does is spend slots in the one button that is
+     supposed to be the highest-value thing to press. */
   /* Conjugation and dates were entirely outside the model: both record the same stats in
      the same shape on the same schedule, and neither has ever been able to surface in the
      one button that gets pressed. A verb form you keep failing is a Volume 2 scene you will
