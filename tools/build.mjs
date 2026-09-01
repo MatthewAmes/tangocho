@@ -151,7 +151,21 @@ if (!/<div id="root"><\/div>\s*<script>$/.test(head)) {
   process.exit(1);
 }
 
-const out = head + code + tail;
+/* The document language is the UI's language, and this UI is English. It shipped as
+   lang="ja" — presumably because the app teaches Japanese — which tells a screen reader to
+   pronounce "Reveal answer" with a Japanese voice, invites Chrome to offer to translate the
+   English interface, and applies CJK line-breaking to English text. The Japanese content is
+   marked lang="ja" element by element in the app instead, which is where it belongs.
+
+   Rewritten here rather than edited into index.html by hand: index.html is a build output,
+   and an attribute that has to be corrected manually after every regeneration is one that
+   will eventually be regenerated wrong. */
+const LANG_RE = /(<html\b[^>]*\blang=)"[^"]*"/i;
+if (!LANG_RE.test(head)) {
+  console.error("BUILD ABORTED — no <html lang=\"…\"> to set in index.html.");
+  process.exit(1);
+}
+const out = head.replace(LANG_RE, '$1"en"') + code + tail;
 fs.writeFileSync(HTML, out, "utf8");
 
 // Cloudflare Worker serves its static assets from cf/public, so mirror the same single

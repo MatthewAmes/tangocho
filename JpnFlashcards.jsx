@@ -2646,7 +2646,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           )}
           {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
           <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
-          <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
+          <div lang="ja" className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
           <div className="tc-romaji">{card.romaji}</div>
           <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
           <p className="tc-learnnote">Look it over, then tap anywhere — you'll be asked in a moment.</p>
@@ -2715,7 +2715,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     + (picked && picked.key === tile.key ? " is-picked" : "")
                     + (shakeKey === tile.key ? " is-wrong" : "")}
                   disabled={paired.has(tile.id)} onClick={() => onTile(tile)}>
-                  <span className="tc-jp">{tile.text}</span>
+                  <span lang="ja" className="tc-jp">{tile.text}</span>
                   {tile.sub && tile.sub !== tile.text ? <small>{tile.sub}</small> : null}
                 </button>
               ))}
@@ -2854,6 +2854,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     the answer mid-word. */}
                 <div className="tc-spellbox" onClick={(e) => e.stopPropagation()}>
                   <input
+                    aria-label="Type the reading in rōmaji"
                     className="tc-spellinput" type="text" value={typed} autoFocus
                     autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false"
                     placeholder="type the reading in rōmaji"
@@ -2890,8 +2891,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                   </div>
                 )}
                                 {cueLevel != null && cueLevel >= CUE.PARTIAL && card.reading !== card.term
-                  ? <div className="tc-reading-front tc-reading-masked">{cueHint(card.reading, cueLevel)} <SpeakBtn text={card.reading || card.term} /></div>
-                  : <div className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>}
+                  ? <div lang="ja" className="tc-reading-front tc-reading-masked">{cueHint(card.reading, cueLevel)} <SpeakBtn text={card.reading || card.term} /></div>
+                  : <div lang="ja" className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>}
                 {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
                 <span className="tc-flipcue">tap to flip</span>
               </>
@@ -2908,13 +2909,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     {verdict.ok ? "✓ spelled it" : <>✗ you wrote <b>{verdict.got}</b></>}
                   </div>
                 )}
-                <div className="tc-term tc-prodanswer">{card.term}</div>
+                <div lang="ja" className="tc-term tc-prodanswer">{card.term}</div>
               </>
             ) : (
               card.emoji && <div className="tc-emoji">{card.emoji}</div>
             )}
             {!isProd && <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>}
-            {isProd && <div className="tc-reading-front">{card.reading}</div>}
+            {isProd && <div lang="ja" className="tc-reading-front">{card.reading}</div>}
             <div className="tc-romaji">{showPitch && card.pitch ? card.pitch : card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
             {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen || 0}× · {card.seen ? Math.round(((card.correct || 0) / card.seen) * 100) : 0}%</span>}
             {isLeech(card) && (
@@ -2925,7 +2926,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                  shift — which is what a leech is. Typed once, shown on every review. */
               <div className="tc-mnbox" onClick={(e) => e.stopPropagation()}>
                 <span className="tc-leechtag">🩹 stuck — give it a hook</span>
-                <input className="tc-mnin" value={card.mn || ""} placeholder="sounds like… / picture…"
+                <input aria-label="Memory hook for this word" className="tc-mnin" value={card.mn || ""} placeholder="sounds like… / picture…"
                   onChange={(e) => onMnemonic(card.id, e.target.value)} />
               </div>
             )}
@@ -3094,6 +3095,7 @@ function Checkpoint({ cards = [], heldOut }) {
         <div className="tc-checkq">{glossOf(q)}</div>
         <input
           ref={inputRef}
+          aria-label="Your answer"
           className="tc-checkin"
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
@@ -3468,7 +3470,7 @@ function Plan({ cards = [] }) {
               <button className="tc-goalcheck" aria-pressed={g.done} title="Mark done"
                 onClick={() => setGoal(g.id, { done: !g.done })}>{g.done ? "✓" : ""}</button>
               <span className="tc-goaltext">{g.text}</span>
-              <select className="tc-goalarea" value={g.area} onChange={(e) => setGoal(g.id, { area: e.target.value })}>
+              <select aria-label="Skill area for this goal" className="tc-goalarea" value={g.area} onChange={(e) => setGoal(g.id, { area: e.target.value })}>
                 {AREAS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
               </select>
               <button className="tc-goaldrop" onClick={() => dropGoal(g.id)} title="Remove">×</button>
@@ -3477,7 +3479,7 @@ function Plan({ cards = [] }) {
         </div>
         {plan.goals.length < 5 && (
           <div className="tc-goaladd">
-            <input value={draft} placeholder="e.g. Watch an episode without subtitles"
+            <input aria-label="New goal" value={draft} placeholder="e.g. Watch an episode without subtitles"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") addGoal(); }} />
             <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={addGoal}>Add</button>
@@ -3567,7 +3569,7 @@ function Plan({ cards = [] }) {
           point at on the Study tab. Set it yourself if one card you tried out of curiosity
           has pulled it ahead of where you really are.
         </p>
-        <select className="tc-goalarea tc-actsel" value={plan.actOverride === null ? "auto" : String(plan.actOverride)}
+        <select aria-label="Which act you are working on" className="tc-goalarea tc-actsel" value={plan.actOverride === null ? "auto" : String(plan.actOverride)}
           onChange={(e) => update({ actOverride: e.target.value === "auto" ? null : Number(e.target.value) })}>
           <option value="auto">Work it out for me{derivedAct === null ? " — nothing studied yet" : ` — Act ${derivedAct}`}</option>
           {ACT_CHOICES.map((a) => <option key={a} value={String(a)}>Act {a} · Volume {volumeOfAct(a)}</option>)}
@@ -4581,8 +4583,16 @@ function foreignCard(src, raw) {
      has to carry BOTH or the question is unanswerable — "食べる" alone does not say which
      of eleven forms is wanted — so the form's label rides in the meaning. */
   if (src === "conj") {
-    return { id: "conj:" + raw.id, src, srcId: raw.id, term: raw.w.dict,
-             reading: raw.answer, romaji: "", meaning: `${raw.w.meaning} — ${raw.f.ask}`,
+    /* The CONJUGATED FORM is the item, not the dictionary word.
+       This first shipped as term: 食べる with reading: たべない — the dictionary form
+       labelled with the negative's reading, which is not a pronunciation of 食べる at all.
+       The card renderer means something specific by these fields: `term` is the word and
+       `reading` is how that word sounds. A conjugation only fits if the conjugated form
+       itself is the word, which it is — たべない is the thing being learned, and what it
+       means (eat, plain negative) is the answer. */
+    return { id: "conj:" + raw.id, src, srcId: raw.id, term: raw.answer,
+             reading: raw.answer, romaji: "",
+             meaning: `${raw.w.meaning} — ${raw.f.ask} of ${raw.w.dict}`,
              kind: "conj", emoji: "🔀" };
   }
   /* Dates and counters. The question is the kanji, the answer is how it is read, which is
@@ -4945,7 +4955,7 @@ function Furigana({ tokens }) {
   return tokens.map((tk, i) => {
     if (!tk || tk.t == null) return null;
     if (tk.t === "___" || tk.t === "＿＿＿") return <span key={i} className="tc-blank">＿＿＿</span>;
-    if (tk.r) return <ruby key={i}>{tk.t}<rt>{tk.r}</rt></ruby>;
+    if (tk.r) return <ruby lang="ja" key={i}>{tk.t}<rt>{tk.r}</rt></ruby>;
     return <span key={i}>{tk.t}</span>;
   });
 }
@@ -5073,7 +5083,7 @@ function Sentences({ cards, onResult }) {
           <p className="tc-sentjp"><Furigana tokens={ex.tokens || ex.sentence} /></p>
           {!checked ? (
             <>
-              <input className="tc-sentinput" value={answer} autoFocus
+              <input aria-label="Your answer" className="tc-sentinput" value={answer} autoFocus
                 placeholder="the missing word — kana, kanji, or rōmaji"
                 onChange={(e) => setAnswer(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && answer.trim()) checkFill(); }} />
@@ -5103,7 +5113,7 @@ function Sentences({ cards, onResult }) {
           <p className="tc-sentgoal tc-sentbig">{ex.english}</p>
           {!checked ? (
             <>
-              <textarea className="tc-sentinput" rows={2} value={answer} autoFocus
+              <textarea aria-label="Your answer" className="tc-sentinput" rows={2} value={answer} autoFocus
                 placeholder="write it in Japanese…" onChange={(e) => setAnswer(e.target.value)} />
               <div className="tc-sentbtns">
                 <button className="tc-btn tc-btn-sm" onClick={() => { setResult({}); setChecked(true); }}>Show answer</button>
@@ -5647,8 +5657,11 @@ export function installBrowserSideEffects() {
 
 function SpeakBtn({ text, slow }) {
   if (!text) return null;
+  /* lang="en" because this button sits INSIDE the lang="ja" reading it plays. Language
+     inherits, so without it a screen reader announces "Hear pronunciation" in a Japanese
+     voice — the same mistake as the old lang="ja" on <html>, one element further in. */
   return (
-    <button type="button" className="tc-speakbtn" aria-label="Hear pronunciation"
+    <button type="button" lang="en" className="tc-speakbtn" aria-label="Hear pronunciation"
       onClick={(e) => { e.stopPropagation(); ttsUnlock(); speakJa(text, slow ? 0.68 : 0.88); }}>🔊</button>
   );
 }
@@ -5820,7 +5833,7 @@ function ScriptListen({ scripts, cards, onExit }) {
             </button>
           )}
           {shown && (
-            <p className="tc-listenshown tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
+            <p lang="ja" className="tc-listenshown tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
           )}
         </div>
 
@@ -5839,7 +5852,7 @@ function ScriptListen({ scripts, cards, onExit }) {
 
         {verdict && (
           <div className="tc-listenrev">
-            <p className="tc-listenjp tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
+            <p lang="ja" className="tc-listenjp tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
             {ex.reveal.romaji && <p className="tc-sentans">{ex.reveal.romaji}</p>}
             {ex.reveal.en && <p className="tc-listenen">{ex.reveal.speaker ? ex.reveal.speaker + ": " : ""}{ex.reveal.en}</p>}
             <button className="tc-btn tc-btn-primary" onClick={next}>
@@ -6047,14 +6060,14 @@ function ScriptDialogue({ scripts, onExit }) {
                 {b.npc.map((n) => (
                   <li key={"n" + n.lineIdx} className="tc-dialline">
                     <span className="tc-dialwho">{n.speaker}</span>
-                    <span className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></span>
+                    <span lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></span>
                     <span className="tc-dialen">{n.en}</span>
                   </li>
                 ))}
                 {b.turn && (
                   <li key={"m" + b.turn.lineIdx} className="tc-dialline is-mine">
                     <span className="tc-dialwho">{b.turn.speaker}</span>
-                    <span className="tc-dialjp tc-jp"><Furigana tokens={b.turn.reveal.tokens} /></span>
+                    <span lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={b.turn.reveal.tokens} /></span>
                     <span className="tc-dialen">{b.turn.reveal.en}</span>
                   </li>
                 )}
@@ -6106,7 +6119,7 @@ function ScriptDialogue({ scripts, onExit }) {
 
         {history.slice(-3).map((h) => (
           <p key={"h" + h.lineIdx} className={"tc-dialpast" + (h.mine ? " is-mine" : "")}>
-            <b>{h.speaker}</b> <span className="tc-jp">{h.text}</span>
+            <b>{h.speaker}</b> <span lang="ja" className="tc-jp">{h.text}</span>
           </p>
         ))}
 
@@ -6116,7 +6129,7 @@ function ScriptDialogue({ scripts, onExit }) {
               <button type="button" className="tc-speakbtn" aria-label={"Hear " + n.speaker + " again"}
                 onClick={() => speak(n.text)}>🔊</button>
             </p>
-            <p className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></p>
+            <p lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></p>
             {/* The English is the one thing withheld: understanding what was just said is
                 what the reply is being asked to prove. */}
             {(resolved || !turn) && <p className="tc-dialen">{n.en}</p>}
@@ -6156,7 +6169,7 @@ function ScriptDialogue({ scripts, onExit }) {
                 <button className="tc-btn tc-btn-primary" onClick={said}>Reveal</button>
               </>
             ) : (
-              <p className="tc-dialjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
+              <p lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
             )}
           </div>
         )}
@@ -6165,7 +6178,7 @@ function ScriptDialogue({ scripts, onExit }) {
           <div className="tc-listenrev">
             {turn && turn.kind === TURN.CHOICE && (
               <>
-                <p className="tc-listenjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
+                <p lang="ja" className="tc-listenjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
                 {turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
                 {turn.reveal.en && <p className="tc-listenen">{turn.reveal.en}</p>}
               </>
@@ -6374,8 +6387,8 @@ function Scripts({ cards = [] }) {
           <button className="tc-btn tc-btn-sm" onClick={() => { setView("list"); setError(""); }}>← Scripts</button>
           <span className="tc-rehname">New script</span>
         </div>
-        <input className="tc-sentinput" value={name} placeholder="name it — e.g. 1-14" onChange={(e) => setName(e.target.value)} />
-        <textarea className="tc-sentinput" rows={8} value={raw}
+        <input aria-label="Script name" className="tc-sentinput" value={name} placeholder="name it — e.g. 1-14" onChange={(e) => setName(e.target.value)} />
+        <textarea aria-label="Dialogue lines, one per speaker" className="tc-sentinput" rows={8} value={raw}
           placeholder={"Paste your dialogue. Label speakers if you can:\n\nA: おはようございます。\nB: おはよう。おげんきですか。\nA: はい、げんきです。"}
           onChange={(e) => setRaw(e.target.value)} />
         {error && <div className="tc-senterr">{error}</div>}
@@ -6836,7 +6849,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       </div>
 
       <div className="tc-browsebar">
-        <input className="tc-search" placeholder="Search words…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input aria-label="Search words" className="tc-search" placeholder="Search words…" value={q} onChange={(e) => setQ(e.target.value)} />
         <button className="tc-btn tc-btn-sm" onClick={() => setShowMore((v) => !v)}>{showMore ? "Less ⌃" : "More ⌄"}</button>
       </div>
 
@@ -6863,7 +6876,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
           {showRestore && (
             <div className="tc-restore">
               <p className="tc-restorehint">Paste a 💾 backup (replaces everything) or an update pack from Claude (adds new words & scripts — progress untouched), then Apply.</p>
-              <textarea className="tc-restorebox" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='{"app":"tangocho", ...}' />
+              <textarea aria-label="Paste a backup to restore" className="tc-restorebox" value={restoreText} onChange={(e) => setRestoreText(e.target.value)} placeholder='{"app":"tangocho", ...}' />
               <div className="tc-restorebtns">
                 <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={doRestore} disabled={!restoreText.trim()}>Apply backup</button>
                 <button className="tc-btn tc-btn-sm" onClick={() => { setShowRestore(false); setRestoreMsg(""); }}>Close</button>
@@ -6946,7 +6959,7 @@ function Add({ onAdd, count }) {
         <code>term, reading, rōmaji, meaning, 📷</code>
         The picture emoji at the end is optional.
       </p>
-      <textarea className="tc-textarea" rows={8} value={text} onChange={(e) => setText(e.target.value)}
+      <textarea aria-label="Words to add, one per line" className="tc-textarea" rows={8} value={text} onChange={(e) => setText(e.target.value)}
         placeholder={"先生, せんせい, sensei, teacher, 👩‍🏫\n犬, いぬ, inu, dog, 🐶"} />
       <div className="tc-addrow">
         <button className="tc-btn tc-btn-primary" onClick={parse} disabled={!text.trim()}>Add to deck</button>
@@ -7472,7 +7485,7 @@ function Input({ cards, onAdd, onPark }) {
       {panel === "log" && (
         <div className="tc-card2 tc-inpanel">
           <p className="tc-eyebrow">input you did somewhere else</p>
-          <input className="tc-sentinput" value={logText} onChange={(e) => setLogText(e.target.value)}
+          <input aria-label="What you watched or read" className="tc-sentinput" value={logText} onChange={(e) => setLogText(e.target.value)}
             placeholder="anime, a podcast, a conversation…" />
           <div className="tc-kanaseg">
             {INPUT_TIMES.map((n) => (
@@ -7490,8 +7503,8 @@ function Input({ cards, onAdd, onPark }) {
       {panel === "link" && (
         <div className="tc-card2 tc-inpanel">
           <p className="tc-eyebrow">add a source of your own</p>
-          <input className="tc-sentinput" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://…" />
-          <input className="tc-sentinput" value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} placeholder="what is it? (optional)" />
+          <input aria-label="Link address" type="url" className="tc-sentinput" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://…" />
+          <input aria-label="Link title" className="tc-sentinput" value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} placeholder="what is it? (optional)" />
           <p className="tc-smarthint">It starts at your current level and moves as you rate it, same as everything else.</p>
           <div className="tc-rehnav"><button className="tc-btn tc-btn-sm tc-btn-primary" onClick={addLink}>Add</button></div>
         </div>
@@ -7500,7 +7513,7 @@ function Input({ cards, onAdd, onPark }) {
       {panel === "cover" && (
         <div className="tc-card2 tc-inpanel">
           <p className="tc-eyebrow">paste Japanese — how much of it do you already have?</p>
-          <textarea className="tc-sentinput tc-inarea" value={coverText} onChange={(e) => setCoverText(e.target.value)}
+          <textarea aria-label="Japanese text to check against your deck" className="tc-sentinput tc-inarea" value={coverText} onChange={(e) => setCoverText(e.target.value)}
             placeholder="Paste a paragraph, a subtitle line, an article…" />
           {coverage && (
             <>
@@ -7528,7 +7541,7 @@ function Input({ cards, onAdd, onPark }) {
                     Each one arrives with the sentence you met it in, so it can be practised in
                     context instead of as a dictionary entry.
                   </p>
-                  <input className="tc-sentinput" value={sourceLabel}
+                  <input aria-label="Source name" className="tc-sentinput" value={sourceLabel}
                     onChange={(e) => setSourceLabel(e.target.value)}
                     placeholder="where is this from? (optional)" />
                   <div className="tc-minelist">
@@ -8257,7 +8270,7 @@ function Dates() {
               </div>
             ) : (
               <div className="tc-dtype">
-                <input ref={inputRef} className="tc-dinput" value={typed} disabled={!!judged}
+                <input ref={inputRef} aria-label="Your answer" className="tc-dinput" value={typed} disabled={!!judged}
                   onChange={(e) => setTyped(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter") return;
@@ -8722,7 +8735,7 @@ function Quizzes({ cards = [] }) {
               </div>
             ) : (
               <form onSubmit={(e) => { e.preventDefault(); if (!verdict) answer(typed); }}>
-                <input className="tc-input" value={typed} disabled={!!verdict}
+                <input aria-label="Your answer" className="tc-input" value={typed} disabled={!!verdict}
                        onChange={(e) => setTyped(e.target.value)} placeholder="Your answer" />
               </form>
             )}
@@ -9065,7 +9078,7 @@ function Kanji({ cards }) {
                 <div className="tc-face tc-front">
                   <span className="tc-kindchip">{cur.f ? "#" + cur.f + " most used" : "new"}</span>
                   {cur.e && <div className="tc-kemoji">{cur.e}</div>}
-                  <div className="tc-kanjibig">{cur.c}</div>
+                  <div lang="ja" className="tc-kanjibig">{cur.c}</div>
                   <span className="tc-flipcue">meaning? reading? then tap</span>
                 </div>
                 <div className="tc-face tc-back">
@@ -9252,7 +9265,7 @@ function Kanji({ cards }) {
           <div className="tc-kmodalcard" onClick={(ev) => ev.stopPropagation()}>
             <button className="tc-inx" onClick={() => setInspect(null)} aria-label="close">×</button>
             {inspect.e && <div className="tc-kemoji">{inspect.e}</div>}
-            <div className="tc-kanjibig">{inspect.c}</div>
+            <div lang="ja" className="tc-kanjibig">{inspect.c}</div>
             <button className="tc-btn tc-btn-sm" onClick={() => speak(inspect)}>🔊 How it sounds</button>
             <div className="tc-meaning tc-meaning-lg">{inspect.m.join(", ")}</div>
             {inspect.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {readingList(inspect.on)}</div>}
@@ -9421,8 +9434,8 @@ function ConjDrill() {
           <div className="tc-card-inner">
             <div className="tc-face tc-front">
               <span className="tc-kindchip">{meta.chip}</span>
-              <div className="tc-term">{cur.w.dict}</div>
-              <div className="tc-reading-front">{cur.w.reading} · {cur.w.meaning}</div>
+              <div lang="ja" className="tc-term">{cur.w.dict}</div>
+              <div lang="ja" className="tc-reading-front">{cur.w.reading} · {cur.w.meaning}</div>
               <div className="tc-conjask">→ {cur.f.ask}?</div>
               <span className="tc-flipcue">tap to flip</span>
             </div>
