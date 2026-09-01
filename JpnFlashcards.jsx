@@ -1668,7 +1668,17 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        deck; sourcing them from the same act-scene makes near-synonyms neighbours, and it
        went from one such question in the deck to twenty-nine. */
     const myGloss = shortGloss(card.meaning);
-    const pool = cards.filter((c) => c.id !== card.id && c.meaning
+    /* A BORROWED card is answered against its own deck, not against the vocabulary.
+       The pool below is the word deck, which contains no kana at all — so the moment kana
+       joined Smart Review it produced questions like あ offered against {joke, the day
+       before yesterday, a, (student) club; circle}: three English glosses and one romaji
+       reading, where the answer is the only option of the right SHAPE and the character
+       itself never has to be read. The same holds for a date or a verb form, whose only
+       plausible wrong answers are other dates and other forms. */
+    const sibling = card.src ? (foreign.find((s) => s.deck === card.src) || {}).items : null;
+    // Fall back to the word deck if a strand is too thin to fill four options on its own.
+    const source = sibling && sibling.length > 3 ? sibling : cards;
+    const pool = source.filter((c) => c.id !== card.id && c.meaning
                                   && c.meaning !== card.meaning && shortGloss(c.meaning) !== myGloss);
     /* Group by PART OF SPEECH. This used to filter on `kind`, which is the writing
        system (hiragana/katakana/kanji) — so "same kind" matched orthography and did nothing
@@ -1686,7 +1696,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const picked = pickDistractors(card, pool, 3, {
       confusedWith: confusion.get(card.id) || [],
       seed,
-      restrict: (c) => posOf(c) === myPos,
+      /* Part of speech is a vocabulary idea. A kana has none, a date has none, and every
+         conjugation shares one — so applying it to a borrowed card either restricts to
+         nothing or restricts to everything. Being in the same deck is the plausibility
+         constraint there, and the pool above already enforces it. */
+      restrict: card.src ? null : (c) => posOf(c) === myPos,
     });
     /* Two DISTRACTORS that render identically is the other half of this bug, and the half
        that shipped: the pool above only removes glosses that clash with the ANSWER, so
@@ -4355,14 +4369,50 @@ function kanjiUnlocked(all, stats) {
    kanji matching grid, the conjugation drill — stay where they are, because they are the
    whole point of those tabs. What Smart Review adds is the thing none of them can do:
    noticing that a kana you have not seen since June has quietly faded. */
-const DECK_SRC = ["kana", "kanji", "freq"];
+const DECK_SRC = ["kana", "kanji", "conj", "dates", "freq"];
 
 function foreignKey(src) {
-  return src === "kana" ? KANA_KEY : src === "kanji" ? KANJI_KEY : "jpn101:freq";
+  if (src === "kana") return KANA_KEY;
+  if (src === "kanji") return KANJI_KEY;
+  if (src === "conj") return CONJ_KEY;
+  if (src === "dates") return DATES_KEY;
+  return "jpn101:freq";
 }
 
 /* Each deck keys its stats differently — kana by "h-あ", kanji by the bare character, the
    10k list by card id. The card id carries the source so a result can find its way home. */
+/* Every kana in both scripts, ids matching exactly what the Kana tab writes — "h-あ" and
+   "k-あ", both keyed by the HIRAGANA character. Keying katakana by its hiragana twin looks
+   odd and is what makes the two tabs one record: drilling ア here moves the same row the
+   chart colours. Katakana-only entries (ー, ファ) exist in one script only. */
+function kanaAll() {
+  const out = [];
+  for (const [, , rows] of KANA_GROUPS) {
+    for (const row of rows) {
+      for (const [h, k, r, note, kataOnly] of row) {
+        if (!kataOnly) out.push({ id: "h-" + h, ch: h, r, note });
+        out.push({ id: "k-" + h, ch: k, r, note });
+      }
+    }
+  }
+  return out;
+}
+
+/* Every word in the bank crossed with every form, ids matching what the Drill tab writes
+   ("たべる|p-ap"), so a form practised in Smart Review is the same record the grid shows. */
+function conjAll() {
+  const out = [];
+  for (const w of CONJ_BANK) {
+    const c = conjugate(w.reading, w.type);
+    if (!c) continue;
+    for (const f of CONJ_FORMS) {
+      const answer = c[f.pol] && c[f.pol][f.key];
+      if (answer) out.push({ id: w.reading + "|" + f.id, w, f, answer });
+    }
+  }
+  return out;
+}
+
 function foreignCard(src, raw) {
   if (src === "kana") {
     return { id: "kana:" + raw.id, src, srcId: raw.id, term: raw.ch, reading: raw.r,
@@ -4374,6 +4424,20 @@ function foreignCard(src, raw) {
     return { id: "kanji:" + raw.c, src, srcId: raw.c, term: raw.c,
              reading: [on, kun].filter(Boolean).join(" / "), romaji: "",
              meaning: (raw.m || []).slice(0, 3).join(", "), kind: "kanji", emoji: raw.e || "🈷️" };
+  }
+  /* A conjugation item is a word crossed with a form: 食べる in its plain past. The prompt
+     has to carry BOTH or the question is unanswerable — "食べる" alone does not say which
+     of eleven forms is wanted — so the form's label rides in the meaning. */
+  if (src === "conj") {
+    return { id: "conj:" + raw.id, src, srcId: raw.id, term: raw.w.dict,
+             reading: raw.answer, romaji: "", meaning: `${raw.w.meaning} — ${raw.f.ask}`,
+             kind: "conj", emoji: "🔀" };
+  }
+  /* Dates and counters. The question is the kanji, the answer is how it is read, which is
+     the whole difficulty: 二十日 is not read the way its characters suggest. */
+  if (src === "dates") {
+    return { id: "dates:" + raw.id, src, srcId: raw.id, term: raw.kanji,
+             reading: raw.reading, romaji: "", meaning: raw.en, kind: "dates", emoji: "📅" };
   }
   return { ...raw, id: "freq:" + raw.id, src, srcId: raw.id };
 }
@@ -4419,12 +4483,60 @@ async function recordForeign(card, ok, ms, area, outcome) {
 /* Load every other deck's items and stats, ready to hand to the session builder.
    `enrich` is the plan's scope setting; it reaches only the frequency branch below, which
    is the one deck that is not part of the course. */
+/* How many never-seen items a newly-pooled strand may put forward at once.
+
+   Ordering is by need alone, and statNeed scores anything never drilled at 6 — above every
+   real review, by design, because an unmet item is the most valuable thing you can do. That
+   is fine for a strand already in progress and catastrophic for one just switched on: kana,
+   conjugation and dates between them hold well over a thousand items nobody has touched, and
+   admitting them all would bury every review under an endless wall of first sightings.
+
+   So each strand offers everything already started plus a frontier of a few new ones. This
+   is not a cap on the ordering — the queue is still purely need-sorted, and a frontier item
+   still wins when it deserves to. It caps how fast a strand INTRODUCES, which is the same
+   thing kanjiUnlocked does for characters and the daily quota does for frequency words. */
+const STRAND_FRONTIER = 6;
+
+/** Everything begun, plus a few not yet met. Keeps a new strand from flooding the queue. */
+function withFrontier(items, stats, key = (x) => x.srcId) {
+  const started = [], fresh = [];
+  for (const it of items) {
+    const st = stats[key(it)];
+    (st && st.seen ? started : fresh).push(it);
+  }
+  return [...started, ...fresh.slice(0, STRAND_FRONTIER)];
+}
+
 async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
   const out = [];
-  /* Kana is deliberately NOT pooled. Hiragana and katakana are memorised, so drilling a
-     character in Smart Review spends a slot that a word or a kanji needed. The Kana tab
-     is still there for when a chart needs refreshing; it just does not dilute the one
-     button that is supposed to be the highest-value thing to press. */
+  /* Kana IS pooled now. It used to be held back on the reasoning that hiragana is memorised
+     and a kana slot spends one a word needed — but that decided in advance that kana can
+     never be the most valuable thing to practise, which is exactly the judgement the memory
+     model is there to make. If kana has genuinely rotted it should come up; if it has not,
+     its need score is low and it will not. The frontier keeps the 100-odd unmet characters
+     from arriving all at once. */
+  try {
+    const raw = await sGet(KANA_KEY);
+    const stats = raw ? JSON.parse(raw) : {};
+    const items = withFrontier(kanaAll().map((k) => foreignCard("kana", k)), stats);
+    out.push({ deck: "kana", items, stats: remapStats(stats, "kana") });
+  } catch (e) {}
+  /* Conjugation and dates were entirely outside the model: both record the same stats in
+     the same shape on the same schedule, and neither has ever been able to surface in the
+     one button that gets pressed. A verb form you keep failing is a Volume 2 scene you will
+     not follow, and nothing connected those two facts until now. */
+  try {
+    const raw = await sGet(CONJ_KEY);
+    const stats = raw ? JSON.parse(raw) : {};
+    const items = withFrontier(conjAll().map((c) => foreignCard("conj", c)), stats);
+    out.push({ deck: "conj", items, stats: remapStats(stats, "conj") });
+  } catch (e) {}
+  try {
+    const raw = await sGet(DATES_KEY);
+    const stats = raw ? JSON.parse(raw) : {};
+    const items = withFrontier(DATE_ITEMS.map((d) => foreignCard("dates", d)), stats);
+    out.push({ deck: "dates", items, stats: remapStats(stats, "dates") });
+  } catch (e) {}
   try {
     const [d, raw] = await Promise.all([loadKanji(), sGet(KANJI_KEY)]);
     const stats = raw ? JSON.parse(raw) : {};
