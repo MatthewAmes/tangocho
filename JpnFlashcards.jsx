@@ -786,7 +786,9 @@ export default function JpnFlashcards() {
           <nav ref={tabsRef}
                className={"tc-tabs" + (tabEdges.left ? " has-left" : "") + (tabEdges.right ? " has-right" : "")}
                role="tablist" aria-label="Sections">
-            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"], ["input", "Input"], ["kanji", "Kanji"], ["dates", "Dates"], ["kana", "Kana"], ["spell", "Spelling"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
+            {/* Kanji and Kana are one chip: same job, two scales, and the bar was carrying
+                twelve. The picker inside it remembers which you were on. */}
+            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"], ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"], ["spell", "Spelling"], ["scripts", "Scripts"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
@@ -807,8 +809,10 @@ export default function JpnFlashcards() {
              gone for now, not the feature — the mock final and Culture Talk rehearsals are
              the only speaking practice here, and the exam they were built for comes back. */
           <OralHome />
-        ) : tab === "kanji" ? (
-          <Kanji cards={cards} />
+        ) : tab === "chars" ? (
+          /* Kanji and Kana behind one chip — see Characters for why it wraps rather than
+             merges. The deck rides along for Kanji's cloze questions. */
+          <Characters cards={cards} />
         ) : tab === "dates" ? (
           <Dates />
         ) : tab === "sentences" ? (
@@ -824,8 +828,6 @@ export default function JpnFlashcards() {
           <Plan cards={cards} />
         ) : tab === "spell" ? (
           <Contrast cards={cards} onResult={recordResult} />
-        ) : tab === "kana" ? (
-          <Kana />
         ) : tab === "scripts" ? (
           /* The deck rides along for the listening mode's missing-word questions, which
              blank a word the learner actually has a card for. */
@@ -8306,6 +8308,53 @@ function deckKanjiIndex(cards) {
     }
   }
   return map;
+}
+
+/* ── Kanji and Kana under one tab ──
+   Two tabs for the same job at two scales: which written character is this, and what does
+   it say. Splitting them cost a chip in a bar that already had twelve, and made the kana
+   drill easy to forget was there — it is the one thing in the app a beginner needs first.
+
+   A wrapper rather than a rewrite. Both components keep their own state, their own storage
+   keys and their own session machines untouched; all that is new is which one is on screen.
+   Switching unmounts the other, which is exactly what switching tabs already did, so a
+   session in progress is lost the same way it always was and no behaviour changes.
+
+   The choice persists, because the alternative is that anyone drilling kana pays an extra
+   tap on every single visit to get back to where they were. */
+const CHAR_MODES = [
+  ["kanji", "漢字 Kanji", "Meanings, readings, and the words each character builds"],
+  ["kana", "かな Kana", "Hiragana and katakana, character by character"],
+];
+const CHARS_KEY = "jpn101:charsMode";
+
+function Characters({ cards }) {
+  const [mode, setMode] = useState(null);   // null until the stored choice is read
+  useEffect(() => { (async () => {
+    let saved = null;
+    try { saved = await sGet(CHARS_KEY); } catch (e) { /* fall through to the default */ }
+    setMode(saved === "kana" || saved === "kanji" ? saved : "kanji");
+  })(); }, []);
+
+  /* Held back one frame rather than defaulting to Kanji and correcting: rendering the wrong
+     one first mounts it, and Kanji's mount fetches kanji.json. Restoring "kana" would pull
+     the whole character file down to throw it away. */
+  if (!mode) return <div className="tc-charswait" />;
+
+  const pick = (key) => { if (key !== mode) { setMode(key); sSet(CHARS_KEY, key); } };
+
+  return (
+    <div>
+      <div className="tc-modeseg" role="group" aria-label="Which characters to practise">
+        {CHAR_MODES.map(([key, label, note]) => (
+          <button key={key} className={"tc-segbtn" + (mode === key ? " is-on" : "")}
+                  aria-pressed={mode === key} title={note}
+                  onClick={() => pick(key)}>{label}</button>
+        ))}
+      </div>
+      {mode === "kana" ? <Kana /> : <Kanji cards={cards} />}
+    </div>
+  );
 }
 
 function Kanji({ cards }) {

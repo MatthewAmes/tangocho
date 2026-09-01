@@ -699,6 +699,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
    the border-color-on-border:0 armed state this block once worked around are fixed at the
    source now — the 20x4px pip in Browse is the only .tc-seg left.) */
 .tc-modeseg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;}
+/* The one frame the Kanji・Kana tab waits for its stored choice. Holds the same floor the
+   rest of the tab bodies use, so restoring the picker does not shove the page upward. */
+.tc-charswait{min-height:340px;}
 .tc-modeseg .tc-segbtn{flex:1 1 28%;min-width:96px;padding:9px 10px;font-size:13px;text-align:center;}
 /* The minutes a pace buys, set inside its own button. Said quietly: the label is the
    choice ("Short"), the number is only the evidence for it. */
