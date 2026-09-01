@@ -1260,7 +1260,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 @media (max-width:460px){.tc-inpicktitle{font-size:16px;}.tc-inlevel{padding:9px 10px;}}
 .tc-root::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:99;opacity:.05;mix-blend-mode:soft-light;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
-.tc-root :is(button,[role="tab"]):focus-visible{outline:2px solid var(--shu-soft);outline-offset:2px;border-radius:inherit;}
+/* Every focusable thing gets a ring, not just the ones that happen to be <button>. The old
+   selector named button and [role="tab"], so the flashcards — divs with role="button" — were
+   reachable by keyboard and showed nothing at all when you got there. [role="button"] is
+   kept alongside the real elements for anything not yet converted. */
+.tc-root :is(button,[role="button"],[role="tab"],a,summary):focus-visible{outline:2px solid var(--shu-soft);outline-offset:2px;border-radius:inherit;}
 @media (prefers-reduced-motion:reduce){.tc-root *{transition:none !important;animation:none !important;}}
 
 /* ── liquid glass + holographic foil edge ───────────────────────────────────────────────

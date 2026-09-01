@@ -504,6 +504,16 @@ function isEmoji(s) {
   try { return /\p{Extended_Pictographic}/u.test(t); } catch (e) { return /[\u2190-\u2BFF\u2700-\u27BF]/.test(t); }
 }
 
+/* The sections, named once. Used both by the nav and by the visually-hidden heading that
+   opens each section — a screen reader's rotor lists headings to navigate by, and before
+   this the entire app offered exactly two: the brand, and "Conjugation". */
+const TABS = [
+  ["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"],
+  ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"], ["spell", "Spelling"],
+  ["scripts", "Scripts"], ["quizzes", "Quizzes"], ["browse", "Browse"], ["plan", "Plan"],
+];
+const tabLabel = (id) => (TABS.find((t) => t[0] === id) || [, id])[1];
+
 export default function JpnFlashcards() {
   const [cards, setCards] = useState([]);
   const [ready, setReady] = useState(false);
@@ -779,13 +789,13 @@ export default function JpnFlashcards() {
       <div className="tc-shell">
         {!storageOk && (
           <div className="tc-senterr" style={{ margin: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-            <span>⚠️ Storage isn't working in this session — anything you add or review lives only until you close the app. Tap Backup before closing (it downloads a file + copies to clipboard), then Restore it next session.</span>
-            <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={bannerBackup} style={{ alignSelf: "flex-start" }}>💾 Backup now</button>
+            <span><span aria-hidden="true">⚠️</span> Storage isn't working in this session — anything you add or review lives only until you close the app. Tap Backup before closing (it downloads a file + copies to clipboard), then Restore it next session.</span>
+            <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={bannerBackup} style={{ alignSelf: "flex-start" }}><span aria-hidden="true">💾</span> Backup now</button>
           </div>
         )}
         {deckCorrupt && (
           <div className="tc-senterr" style={{ margin: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-            <span>⚠️ The saved deck on this device is damaged, and was <b>not</b> replaced — your progress has not been overwritten. If you're signed in, the cloud copy loads on the next successful sync. Otherwise open Browse → More → Restore and paste a backup. (The damaged data is kept under <code>jpn101:deck.corrupt</code>.)</span>
+            <span><span aria-hidden="true">⚠️</span> The saved deck on this device is damaged, and was <b>not</b> replaced — your progress has not been overwritten. If you're signed in, the cloud copy loads on the next successful sync. Otherwise open Browse → More → Restore and paste a backup. (The damaged data is kept under <code>jpn101:deck.corrupt</code>.)</span>
             <button className="tc-btn tc-btn-sm tc-btn-primary" onClick={() => loadCardsAndSync()} style={{ alignSelf: "flex-start" }}>Try again</button>
           </div>
         )}
@@ -793,23 +803,38 @@ export default function JpnFlashcards() {
           <div className="tc-brandblock">
             <span className="tc-seal" aria-hidden="true">朱</span>
             <div>
-              <h1 className="tc-wordmark">単語帳 <span className="tc-build">{BUILD}</span></h1>
+              {/* The build stamp is hidden from assistive tech, not from the eye. It is a
+                  version pill, and leaving it in the h1 made the app's page heading read
+                  "単語帳 b182" — a number that changes every commit, announced as part of
+                  the title. The footer still shows it, and so does this, visually. */}
+              <h1 lang="ja" className="tc-wordmark">単語帳 <span aria-hidden="true" className="tc-build">{BUILD}</span></h1>
               <p className="tc-sub">JPN 101 · flashcards · <span className="tc-count">{cards.length} words</span></p>
             </div>
           </div>
           <nav ref={tabsRef}
                className={"tc-tabs" + (tabEdges.left ? " has-left" : "") + (tabEdges.right ? " has-right" : "")}
-               role="tablist" aria-label="Sections">
+               aria-label="Sections">
+            {/* A nav of links-to-sections, not an ARIA tablist. role="tablist" overrode the
+                nav landmark and then promised a contract this never kept: no aria-controls,
+                no role="tabpanel", no roving tabindex, no arrow keys — twelve separate tab
+                stops that announced nothing when the section changed. The honest version is
+                what this actually is, a navigation bar, where aria-current="page" says which
+                section you are in and every button is reachable the ordinary way. */}
             {/* Kanji and Kana are one chip: same job, two scales, and the bar was carrying
                 twelve. The picker inside it remembers which you were on. */}
-            {[["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"], ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"], ["spell", "Spelling"], ["scripts", "Scripts"], ["quizzes", "Quizzes"], ["browse", "Browse"], ["plan", "Plan"]].map(([id, label]) => (
-              <button key={id} role="tab" aria-selected={tab === id}
+            {TABS.map(([id, label]) => (
+              <button key={id} aria-current={tab === id ? "page" : undefined}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
             ))}
           </nav>
 
         </header>
 
+        {/* One heading per section, for the rotor rather than the eye. Nine of the twelve
+            tabs rendered no heading at all, so a screen reader had nothing to navigate by
+            and no announcement that the section had changed. Plan writes its own headings
+            and keeps them; this sits above whatever the section renders. */}
+        <h2 className="tc-sr">{tabLabel(tab)}</h2>
         {!ready ? (
           <div className="tc-empty">Loading your deck…</div>
         ) : tab === "study" ? (
@@ -2394,8 +2419,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               </button>
             )
         )}
-        {debrief && debrief.busy && <p className="tc-debrief tc-debrief-busy">✨ Coach is looking at what you missed…</p>}
-        {debrief && debrief.text && <p className="tc-debrief">✨ {debrief.text}</p>}
+        {debrief && debrief.busy && <p className="tc-debrief tc-debrief-busy"><span aria-hidden="true">✨</span> Coach is looking at what you missed…</p>}
+        {debrief && debrief.text && <p className="tc-debrief"><span aria-hidden="true">✨</span> {debrief.text}</p>}
         {(!AI_ENABLED || (debrief && debrief.err)) && missedCards.length > 0 && (
           <p className="tc-debrief tc-debrief-busy">Missed: {missedCards.slice(0, 6).map((c) => c.term).join("、")} — hit "Review" below and they'll come right back.</p>
         )}
@@ -2628,7 +2653,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         /* An introduction has nothing to reveal and only one way forward, so the whole
            card is the control. Tapping anywhere continues, and the audio button stops
            the click from bubbling so hearing it does not skip past it. */
-        <div className="tc-learn tc-learn-tap" style={masteryStyle(live || card)} role="button" tabIndex={0}
+        <div className="tc-learn tc-learn-tap" style={masteryStyle(live || card)} 
              aria-label="Continue"
              onClick={() => grade(true)}
              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); grade(true); } }}>
@@ -2838,7 +2863,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {(renderActivity === ACTIVITY.RECALL || renderActivity === ACTIVITY.TYPE) && (
       <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={flip}
            style={masteryStyle(live || card)}
-           role="button" tabIndex={0} aria-label="Flashcard, click or press space to flip">
+           >
         <div className="tc-card-inner">
           {/* FRONT — normally the Japanese; on a production card, the English, and you
               have to come up with the Japanese yourself. No reading, no rōmaji and no
@@ -2925,12 +2950,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                  technique aimed squarely at words that repetition alone has failed to
                  shift — which is what a leech is. Typed once, shown on every review. */
               <div className="tc-mnbox" onClick={(e) => e.stopPropagation()}>
-                <span className="tc-leechtag">🩹 stuck — give it a hook</span>
+                <span className="tc-leechtag"><span aria-hidden="true">🩹</span> stuck — give it a hook</span>
                 <input aria-label="Memory hook for this word" className="tc-mnin" value={card.mn || ""} placeholder="sounds like… / picture…"
                   onChange={(e) => onMnemonic(card.id, e.target.value)} />
               </div>
             )}
-            {!isLeech(card) && card.mn ? <p className="tc-mnshow">🔗 {card.mn}</p> : null}
+            {!isLeech(card) && card.mn ? <p className="tc-mnshow"><span aria-hidden="true">🔗</span> {card.mn}</p> : null}
             {/* The AI hook button used to sit on every card and went unused for months,
                 while adding a row of clutter to the one screen that should be quiet. It
                 still exists for stuck words, where a keyword mnemonic genuinely is the
@@ -2940,7 +2965,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 {hook.busy ? "✨ thinking…" : hook.err ? hook.err : "✨ " + hook.text}
               </p>
             ) : (
-              <button className="tc-hookbtn" onClick={(e) => { e.stopPropagation(); getHook(card); }}>✨ hook</button>
+              <button className="tc-hookbtn" onClick={(e) => { e.stopPropagation(); getHook(card); }}><span aria-hidden="true">✨</span> hook</button>
             ))}
           </div>
         </div>
@@ -5814,7 +5839,7 @@ function ScriptListen({ scripts, cards, onExit }) {
         <span className="tc-provchip">{ex.provenance.label}</span>
         <button className={"tc-fchip" + (voiceOn ? " is-on" : "")}
           onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>🔊 Voice {voiceOn ? "on" : "off"}</button>
-        <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}>🐢 Slow</button>
+        <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}><span aria-hidden="true">🐢</span> Slow</button>
       </div>
 
       <div className="tc-card2">
@@ -6107,7 +6132,7 @@ function ScriptDialogue({ scripts, onExit }) {
         <span className="tc-dialpart">as {dialogue.part}</span>
         <button className={"tc-fchip" + (voiceOn ? " is-on" : "")}
           onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>🔊 Voice {voiceOn ? "on" : "off"}</button>
-        <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}>🐢 Slow</button>
+        <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}><span aria-hidden="true">🐢</span> Slow</button>
         {xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
         {combo >= 2 && (
           <span key={combo} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>{combo}<i>×</i></span>
@@ -6426,7 +6451,7 @@ function Scripts({ cards = [] }) {
         {TTS_OK ? (
           <div className="tc-voicerow">
             <button className={"tc-fchip" + (voiceOn ? " is-on" : "")} onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>🔊 Voice {voiceOn ? "on" : "off"}</button>
-            <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}>🐢 Slow</button>
+            <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}><span aria-hidden="true">🐢</span> Slow</button>
           </div>
         ) : (
           <p className="tc-voicenote">This device has no speech voices available — voice playback disabled.</p>
@@ -6483,13 +6508,13 @@ function Scripts({ cards = [] }) {
       {scripts.length > 0 && (
         <div className="tc-modestart">
           <button className="tc-listenstart" onClick={() => { ttsUnlock(); setView("listen"); }}>
-            <span className="tc-listenstart-h">🎧 Listen</span>
+            <span className="tc-listenstart-h"><span aria-hidden="true">🎧</span> Listen</span>
             <span className="tc-listenstart-s">A line plays; the Japanese stays hidden until you answer.</span>
           </button>
           {/* Same tap-to-start reason as Listen: iOS will not play any audio until a user
               gesture has, so the mode is entered from a button rather than a tab switch. */}
           <button className="tc-listenstart is-dialogue" onClick={() => { ttsUnlock(); setView("dialogue"); }}>
-            <span className="tc-listenstart-h">🎭 Dialogue</span>
+            <span className="tc-listenstart-h"><span aria-hidden="true">🎭</span> Dialogue</span>
             <span className="tc-listenstart-s">Take a part and have the conversation — their side speaks, you choose your lines.</span>
           </button>
         </div>
@@ -6820,7 +6845,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       </div>
 
       <div style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.15)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
-        <p style={{ margin: "0 0 6px", fontWeight: 600 }}>🔄 Sync across your devices</p>
+        <p style={{ margin: "0 0 6px", fontWeight: 600 }}><span aria-hidden="true">🔄</span> Sync across your devices</p>
         {googleEmail ? (
           <>
             <p style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
@@ -6856,7 +6881,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
       {showMore && (
         <div style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
           {lastBk !== null && Date.now() - lastBk > 7 * 86400000 && (
-            <p className="tc-conjnote" style={{ marginTop: 0 }}>💾 {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — a backup file has everything: both decks, all stats, think-times, scripts, and exam history.</p>
+            <p className="tc-conjnote" style={{ marginTop: 0 }}><span aria-hidden="true">💾</span> {lastBk ? "Last backup was " + Math.floor((Date.now() - lastBk) / 86400000) + " days ago" : "No backup yet on this device"} — a backup file has everything: both decks, all stats, think-times, scripts, and exam history.</p>
           )}
           <div className="tc-browsebar" style={{ marginBottom: 0 }}>
             <button className="tc-btn tc-btn-sm" onClick={exportText} disabled={!cards.length}>{copied ? "Copied!" : "Export"}</button>
@@ -6865,10 +6890,16 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
             {!confirm ? (
               <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => setConfirm(true)} disabled={!cards.length}>Clear all</button>
             ) : (
-              <span className="tc-confirm">
+              /* The confirm replaces the button that opened it, so without moving focus the
+                 keyboard is left on an element that no longer exists and the question is
+                 never announced. autoFocus on "No" both announces the dialog and puts the
+                 safe answer under the next keypress — this one deletes the whole deck.
+                 Escape cancels, because a dialog you can only leave by choosing is a trap. */
+              <span className="tc-confirm" role="alertdialog" aria-label="Delete everything?"
+                    onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirm(false); } }}>
                 Delete everything?
                 <button className="tc-btn tc-btn-sm tc-btn-danger" onClick={() => { onClear(); setConfirm(false); }}>Yes</button>
-                <button className="tc-btn tc-btn-sm" onClick={() => setConfirm(false)}>No</button>
+                <button className="tc-btn tc-btn-sm" autoFocus onClick={() => setConfirm(false)}>No</button>
               </span>
             )}
           </div>
@@ -6915,7 +6946,7 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
                     {[0, 1, 2, 3, 4].map((i) => <span key={i} className={"tc-seg" + (i < lvl ? " on" : "")} />)}
                   </div>
                   <span className="tc-prow-num">{seen ? `seen ${seen} · ✓ ${correct} (${pct}%)` : "not studied yet"}</span>
-                  {isLeech(c) ? <span className="tc-leechpill">🩹 stuck</span> : needs ? <span className="tc-needpill">needs review</span> : null}
+                  {isLeech(c) ? <span className="tc-leechpill"><span aria-hidden="true">🩹</span> stuck</span> : needs ? <span className="tc-needpill">needs review</span> : null}
                   {!isLeech(c) && seen > 0 && lvl >= 4 && correct / seen >= 0.5 && <span className="tc-donepill">solid</span>}
                 </div>
               </li>
@@ -9073,7 +9104,7 @@ function Kanji({ cards }) {
           <>
             <div className={"tc-card" + (flipped ? " is-flipped" : "")}
               onClick={() => { if (!flipped && thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current; setFlipped((f) => !f); }}
-              role="button" tabIndex={0} aria-label="Kanji card, tap to flip">
+              >
               <div className="tc-card-inner">
                 <div className="tc-face tc-front">
                   <span className="tc-kindchip">{cur.f ? "#" + cur.f + " most used" : "new"}</span>
@@ -9430,7 +9461,7 @@ function ConjDrill() {
           <button className="tc-fchip" onClick={() => setView("setup")}>Quit</button>
         </div>
         <div key={pos} className={"tc-card" + (flipped ? " is-flipped" : "")} onClick={() => setFlipped((f) => !f)}
-             role="button" tabIndex={0} aria-label="Conjugation card, click to flip">
+             >
           <div className="tc-card-inner">
             <div className="tc-face tc-front">
               <span className="tc-kindchip">{meta.chip}</span>
@@ -9443,7 +9474,7 @@ function ConjDrill() {
               <div className="tc-conjanswer">{cur.answer} <SpeakBtn text={cur.answer} /></div>
               <div className="tc-conjhow">{cur.f.ask}</div>
               <div className="tc-conjrule">{meta.rule}</div>
-              {cur.w.note && <p className="tc-conjnote">⚠️ {cur.w.note}</p>}
+              {cur.w.note && <p className="tc-conjnote"><span aria-hidden="true">⚠️</span> {cur.w.note}</p>}
             </div>
           </div>
         </div>

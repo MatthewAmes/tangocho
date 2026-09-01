@@ -61,7 +61,34 @@ if (!lang || lang[1] !== "en") {
   console.log("  ok    <html lang=\"en\"> — the UI's language, not the content's");
 }
 
-const jaMarks = (fs.readFileSync(SRC, "utf8").match(/lang="ja"/g) || []).length;
+/* TODO-206. The tab bar claimed role="tablist" while keeping none of that pattern's
+   promises — no aria-controls, no tabpanel, no roving tabindex, no arrow keys — and
+   overrode the nav landmark to do it. It is a nav; aria-current says which section. */
+/* Comments stripped first. The very comment explaining why role="tablist" was removed
+   contains the string role="tablist", so scanning raw source reported the thing as back the
+   moment it was documented as gone — a checker that cannot tell code from prose about code
+   only ever produces false alarms. */
+const src = fs.readFileSync(SRC, "utf8")
+  .replace(/\/\*[\s\S]*?\*\//g, " ")
+  .replace(/^\s*\/\/.*$/gm, " ");
+for (const [what, re] of [["role=\"tablist\"", /role="tablist"/], ["role=\"tab\"", /role="tab"/]]) {
+  if (re.test(src)) {
+    bad++;
+    console.error(`  FAIL  ${what} is back — the tab bar is a <nav> with aria-current="page".`);
+  }
+}
+/* The four flashcards were role="button" divs CONTAINING real buttons and a text input:
+   invalid nesting, broken swipe order, and a focus stop that painted no ring because the
+   focus rule matches `button` and a div is not one. Each card's action already has a real
+   button beneath it, so the div carries no role at all. */
+if (/role="button"/.test(src)) {
+  bad++;
+  console.error("  FAIL  a role=\"button\" div is back — use a real <button> for the action.");
+} else {
+  console.log("  ok    no fake buttons, no fake tabs");
+}
+
+const jaMarks = src.match(/lang="ja"/g)?.length || 0;
 if (jaMarks < 10) {
   bad++;
   console.error(`  FAIL  only ${jaMarks} element(s) marked lang="ja" — Japanese content should be marked.`);
