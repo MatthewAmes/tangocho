@@ -68,7 +68,7 @@ import { GODAN_ROWS, conjugate, CONJ_FORMS } from "./src/lib/conjugate.js";
 import { unpackVideos, evidenceWeight, learningRate, applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, recommend, COVERAGE_LEADING_PARTICLES, COVERAGE_SAFE_SUFFIXES, COVERAGE_SAFE_SET, coverageAgainstDeck, band, bandName, relDots, agoLabel, blankInput } from "./src/lib/input-engine.js";
 import { SESSION_KEY, USER_EMAIL_KEY, loadSession, saveSession } from "./src/lib/session.js";
 import { TTS_OK, pickJpVoice, ttsUnlock, prefetchJa, speakJa, stopJa } from "./src/lib/tts.js";
-import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, dueness, statReview, boundMs, reviewOutcome, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
+import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, dueness, statReview, boundMs, reviewOutcome, relearnStep, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -762,7 +762,9 @@ export default function JpnFlashcards() {
     });
   }, []);
 
-  const recordResult = useCallback((id, got, dir, ms, area, outcome) => {
+  /* `firstPass` false means this is a requeue inside the same session — a relearning step,
+     not a new review. See relearnStep in schedule.js for what that changes and why. */
+  const recordResult = useCallback((id, got, dir, ms, area, outcome, firstPass = true) => {
     const t = ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0;  // sanity bounds: ignore misfires & walked-away cards
     logDay({ ok: got, ms: t, deck: "class", area });
     setCards((prev) => {
@@ -782,7 +784,7 @@ export default function JpnFlashcards() {
            level still drive the existing UI, and keeping them means nothing already
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
-        const { next: nextState, isProd } = reviewOutcome(c, { got, ms: t, dir, area });
+        const { next: nextState, isProd } = reviewOutcome(c, { got, ms: t, dir, area, firstPass });
         const fsrs = isProd ? c.fsrs : nextState;
         const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
@@ -1898,8 +1900,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const outcome = { failure: got ? null : classifyFailure({ format: fmt,
       expected: c.reading || c.term, got: verdict && verdict.got ? verdict.got : "" }),
       skill: skillForFormat(fmt) };
-    if (c.src) recordForeign(c, got, thinkRef.current || 0, workedArea, outcome);
-    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined, workedArea, outcome);
+    /* Requeue passes are relearning steps. missRef is incremented BELOW, after this call,
+       so it is still falsy the first time a card is graded and truthy on every retry. */
+    const firstPass = !missRef.current[c.id];
+    if (c.src) recordForeign(c, got, thinkRef.current || 0, workedArea, outcome, firstPass);
+    else onResult(c.id, got, prodSet.has(c.id) ? "prod" : undefined, thinkRef.current || undefined, workedArea, outcome, firstPass);
 
     /* Evidence about the ABILITY, recorded alongside the card update. "Wrong" on its own
        is nearly useless: someone who reads 火曜日, knows it means Tuesday, and mistypes
@@ -4682,7 +4687,7 @@ function foreignCard(src, raw) {
    its own copy of the record, so this reads, updates and writes that key rather than
    touching the vocabulary deck. Same stat shape, same memory model, same everything —
    only the key differs. */
-async function recordForeign(card, ok, ms, area, outcome) {
+async function recordForeign(card, ok, ms, area, outcome, firstPass = true) {
   const key = foreignKey(card.src);
   try {
     const raw = await sGet(key);
@@ -4704,7 +4709,9 @@ async function recordForeign(card, ok, ms, area, outcome) {
     {
       const st = store[card.srcId] || { seen: 0, correct: 0, level: 0, streak: 0 };
       store[card.srcId] = applyOutcome({
-        ...st, last: now, fsrs: statReview(st, ok, ms, now),
+        /* Same one-lapse-per-session rule as the vocabulary deck: a retry inside the
+           session graduates or holds the card, it does not re-run the lapse formula. */
+        ...st, last: now, fsrs: firstPass ? statReview(st, ok, ms, now) : relearnStep(st.fsrs, ok, now),
         seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
         streak: ok ? (st.streak || 0) + 1 : 0,
         level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),

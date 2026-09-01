@@ -73,7 +73,42 @@ export function statReview(st, ok, ms, now = Date.now()) {
 
 export function boundMs(ms) { return ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0; }
 
-export function reviewOutcome(card, { got, ms, dir, area, foreign, now = Date.now() }) {
+/* ── a requeue inside one session is a relearning step, not a second review ──
+   A missed card comes back in the same sitting up to three times, and every pass used to
+   run the full FSRS update. So one bad sitting applied the LAPSE formula three times:
+   measured on a real card, stability fell 20 → 3.6 → 1.33 → 0.65 while difficulty climbed
+   5 → 6.7 → 8.39 → 10 and stuck there. Difficulty is clamped at 10, and stability growth
+   carries an (11 − D) factor, so a single bad session permanently flattened that card's
+   ability to gain stability ever again.
+
+   FSRS does not do this. It applies ONE lapse and then short learning steps: the retries
+   either graduate the card — back onto the curve with the post-lapse stability — or hold it
+   for another ten minutes. Neither touches S or D again.
+
+   The quick correct answer after a requeue was worthless for the opposite reason: elapsed
+   time is ~0, so retrievability is ~1, and recalling something you saw ninety seconds ago
+   teaches the model nothing. The card left the session in whatever state the last lapse
+   left it. */
+export function relearnStep(st, got, now = Date.now(), target = retention.target) {
+  if (!st || !(st.S > 0)) return st;
+  if (got) {
+    const ivl = Math.min(3650, Math.max(1, intervalFor(st.S, target)));
+    return { ...st, last: now, due: now + ivl * 86400000, ivl, relearning: false };
+  }
+  return { ...st, last: now, due: now + 10 * 60000, ivl: 10 / 1440, relearning: true };
+}
+
+export function reviewOutcome(card, { got, ms, dir, area, foreign, firstPass = true, now = Date.now() }) {
+  /* Requeue passes keep every legacy counter moving — accuracy and the done screen stay
+     honest — and leave the memory state to the one lapse that already happened. */
+  if (!firstPass) {
+    const isProdPass = dir === "prod";
+    const prior = isProdPass ? ((card && card.rfsrs) || null)
+                             : ((card && card.fsrs) || seedFromHistory(card || {}));
+    const next = relearnStep(prior, got, now);
+    return { prior, next, t: boundMs(ms), isProd: isProdPass,
+             s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
+  }
   if (foreign) {                       // kana / kanji / 10k decks go through statReview
     const prior = card && card.fsrs ? card.fsrs : (card && (card.seen || 0) > 0 ? seedFromHistory(card) : null);
     const next = statReview(card, got, ms, now);
