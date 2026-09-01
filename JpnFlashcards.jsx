@@ -452,12 +452,17 @@ async function loadDays() {
 // Dropping the cache is enough — the next loadDays() re-reads the merged log. Do NOT switch
 // logDay to a per-call read: it runs on every grade and relies on the cached object.
 onAfterPull(() => { _days = null; });
-async function logDay({ ok, ms, deck, fnew, area }) {
+async function logDay({ ok, ms, deck, fnew, dnew, area }) {
   await loadDays();
   const k = localDayKey();
   const d = _days[k] || (_days[k] = { rev: 0, ok: 0, ms: 0, frev: 0, fnew: 0 });
   d.rev += 1; if (ok) d.ok += 1; if (ms) d.ms += ms;
   if (deck === "freq") { d.frev += 1; if (fnew) d.fnew += 1; }
+  /* New CLASS-deck words met today. The frequency list has counted its own since it had a
+     visible quota; the main deck never did, so there was no way to cap daily intake or even
+     to say how much had been taken on. Absent on older day records, so every reader has to
+     treat undefined as zero rather than as "unknown". */
+  if (dnew) d.dnew = (d.dnew || 0) + 1;
   /* Per-deck counts, so the study plan can report which SKILL AREAS actually got worked
      rather than only how many reviews happened. Without this the plan is a wish list: it
      can state that listening matters and never notice that listening never happens. */
@@ -536,6 +541,13 @@ const tabLabel = (id) => (TABS.find((t) => t[0] === id) || [, id])[1];
 
 export default function JpnFlashcards() {
   const [cards, setCards] = useState([]);
+  /* A ref alongside the state, kept current by the effect below. recordResult is memoised
+     with an empty dependency list — deliberately, since it is handed to every session
+     component and rebuilding it on each answer would re-render all of them — so reading
+     `cards` from its closure would read the deck as it was on the first render and never
+     again. The ref is the same trick statsRef and missRef already use here. */
+  const cardsRef = useRef([]);
+  useEffect(() => { cardsRef.current = cards; }, [cards]);
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState("study");
   /* Switching tabs unmounts the running session, and the tab row sits a thumb's width above
@@ -766,7 +778,12 @@ export default function JpnFlashcards() {
      not a new review. See relearnStep in schedule.js for what that changes and why. */
   const recordResult = useCallback((id, got, dir, ms, area, outcome, firstPass = true) => {
     const t = ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0;  // sanity bounds: ignore misfires & walked-away cards
-    logDay({ ok: got, ms: t, deck: "class", area });
+    /* First sighting of this word, read BEFORE the update below increments seen — and only
+       on a first pass, so a requeue inside the same session is not counted as meeting a
+       second new word. */
+    const prior = cardsRef.current.find((c) => c.id === id);
+    const isNew = firstPass && !!prior && !(prior.seen || 0) && !(prior.rseen || 0);
+    logDay({ ok: got, ms: t, deck: "class", area, dnew: isNew });
     setCards((prev) => {
       const next = prev.map((c) => {
         if (c.id !== id) return c;
@@ -986,6 +1003,31 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [verdict, setVerdict] = useState(null);  // {ok, got, want} once that answer is checked
   const [showWhy, setShowWhy] = useState(false);  // per-card "why am I seeing this?"
   const [running, setRunning] = useState(false);
+  /* ── how many NEW words a day ──
+     The frequency list has had a visible, adjustable quota all along; the main deck's cap
+     was `maxNew: 6` sitting in session.mjs's defaults — never surfaced, never adjustable.
+     New words are the expensive part of a session (each is shown, then repeated once per
+     learning step), so this is the setting that most changes how long a session actually
+     runs, and it was the one nobody could see.
+
+     Quota minus what today already took, so it is a DAILY budget rather than a per-session
+     one: three short sessions cannot quietly take eighteen new words. */
+  const [newQuota, setNewQuota] = useState(NEW_QUOTA_DEFAULT);
+  const [newToday, setNewToday] = useState(0);
+  useEffect(() => { (async () => {
+    try {
+      const q = Number(await sGet(NEW_QUOTA_KEY));
+      if (NEW_QUOTAS.includes(q)) setNewQuota(q);
+    } catch (e) {}
+    try {
+      const d = (await loadDays())[localDayKey()];
+      setNewToday((d && d.dnew) || 0);
+    } catch (e) {}
+  })(); }, [running]);
+  /* Catch-up is the same lever at zero: reviews only, for the days when the backlog IS the
+     problem and taking on more is the last thing that would help. */
+  const [catchUp, setCatchUp] = useState(false);
+  const newLeft = catchUp ? 0 : Math.max(0, newQuota - newToday);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
   const [prodSet, setProdSet] = useState(() => new Set());
@@ -1259,11 +1301,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        decision and deliberately not taken here. */
     return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
                                   exclude: heldOut, scope: { mode: plan.practice, act: actNow },
+                                  /* The daily budget, not a per-session one — already
+                                     reduced by what today took, and zero in catch-up. */
+                                  maxNew: newLeft,
                                   act: actNow, recent: sessionLog.current });
     // retention.target: not a dep in the usual sense (it's a module `let`, not props/state) but
     // isLeech/dueness read it live, and the retention chip's onClick bumps `retentionPref`
     // right alongside it — so this recomputes on the same render that value changes.
-  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target, contextReady, actNow]);
+  }, [cards, foreign, plan, clozeIndex, heldOut, retention.target, contextReady, actNow, newLeft]);
 
   /* The queue still wants plain cards. Learning-step repeats are the same card appearing
      again later in the session, which is exactly what they should be. */
@@ -2237,6 +2282,33 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                       onClick={() => setPace(key)}>{label} <i>≈{mins}m</i></button>
             ))}
           </div>
+        )}
+        {/* New words a day, and the catch-up escape hatch. Sits with the pace chips because
+            it is the same kind of decision — how much this session should cost — and it is
+            the one that moves the number most. */}
+        {smartPool.length > 0 && (
+          <>
+            <div className="tc-modeseg" role="group" aria-label="New words a day">
+              {NEW_QUOTAS.map((q) => (
+                <button key={q} className={"tc-segbtn" + (!catchUp && newQuota === q ? " is-on" : "")}
+                        aria-pressed={!catchUp && newQuota === q}
+                        title={`At most ${q} new words a day`}
+                        onClick={() => { setCatchUp(false); setNewQuota(q); sSet(NEW_QUOTA_KEY, String(q)); }}>
+                  {q} <i>new/day</i>
+                </button>
+              ))}
+              <button className={"tc-segbtn" + (catchUp ? " is-on" : "")} aria-pressed={catchUp}
+                      title="Reviews only — clear the backlog without taking on more"
+                      onClick={() => setCatchUp((v) => !v)}>Catch up</button>
+            </div>
+            <p className="tc-planhint">
+              {catchUp
+                ? "Reviews only — nothing new until you turn this off."
+                : newLeft > 0
+                  ? `${newLeft} new word${newLeft === 1 ? "" : "s"} left today (${newToday} of ${newQuota} taken).`
+                  : `Day's new words are used up (${newToday}). Reviews carry on as normal.`}
+            </p>
+          </>
         )}
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
@@ -4587,6 +4659,12 @@ function conjAll() {
 }
 
 const QUIZ_KEY = "jpn101:quiz";
+
+/* The daily new-word budget for the class deck. 6 is what session.mjs already used as its
+   `maxNew` default, so leaving the setting untouched keeps today's behaviour exactly. */
+const NEW_QUOTA_KEY = "jpn101:newQuota";
+const NEW_QUOTAS = [3, 6, 10, 15];
+const NEW_QUOTA_DEFAULT = 6;
 
 /* ── every strand's items, in the one shape the composite reads ──
    {id, strand, stat, act}. The stat is that strand's OWN record, read straight from its own
