@@ -283,6 +283,26 @@ function setSyncState(s) {
   _syncWatchers.forEach((fn) => { try { fn(s); } catch (e) {} });
 }
 function watchSyncState(fn) { _syncWatchers.add(fn); return () => _syncWatchers.delete(fn); }
+
+/* ── is a session running right now ──
+   The tab row sits about twenty pixels above the flashcard on a phone, and the tab content
+   is chosen inline in the root render — so a thumb landing on a tab unmounts the session
+   and takes the queue, the combo, the first-try set and the missed list with it. No
+   confirmation, no resume, and until now no Quit button on Study either, which made that
+   destructive tap the only way out of a session.
+
+   Same mini-store shape as the sync state above: the sessions are scattered across
+   components that do not know about each other, and the root needs one boolean from all of
+   them. Each session reports while it is live and clears on unmount, so a crash or a
+   navigation cannot leave the guard stuck on. */
+let _sessionBusy = false;
+const _busyWatchers = new Set();
+function setSessionBusy(b) {
+  if (_sessionBusy === b) return;
+  _sessionBusy = b;
+  _busyWatchers.forEach((fn) => { try { fn(b); } catch (e) {} });
+}
+function watchSessionBusy(fn) { _busyWatchers.add(fn); return () => _busyWatchers.delete(fn); }
 function syncStateNow() { return _syncState; }
 function markSyncPending() { try { window.localStorage.setItem(SYNC_PENDING_KEY, String(Date.now())); } catch (e) {} }
 function clearSyncPending() { try { window.localStorage.removeItem(SYNC_PENDING_KEY); } catch (e) {} }
@@ -518,6 +538,16 @@ export default function JpnFlashcards() {
   const [cards, setCards] = useState([]);
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState("study");
+  /* Switching tabs unmounts the running session, and the tab row sits a thumb's width above
+     the flashcard on a phone — so the guard asks first rather than discarding a session on
+     a mis-tap. `busy` comes from whichever session is live; no tab knows about any other. */
+  const [busy, setBusy] = useState(false);
+  useEffect(() => watchSessionBusy(setBusy), []);
+  const [pendingTab, setPendingTab] = useState(null);
+  const go = (id) => {
+    if (id === tab) return;
+    if (busy) setPendingTab(id); else setTab(id);
+  };
   const [storageOk, setStorageOk] = useState(true);
   const [deckCorrupt, setDeckCorrupt] = useState(false);
 
@@ -824,9 +854,21 @@ export default function JpnFlashcards() {
                 twelve. The picker inside it remembers which you were on. */}
             {TABS.map(([id, label]) => (
               <button key={id} aria-current={tab === id ? "page" : undefined}
-                className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => setTab(id)}>{label}</button>
+                className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => go(id)}>{label}</button>
             ))}
           </nav>
+          {pendingTab && (
+            <div className="tc-leave" role="alertdialog" aria-label="End this session?"
+                 onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setPendingTab(null); } }}>
+              <span>End this session? Your answers so far are saved.</span>
+              {/* "Keep going" is focused and first: the mis-tap this exists for is far more
+                  common than actually wanting to leave mid-session. */}
+              <button autoFocus className="tc-btn tc-btn-sm tc-btn-primary"
+                      onClick={() => setPendingTab(null)}>Keep going</button>
+              <button className="tc-btn tc-btn-sm"
+                      onClick={() => { setTab(pendingTab); setPendingTab(null); }}>Leave</button>
+            </div>
+          )}
 
         </header>
 
@@ -1660,6 +1702,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   }, [redemption]);
 
   const done = running && (pos >= queue.length || !!stopped) && !redemption.length;
+  /* Tell the root a session is live, so a tab tap asks before throwing it away. Cleared on
+     unmount as well as on completion — a guard that can get stuck on would block every tab
+     in the app, which is a worse failure than the one it prevents. */
+  useEffect(() => { setSessionBusy(running && !done); return () => setSessionBusy(false); }, [running, done]);
 
   /* A finished session is the moment the other decks' snapshot is certainly stale.
      This has to live with the other hooks: there are early returns further down, and a
@@ -2522,6 +2568,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           ))}
         </div>
         <span className="tc-progtext">{passed.size} / {poolSize}</span>
+        {/* Kana, Drill, Kanji and Oral all had a Quit; Study did not, so the only way out of
+            a session was to tap a tab — which threw the session away silently. */}
+        <button className="tc-fchip" onClick={() => { stopJa(); setRunning(false); }}>Quit</button>
         {xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
         {combo >= 2 && (
           <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
@@ -5292,6 +5341,8 @@ function Kana() {
   const [script, setScript] = useState("hira");     // hira | kata
   const [sets, setSets] = useState(() => new Set(["base"]));   // any mix of KANA_GROUPS keys
   const [view, setView] = useState("setup");        // setup | session | summary | chart
+  // Live-session guard: a tab tap asks before discarding this. Cleared on unmount too.
+  useEffect(() => { setSessionBusy(view === "session"); return () => setSessionBusy(false); }, [view]);
   const [sessionLen, setSessionLen] = useState(20);
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
@@ -8874,6 +8925,8 @@ function Kanji({ cards }) {
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
   const [view, setView] = useState("home");     // home | session | summary
+  // Live-session guard: a tab tap asks before discarding this. Cleared on unmount too.
+  useEffect(() => { setSessionBusy(view === "session"); return () => setSessionBusy(false); }, [view]);
   const [queue, setQueue] = useState([]);       // array of steps
   const [pos, setPos] = useState(0);
   const [choices, setChoices] = useState([]);
@@ -9360,6 +9413,8 @@ function ConjDrill() {
   const [forms, setForms] = useState(() => new Set(CONJ_FORMS.map((f) => f.id)));   // whole grid by default
   const [len, setLen] = useState(20);
   const [view, setView] = useState("setup");     // setup | session | summary
+  // Live-session guard: a tab tap asks before discarding this. Cleared on unmount too.
+  useEffect(() => { setSessionBusy(view === "session"); return () => setSessionBusy(false); }, [view]);
   const [stats, setStats] = useState({});
   const statsRef = useRef({});
   const [queue, setQueue] = useState([]);

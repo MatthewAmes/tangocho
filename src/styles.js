@@ -701,6 +701,10 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-modeseg{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;}
 /* The one frame the Kanji・Kana tab waits for its stored choice. Holds the same floor the
    rest of the tab bodies use, so restoring the picker does not shove the page upward. */
+/* The mid-session leave guard, under the tab row. Warm rather than alarming: this is a
+   mis-tap most of the time, not a decision. */
+.tc-leave{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 0;padding:10px 12px;
+  border-radius:var(--r-m);font-size:14px;background:rgba(216,72,47,.14);border:1px solid rgba(216,72,47,.4);}
 .tc-charswait{min-height:340px;}
 .tc-modeseg .tc-segbtn{flex:1 1 28%;min-width:96px;padding:9px 10px;font-size:13px;text-align:center;}
 /* The minutes a pace buys, set inside its own button. Said quietly: the label is the
