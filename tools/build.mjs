@@ -164,18 +164,17 @@ fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
 /* Textbook scripts, when they have been generated. Optional by design: the file is
    gitignored (it is book content and this repo is public), so a fresh clone builds fine
    without it and the app simply falls back to the hand-entered Vol 1 scenes. */
-{
-  const priv = path.join(ROOT, "data", "private", "scripts-books.json");
-  if (fs.existsSync(priv)) {
-    const raw = fs.readFileSync(priv, "utf8");
-    try {
-      const n = JSON.parse(raw).length;
-      fs.writeFileSync(path.join(CF_PUBLIC, "scripts-books.json"), raw, "utf8");
-      console.log(`    scripts ${n} textbook scenes -> cf/public (not committed)`);
-    } catch (e) {
-      console.error("BUILD ABORTED — data/private/scripts-books.json is not valid JSON.");
-      process.exit(1);
-    }
+for (const [file, label] of [["scripts-books.json", "textbook scenes"], ["quizzes.json", "activity-book quizzes"]]) {
+  const priv = path.join(ROOT, "data", "private", file);
+  if (!fs.existsSync(priv)) continue;
+  const raw = fs.readFileSync(priv, "utf8");
+  try {
+    const n = JSON.parse(raw).length;
+    fs.writeFileSync(path.join(CF_PUBLIC, file), raw, "utf8");
+    console.log(`    ${file.replace(/\.json$/, "").padEnd(14)} ${n} ${label} -> cf/public (not committed)`);
+  } catch (e) {
+    console.error(`BUILD ABORTED — data/private/${file} is not valid JSON.`);
+    process.exit(1);
   }
 }
 

@@ -1484,6 +1484,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
   font-variant-numeric:tabular-nums;}
 /* The strand breakdown under each volume bar. Borrows the act-row layout wholesale so the
    two read as the same kind of detail — one splits a volume by act, the other by strand. */
+/* The exercise prompt. Sized like a card front rather than body text: it is the question,
+   and everything else on the screen is scaffolding around it. */
+.tc-quizprompt{margin:6px 0 14px;font-size:20px;line-height:1.5;color:#fff;}
 .tc-volstrands{display:flex;flex-direction:column;gap:6px;margin:8px 0 0;}
 .tc-strandrow{display:flex;align-items:center;gap:10px;}
 .tc-strandname{font:var(--t-caps);letter-spacing:.05em;color:var(--mut-2);min-width:82px;}
