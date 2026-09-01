@@ -26,7 +26,10 @@ import { fileURLToPath } from "node:url";
 // "No build steps found" on Netlify's side. Keep it that way.
 const TOOLS = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(TOOLS, "..");
-const SRC = path.join(ROOT, "JpnFlashcards.jsx");
+/* main.jsx, not JpnFlashcards.jsx. The app file no longer mounts anything — that moved to
+   the entry so the app can be imported in Node without a DOM (TODO-212). The mount checks
+   below are unchanged and still meaningful: they now prove main.jsx survived bundling. */
+const SRC = path.join(ROOT, "main.jsx");
 const HTML = path.join(ROOT, "index.html");
 
 // ── build stamp ───────────────────────────────────────────────────────────────
@@ -82,7 +85,7 @@ const must = [
 for (const [what, re] of must) {
   if (!re.test(code)) {
     console.error(`BUILD ABORTED — bundle is missing its ${what}.`);
-    console.error("JpnFlashcards.jsx must end with the ReactDOM.createRoot(...).render(...) call.");
+    console.error("main.jsx must call ReactDOM.createRoot(document.getElementById(\"root\")).render(...).");
     process.exit(1);
   }
 }

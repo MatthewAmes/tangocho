@@ -178,7 +178,18 @@ function signOutGoogle() {
   setSyncState("idle");           // stop showing "Saving…"/"Not saved yet" once there's nowhere to save to
   setAuthState("signed-out");
 }
-let _googleEmail = (() => { try { return window.localStorage.getItem(USER_EMAIL_KEY); } catch (e) { return null; } })();
+/* `undefined` means "not read yet", `null` means "read, nobody signed in" — the distinction
+   is what lets the first read happen on demand rather than at import. Reading storage while
+   the module is merely being LOADED is what made this file impossible to import in Node,
+   and an app that cannot be imported cannot be tested except by slicing functions out of it
+   with a regex, which is what tools/test-input-engine.mjs used to do. */
+let _googleEmail = undefined;
+function googleEmailNow() {
+  if (_googleEmail === undefined) {
+    try { _googleEmail = window.localStorage.getItem(USER_EMAIL_KEY); } catch (e) { _googleEmail = null; }
+  }
+  return _googleEmail;
+}
 
 // auth mini-store: lets any component (Browse, the root loader) react to sign-in,
 // sign-out, and — the case nothing used to handle — a session going bad mid-session.
@@ -345,7 +356,9 @@ function scheduleCloudPush() {
   if (_cloudPushTimer) clearTimeout(_cloudPushTimer);
   _cloudPushTimer = setTimeout(() => pushCloudNow(), 2500);
 }
-if (typeof window !== "undefined") {
+/* Installed by installBrowserSideEffects() at the bottom of this file rather than fired on
+   import — see the comment there for why. */
+function installSyncListeners() {
   // retry the moment there's any reason to think it might work now
   window.addEventListener("online", () => { if (hasSyncPending()) pushCloudNow(); });
   document.addEventListener("visibilitychange", () => {
@@ -394,21 +407,21 @@ async function pullAndMergeCloud() {
    little extra recall. 0.90 is the researched default and where the review-count curve
    starts climbing steeply. */
 const RETENTION_KEY = "jpn101:retention";
-try {
-  const r = Number(window.localStorage.getItem(RETENTION_KEY));
-  if (r >= 0.7 && r <= 0.97) retention.target = r;
-} catch (e) {}
-function setRetention(r) {
-  retention.target = Math.min(0.97, Math.max(0.7, r));
-  sSet(RETENTION_KEY, String(retention.target));   // async, fire-and-forget; schedules a push like any other setting
-}
-// read once at module load, so a target changed on another device needs this to take effect
-onAfterPull(() => {
+/* Called by installBrowserSideEffects() before the first render, so the stored target is in
+   place by the time anything schedules against it — and by onAfterPull below, so a target
+   changed on another device takes effect here. */
+function loadRetention() {
   try {
     const r = Number(window.localStorage.getItem(RETENTION_KEY));
     if (r >= 0.7 && r <= 0.97) retention.target = r;
   } catch (e) {}
-});
+}
+function setRetention(r) {
+  retention.target = Math.min(0.97, Math.max(0.7, r));
+  sSet(RETENTION_KEY, String(retention.target));   // async, fire-and-forget; schedules a push like any other setting
+}
+// read once at startup, so a target changed on another device needs this to take effect
+onAfterPull(loadRetention);
 
 const DAYS_KEY = "jpn101:days";
 let _days = null;
@@ -5604,9 +5617,23 @@ function Kana() {
 
 
 
-if (TTS_OK) {
-  pickJpVoice();
-  try { window.speechSynthesis.onvoiceschanged = pickJpVoice; } catch (e) {}
+/* ── everything this module used to do just by being loaded ──
+   Reading storage, registering listeners and asking the speech engine for voices all used
+   to happen at import. In a browser that is invisible; in Node it throws, which is why this
+   file could not be imported and why its tests had to slice functions out of the source
+   text with a regex instead of importing them.
+
+   main.jsx calls this synchronously before the first render, so the ordering is unchanged —
+   the only difference is that loading the module and starting the app are now two separate
+   acts, and only the second one touches the browser. */
+export function installBrowserSideEffects() {
+  if (typeof window === "undefined") return;
+  installSyncListeners();
+  loadRetention();
+  if (TTS_OK) {
+    pickJpVoice();
+    try { window.speechSynthesis.onvoiceschanged = pickJpVoice; } catch (e) {}
+  }
 }
 
 
@@ -6735,13 +6762,13 @@ function Browse({ cards, onRemove, onClear, onRestore }) {
   const [filter, setFilter] = useState("all");   // all | review | new | mastered
   const [sortWeak, setSortWeak] = useState(true);
 
-  const [googleEmail, setGoogleEmail] = useState(() => _googleEmail);
+  const [googleEmail, setGoogleEmail] = useState(() => googleEmailNow());
   const [authState, setAuthStateUi] = useState(authStateNow);
-  useEffect(() => watchAuthState((s) => { setAuthStateUi(s); setGoogleEmail(_googleEmail); }), []);
+  useEffect(() => watchAuthState((s) => { setAuthStateUi(s); setGoogleEmail(googleEmailNow()); }), []);
   const googleBtnRef = useRef(null);
   useEffect(() => {
     if (!googleEmail) renderGoogleButton(googleBtnRef.current);
-    return initGoogleAuth(() => setGoogleEmail(_googleEmail));   // returns unsubscribe — effect cleanup
+    return initGoogleAuth(() => setGoogleEmail(googleEmailNow()));   // returns unsubscribe — effect cleanup
   }, [googleEmail]);
 
   const summary = useMemo(() => {
@@ -9563,7 +9590,6 @@ function fmtIn(ms) {
 
 
 /* ── mount ── */
-import ReactDOM from "react-dom/client";
 /* ── the last line of defence ──
    A render error anywhere unmounts the whole tree, and an unmounted tree is a black screen.
    That happened for real: one frame at the end of a session had no card to show, something
@@ -9574,7 +9600,7 @@ import ReactDOM from "react-dom/client";
    button rather than the session — and because the error should be visible rather than
    requiring a console to find. Deliberately not styled with the glass tokens: if the
    stylesheet is what broke, this still has to render. */
-class Boundary extends React.Component {
+export class Boundary extends React.Component {
   constructor(props) { super(props); this.state = { err: null }; }
   static getDerivedStateFromError(err) { return { err }; }
   componentDidCatch(err, info) {
@@ -9605,6 +9631,3 @@ class Boundary extends React.Component {
   }
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <Boundary><JpnFlashcards /></Boundary>
-);
