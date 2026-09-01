@@ -34,7 +34,21 @@ export function buildClozeIndex(scripts = [], cards = []) {
   for (const script of scripts) {
     for (const line of (script && script.lines) || []) {
       const text = lineText(line);
-      if (!text || !line.en) continue;
+      /* A line with no English is still usable Japanese. It used to be dropped here, which
+         quietly cost the app every imported scene: 318 lines went into this function and
+         contributed nothing, because they arrive from the course website with the Japanese
+         and no translation.
+
+         Not every exercise needs one. A particle gap asks which particle does the
+         grammatical work in a Japanese sentence — fillDrill takes `en` only to show as a
+         prompt and defaults it to "". Listening does not need one either. What genuinely
+         needs English is the exercise that asks "which word belongs here", and the
+         production ladder, which builds an English cue to answer in Japanese.
+
+         So the line is admitted and the English requirement moves to the exercises that
+         actually depend on it (see activityFor). `en` stays "" rather than absent, so the
+         difference is visible to a consumer rather than something it has to infer. */
+      if (!text) continue;
       for (const c of terms) {
         const at = text.indexOf(c.term);
         if (at < 0) continue;
@@ -43,7 +57,7 @@ export function buildClozeIndex(scripts = [], cards = []) {
         if (!byTerm.has(c.id)) byTerm.set(c.id, []);
         const list = byTerm.get(c.id);
         if (list.length < 4) {
-          list.push({ text, at, en: line.en, romaji: line.romaji || "", script: script.name || script.id });
+          list.push({ text, at, en: line.en || "", romaji: line.romaji || "", script: script.name || script.id });
         }
       }
     }

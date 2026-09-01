@@ -571,7 +571,14 @@ export function deriveObjectives(act, opts = {}) {
 
   const withMeaning = mine.filter((c) => c && c.meaning);
   const typeable = mine.filter((c) => c && c.reading);
-  const inContext = mine.filter((c) => context.has(c.term));
+  /* A hit that carries English, not merely a hit. The index used to drop untranslated lines
+     outright, so being in it implied a word-cloze was possible and this could just ask
+     `context.has`. It now admits them, because a PARTICLE gap is answerable from Japanese
+     alone — but this objective is the word-cloze one (format: "cloze" above), and that
+     question is "which word belongs here", which without a meaning cue is "guess the
+     sentence". So the English requirement that used to live in the index lives here, where
+     it is actually about the exercise being built. */
+  const inContext = mine.filter((c) => (context.get(c.term) || []).some((h) => h && h.en));
   const withLines = dialogues.filter((s) => (s.lines || []).length > 0);
   const translated = dialogues.filter((s) => (s.lines || []).some((l) => l && l.en));
   // A response needs something to respond TO, so a one-line dialogue supports no such drill.

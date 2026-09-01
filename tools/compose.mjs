@@ -74,7 +74,13 @@ export function activityFor(pick, material = {}, opts = {}) {
     // A particle gap asks about grammar rather than vocabulary, which is a different and
     // usually harder question about the same sentence. Only offered when the sentence
     // actually contains one the drill generator can grade.
-    return material.hasParticleGap && material.hasParticleGap(sent) ? ACTIVITY.TAPFILL : ACTIVITY.CLOZE;
+    if (material.hasParticleGap && material.hasParticleGap(sent)) return ACTIVITY.TAPFILL;
+    /* Word-cloze asks "which word belongs in this gap", and the English is what makes that
+       answerable — without it the question is "guess the sentence", which tests nothing and
+       cannot be marked fairly. Sentences with no translation reach here now that the index
+       admits them for the sake of particle drills, so this is the point where the ones that
+       cannot carry a fair word-cloze step back to recognition. */
+    return sent.en ? ACTIVITY.CLOZE : ACTIVITY.MC;
   }
 
   if (fmt === "type") {

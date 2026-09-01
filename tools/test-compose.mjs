@@ -163,5 +163,33 @@ t("describeComposition counts kinds, and survives an empty session", () => {
   eq(d.n, 3); eq(d.kinds, 2); eq(d.counts.mc, 2);
 });
 
+console.log("=== a sentence with no translation ===");
+/* Imported scenes carry Japanese and no English, and the cloze index now admits them so
+   particle drills can use them. So activityFor sees sentences without `en` for the first
+   time, and has to tell apart the exercises that can live without one from those that
+   cannot. */
+const enless = { sentence: "ねこがいます", en: "" };
+const withEn = { sentence: "ねこがいます", en: "There is a cat." };
+const mat = (sent, particle) => ({
+  sentenceFor: () => sent,
+  hasParticleGap: () => particle,
+  chunkCount: () => 4,
+});
+
+t("a particle gap needs no English — the whole reason for admitting these lines", () => {
+  eq(activityFor({ id: "a", format: "cloze", cue: CUE.FREE }, mat(enless, true)), ACTIVITY.TAPFILL);
+});
+t("a word-cloze without English steps back rather than asking unfairly", () => {
+  // "which word belongs in this gap", with no meaning cue, is "guess the sentence".
+  eq(activityFor({ id: "a", format: "cloze", cue: CUE.FREE }, mat(enless, false)), ACTIVITY.MC);
+});
+t("with English, word-cloze is offered exactly as before", () => {
+  eq(activityFor({ id: "a", format: "cloze", cue: CUE.FREE }, mat(withEn, false)), ACTIVITY.CLOZE);
+});
+t("the production ladder still needs English, because its cue IS the English", () => {
+  eq(activityFor({ id: "a", format: "type", cue: CUE.STRONG }, mat(enless, false)), ACTIVITY.TYPE);
+  eq(activityFor({ id: "a", format: "type", cue: CUE.STRONG }, mat(withEn, false)), ACTIVITY.ORDER);
+});
+
 console.log(`\nall ${run} compose tests ${fail ? `— ${fail} FAILED` : "passed"}`);
 process.exitCode = fail ? 1 : 0;

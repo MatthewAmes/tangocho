@@ -94,5 +94,23 @@ t("the same seed gives the same options in the same order", () => {
   eq(clozeChoices(CARDS[0], CARDS, 3, 4).map((c) => c.id).join(","), a);
 });
 
+
+/* A line with no translation is still usable Japanese. Every imported scene arrives that
+   way — Japanese and speaker, no English — and the index used to drop all 318 of them, so
+   they contributed nothing to any exercise. The English requirement belongs to the
+   exercises that actually need it, not to the index. */
+t("a line with no English still enters the index", () => {
+  const scripts = [{ name: "x", lines: [{ tokens: [{ t: "ねこがいます" }], en: "" }] }];
+  const deck = [{ id: "c1", term: "ねこ", reading: "ねこ" }];
+  const idx = buildClozeIndex(scripts, deck);
+  eq(idx.size, 1, "the sentence is Japanese and the word is in it");
+  eq(idx.get("c1")[0].en, "", "missing English is \"\" rather than undefined, so callers can see it");
+});
+t("a line WITH English is unchanged", () => {
+  const scripts = [{ name: "x", lines: [{ tokens: [{ t: "ねこがいます" }], en: "There is a cat." }] }];
+  const idx = buildClozeIndex(scripts, [{ id: "c1", term: "ねこ", reading: "ねこ" }]);
+  eq(idx.get("c1")[0].en, "There is a cat.");
+});
+
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} cloze tests passed`);
 process.exit(fail ? 1 : 0);
