@@ -4113,7 +4113,7 @@ function loadBookScripts() {
        changes on every commit, so a new build fetches once and then caches hard. */
     _bookScriptsPromise = fetch(`/scripts-books.json?v=${BUILD}`, { cache: "force-cache" })
       .then((r) => (r.ok ? r.json() : []))
-      .then((list) => { _bookScripts = Array.isArray(list) ? list : []; return _bookScripts; })
+      .then((list) => { _bookScripts = Array.isArray(list) ? list : []; if (!_bookScripts.length) console.warn("scripts-books.json served nothing usable — the asset is missing from this deploy"); return _bookScripts; })
       .catch(() => { _bookScripts = []; return _bookScripts; });
   }
   return _bookScriptsPromise;
@@ -4130,7 +4130,7 @@ function loadQuizzes() {
   if (!_quizzesPromise) {
     _quizzesPromise = fetch(`/quizzes.json?v=${BUILD}`, { cache: "force-cache" })
       .then((r) => (r.ok ? r.json() : []))
-      .then((list) => { _quizzes = Array.isArray(list) ? list : []; return _quizzes; })
+      .then((list) => { _quizzes = Array.isArray(list) ? list : []; if (!_quizzes.length) console.warn("quizzes.json served nothing usable — the asset is missing from this deploy"); return _quizzes; })
       .catch(() => { _quizzes = []; return _quizzes; });
   }
   return _quizzesPromise;

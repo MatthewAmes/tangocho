@@ -164,16 +164,47 @@ fs.writeFileSync(path.join(CF_PUBLIC, "index.html"), out, "utf8");
 /* Textbook scripts, when they have been generated. Optional by design: the file is
    gitignored (it is book content and this repo is public), so a fresh clone builds fine
    without it and the app simply falls back to the hand-entered Vol 1 scenes. */
+/* ── book assets, and why this reaches over the network ──
+   These files are gitignored on purpose: they are book content and the repo is public. The
+   consequence was not obvious and cost the deployed app both of them. `wrangler deploy`
+   uploads whatever cf/public holds, CI builds from a clean checkout that by definition has
+   no data/private/, so every push to dev rebuilt cf/public WITHOUT the assets and deployed
+   that — silently deleting the scripts and the quizzes from the live site. Worse, the
+   Worker answers a missing file with the SPA fallback, so both came back HTTP 200 serving
+   index.html and the app just saw invalid JSON and showed an empty tab.
+
+   So when the local copy is missing, the deployed copy is fetched and passed through. A
+   machine that has the books rebuilds them from source; CI carries forward what is already
+   live and cannot quietly drop it. If neither is available the build refuses to write an
+   asset at all rather than shipping an empty one. */
+const LIVE = process.env.TANGOCHO_ORIGIN || "https://tangocho.deskbuddies.workers.dev";
+
 for (const [file, label] of [["scripts-books.json", "textbook scenes"], ["quizzes.json", "activity-book quizzes"]]) {
   const priv = path.join(ROOT, "data", "private", file);
-  if (!fs.existsSync(priv)) continue;
-  const raw = fs.readFileSync(priv, "utf8");
+  let raw = null, from = "";
+
+  if (fs.existsSync(priv)) { raw = fs.readFileSync(priv, "utf8"); from = "data/private"; }
+  else {
+    try {
+      const res = await fetch(`${LIVE}/${file}`);
+      const text = res.ok ? await res.text() : "";
+      // A miss returns index.html with a 200, so "did it parse as an array" is the only
+      // honest test of whether an asset actually came back.
+      const parsed = text && text.trim().startsWith("[") ? JSON.parse(text) : null;
+      if (Array.isArray(parsed) && parsed.length) { raw = text; from = "live site"; }
+    } catch (e) { /* offline, or the site has never had it — handled below */ }
+  }
+
+  if (raw == null) {
+    console.log(`    ${file.replace(/\.json$/, "").padEnd(14)} absent locally and not live — skipped`);
+    continue;
+  }
   try {
     const n = JSON.parse(raw).length;
     fs.writeFileSync(path.join(CF_PUBLIC, file), raw, "utf8");
-    console.log(`    ${file.replace(/\.json$/, "").padEnd(14)} ${n} ${label} -> cf/public (not committed)`);
+    console.log(`    ${file.replace(/\.json$/, "").padEnd(14)} ${n} ${label} -> cf/public (from ${from}, not committed)`);
   } catch (e) {
-    console.error(`BUILD ABORTED — data/private/${file} is not valid JSON.`);
+    console.error(`BUILD ABORTED — ${file} is not valid JSON.`);
     process.exit(1);
   }
 }
