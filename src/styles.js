@@ -48,7 +48,14 @@ body{min-height:100%;overscroll-behavior-y:none;}
     radial-gradient(90% 55% at 50% 112%, rgba(245,158,11,.04) 0%, rgba(245,158,11,0) 60%),
     var(--bg);
   position:relative;
-  min-height:100vh; padding:24px 16px 40px; box-sizing:border-box;
+  /* dvh after vh, so browsers without it keep the old behaviour: 100vh on mobile is the
+     viewport with the URL bar RETRACTED, which leaves the bottom of the page under the bar
+     until you scroll. env() insets are 0 on every device without a notch, so the padding
+     is unchanged there and only grows where hardware actually overlaps the layout. */
+  min-height:100vh; min-height:100dvh;
+  padding:calc(24px + env(safe-area-inset-top,0px)) calc(16px + env(safe-area-inset-right,0px))
+          calc(40px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));
+  box-sizing:border-box;
 }
 .tc-jp{font-family:"Noto Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;}
 
@@ -104,8 +111,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
                                     mask-image:linear-gradient(90deg,transparent 0,#000 34px,#000 calc(100% - 34px),transparent 100%);}
 .tc-tab{scroll-snap-align:center;flex:0 0 auto;}
 .tc-tab{appearance:none;border:0;background:transparent;color:var(--mut-2);
-  font:inherit;font-size:14px;font-weight:600;letter-spacing:.01em;min-height:42px;padding:8px 15px;border-radius:99px;cursor:pointer;transition:background .15s,color .15s,transform .1s;white-space:nowrap;}
-.tc-tab:hover{color:#fff;}
+  font:inherit;font-size:14px;font-weight:600;letter-spacing:.01em;min-height:var(--tap);padding:8px 15px;border-radius:99px;cursor:pointer;transition:background .15s,color .15s,transform .1s;white-space:nowrap;}
 .tc-tab:active{transform:scale(.96);}
 .tc-tab.is-on{background:var(--surface-3);color:var(--washi);font-weight:600;}
 
@@ -123,9 +129,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-field{border:0;margin:0;padding:0;}
 .tc-field legend{font-size:13px;color:var(--mut-2);margin-bottom:9px;padding:0;}
 .tc-segbtn{appearance:none;border:0;background:rgba(255,255,255,.07);color:var(--washi);
-  font:inherit;font-size:14px;font-weight:500;min-height:40px;padding:9px 16px;border-radius:var(--r-s);cursor:pointer;transition:border-color .15s,background .15s,transform .1s;}
+  font:inherit;font-size:14px;font-weight:500;min-height:var(--tap);padding:9px 16px;border-radius:var(--r-s);cursor:pointer;transition:border-color .15s,background .15s,transform .1s;}
 .tc-segbtn:active{transform:scale(.96);}
-.tc-segbtn:hover{background:rgba(255,255,255,.14);}
 /* The armed state once asked for border-color on a rule that sets border:0, so it came
    down to a background that reads DARKER than the translucent unarmed one. The token it
    wanted is drawn as an inset ring instead — no layout box, no new colour. */
@@ -168,7 +173,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   color:var(--washi);font:inherit;min-height:62px;padding:0;border-radius:16px;cursor:pointer;
   transition:box-shadow .15s,transform .1s;}
 .tc-batchchip:active{transform:scale(.97);}
-.tc-batchchip:hover{box-shadow:0 0 30px -8px rgba(255,255,255,.28);}
 .tc-batchglass{position:relative;z-index:1;height:100%;box-sizing:border-box;min-height:62px;
   display:flex;flex-direction:column;gap:3px;justify-content:center;padding:12px 40px 12px 14px;
   background:linear-gradient(155deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.05) 55%, rgba(255,255,255,.02) 100%);
@@ -200,9 +204,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-start,.tc-btn-got,.tc-btn-miss{text-transform:none;letter-spacing:.01em;}
 .tc-start{font-size:16px;font-weight:600;}
 .tc-btn-danger{border-color:rgba(216,72,47,.5);color:var(--shu-soft);}
-.tc-btn-danger:hover{background:rgba(216,72,47,.16);}
 .tc-btn-got{flex:1;background:var(--ok);border-color:var(--ok);color:#04231a;box-shadow:0 6px 16px -8px rgba(16,185,129,.6);}
-.tc-btn-got:hover{filter:brightness(1.08);background:#3d9150;}
 .tc-btn-good{background:var(--ok) !important;border-color:var(--ok) !important;color:#04231a !important;box-shadow:0 6px 16px -8px rgba(16,185,129,.6);}
 .tc-btn-bad{background:var(--shu) !important;border-color:var(--shu) !important;box-shadow:0 6px 16px -8px rgba(224,101,90,.55);}
 .tc-btn-miss{flex:1;}
@@ -353,7 +355,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   box-shadow:0 24px 54px -22px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.14);}
 .tc-learn-tap{cursor:pointer;}
 .tc-learn-tap:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:3px;}
-.tc-learn-tap:hover{background:radial-gradient(140% 130% at 30% -12%, rgba(124,92,255,.3) 0%, rgba(64,84,168,.16) 45%, rgba(255,255,255,.06) 80%);}
 .tc-learnchip{background:rgba(120,220,170,.2);color:#c8f5df;}
 /* The other side of the card from the new-word chip, because both are absolute and both
    want the top edge. Amber: this is a heads-up about where the word came from, not a
@@ -376,7 +377,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-listenprompt .tc-speakbtn{font-size:34px;padding:16px 20px;}
 .tc-noaudio{appearance:none;margin-top:4px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);
   color:rgba(255,255,255,.75);border-radius:99px;font:inherit;font-size:12px;padding:6px 13px;cursor:pointer;}
-.tc-noaudio:hover{background:rgba(255,255,255,.13);color:#fff;}
 .tc-listenreveal{margin-top:10px;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;font-size:22px;color:rgba(255,255,255,.8);}
 .tc-mcopts{display:flex;flex-direction:column;gap:9px;width:min(100%,380px);}
 
@@ -387,7 +387,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcopt{appearance:none;text-align:left;font:inherit;font-size:16px;line-height:1.4;color:#fff;
   background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.16);border-radius:12px;
   padding:12px 15px;cursor:pointer;transition:background .12s,border-color .12s;}
-.tc-mcopt:hover:not(:disabled){background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.3);}
 .tc-mcopt:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
 .tc-mcopt:disabled{cursor:default;opacity:.55;}
 .tc-mcopt.is-answer{background:rgba(90,220,150,.2);border-color:rgba(90,220,150,.65);color:#d6ffe9;opacity:1;}
@@ -410,7 +409,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-whywrap{display:flex;justify-content:center;margin:-6px 0 14px;}
 .tc-whybtn{appearance:none;background:none;border:0;cursor:pointer;font:inherit;font-size:12px;
   color:var(--mut-2);text-decoration:underline;text-underline-offset:3px;padding:4px 8px;}
-.tc-whybtn:hover{color:#fff;}
 .tc-whytext{margin:0;max-width:46ch;text-align:center;font-size:13px;line-height:1.6;color:var(--mut-2);
   background:rgba(255,255,255,.05);border-radius:8px;padding:9px 14px;}
 .tc-sessum{margin:18px auto 0;max-width:340px;text-align:left;background:rgba(255,255,255,.05);
@@ -551,7 +549,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rpill{appearance:none;border:1px solid var(--outline-2);background:var(--surface-2);
   color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;
   cursor:pointer;transition:all .15s;white-space:nowrap;flex:none;}
-.tc-rpill:hover{color:#fff;}
 .tc-rpill.is-on{background:var(--surface-3);border-color:var(--info);color:var(--washi);font-weight:600;}
 
 .tc-grade{display:flex;gap:10px;}
@@ -613,7 +610,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rowstat{font-size:12px;color:var(--mut-2);font-variant-numeric:tabular-nums;text-align:right;}
 .tc-del{appearance:none;border:0;background:transparent;color:var(--mut-2);cursor:pointer;font-size:14px;min-width:32px;min-height:32px;border-radius:8px;
   padding:4px 6px;border-radius:8px;transition:all .15s;}
-.tc-del:hover{color:var(--shu-soft);background:rgba(216,72,47,.12);}
 
 /* add */
 .tc-addhelp{font-size:14px;color:var(--mut-2);line-height:1.6;margin:0 0 14px;}
@@ -690,9 +686,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 /* focus + insights */
 .tc-focus-btn{margin-top:10px;border-color:var(--shu);color:var(--shu-soft);}
-.tc-focus-btn:hover{background:rgba(216,72,47,.12);}
 .tc-smart-btn{background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
-.tc-smart-btn:hover{filter:brightness(1.12);}
 /* The practice-mode picker that sits above Smart Review. It borrows every colour from
    .tc-segbtn so the three modes read as the same control as the pickers on Sentences and
    Scripts, and keeps that rule's 40px touch target. (The dead flex .tc-seg row rule and
@@ -782,7 +776,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-backbtn{border-color:rgba(255,255,255,.3);font-weight:600;min-width:84px;}
 .tc-hookbtn{appearance:none;margin-top:10px;border:0;background:rgba(255,255,255,.12);color:rgba(255,255,255,.75);font:inherit;font-size:13px;font-weight:500;min-height:34px;padding:6px 14px;border-radius:99px;cursor:pointer;transition:background .15s,transform .1s;}
 .tc-hookbtn:active{transform:scale(.95);}
-.tc-hookbtn:hover{background:rgba(43,38,32,.06);}
 .tc-hooktext{margin:10px 0 0;font-size:14px;line-height:1.55;color:rgba(255,255,255,.92);background:rgba(216,72,47,.18);border:0;border-radius:12px;padding:9px 13px;max-width:34ch;cursor:default;}
 .tc-debrief{margin:14px auto 0;font-size:14px;line-height:1.6;color:var(--washi);background:rgba(255,255,255,.05);border:1px solid rgba(216,72,47,.35);border-radius:12px;padding:12px 16px;max-width:52ch;text-align:left;}
 .tc-debrief-busy{border-color:rgba(255,255,255,.15);color:var(--mut-2);}
@@ -861,7 +854,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sentinput:focus-visible{outline:2px solid var(--info);outline-offset:1px;border-color:var(--info);}
 .tc-sentbtns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
 .tc-idk{border-color:rgba(216,72,47,.45);color:var(--shu-soft);}
-.tc-idk:hover{background:rgba(216,72,47,.12);}
 .tc-senthint{margin:0;font-size:14px;color:var(--mut);background:var(--washi-2);padding:10px 12px;border-radius:8px;}
 .tc-sentresult{margin:0;font-size:18px;font-weight:700;}
 .tc-sentresult.ok{color:#2e7d32;}
@@ -876,7 +868,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-scriptbulk{align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;margin-bottom:8px;border-radius:var(--r-m);background:var(--surface-2);border:1px solid var(--outline-2);}
 .tc-scriptbulk .tc-scriptmeta{flex:1;min-width:0;}
 .tc-scriptopen{flex:1;appearance:none;text-align:left;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:var(--washi);font:inherit;padding:14px 16px;border-radius:12px;cursor:pointer;transition:all .15s;display:flex;justify-content:space-between;align-items:center;}
-.tc-scriptopen:hover{border-color:var(--shu);background:rgba(216,72,47,.1);}
 .tc-scriptname{font-size:16px;font-weight:600;color:#fff;}
 .tc-scriptmeta{font-size:12px;color:var(--mut-2);}
 .tc-cue{margin:0;font-size:15px;color:rgba(255,255,255,.6);font-style:italic;}
@@ -891,7 +882,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   border:1px solid var(--outline-2);border-radius:var(--r-m);color:var(--washi);
   background:linear-gradient(180deg,rgba(59,130,246,.14),rgba(59,130,246,.05));
   transition:border-color .15s,background .15s,transform .1s;}
-.tc-listenstart:hover{border-color:var(--info);}
 .tc-listenstart:active{transform:scale(.99);}
 .tc-listenstart-h{font-size:16px;font-weight:600;color:#fff;}
 .tc-listenstart-s{font-size:12px;color:var(--mut-2);line-height:1.45;}
@@ -907,7 +897,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-replay{appearance:none;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);
   color:#fff;font-size:38px;line-height:1;width:96px;height:96px;border-radius:50%;cursor:pointer;
   transition:background .15s,border-color .15s,transform .1s;}
-.tc-replay:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.35);}
 .tc-replay:active{transform:scale(.95);}
 .tc-listensrc{margin:2px 0 0;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   text-transform:uppercase;color:rgba(255,255,255,.38);}
@@ -933,7 +922,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
    the app uses for "yours / correct". ---- */
 .tc-modestart{display:flex;flex-direction:column;gap:10px;}
 .tc-listenstart.is-dialogue{background:linear-gradient(180deg,rgba(16,185,129,.14),rgba(16,185,129,.05));}
-.tc-listenstart.is-dialogue:hover{border-color:var(--ok);}
 .tc-diallist{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:10px;}
 .tc-dialrow{display:flex;flex-direction:column;gap:8px;padding:12px 14px;
   background:var(--surface-2);border:1px solid var(--outline-2);border-radius:var(--r-m);}
@@ -998,7 +986,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-conjchips{display:flex;flex-wrap:wrap;gap:8px;}
 .tc-conjchip{appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:var(--washi,#efeae2);
   padding:9px 15px;border-radius:99px;font-size:14px;cursor:pointer;transition:background .15s,color .15s;}
-.tc-conjchip:hover{color:#fff;background:rgba(255,255,255,.12);}
 .tc-conjchip.is-on{background:rgba(255,255,255,.94);color:#141a33;font-weight:600;border-color:transparent;}
 .tc-conjmode{align-self:flex-start;}
 .tc-speakbtn{appearance:none;border:0;background:var(--surface-3);border-radius:99px;font-size:14px;line-height:1;padding:5px 9px;cursor:pointer;vertical-align:middle;margin-left:6px;}
@@ -1300,7 +1287,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   pointer-events:none;
   transition:opacity .18s ease;
 }
-.tc-glass:hover::before{opacity:.9;}
 
 /* Buttons: glass by default, foil rim on every one. */
 .tc-btn{
@@ -1320,8 +1306,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   -webkit-mask-composite:xor;
           mask-composite:exclude;
   opacity:.5;pointer-events:none;transition:opacity .18s ease;}
-.tc-btn:hover{background:var(--glass-hi);}
-.tc-btn:hover::before{opacity:.95;}
 .tc-btn:active{transform:scale(.97);}
 .tc-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
 .tc-btn:disabled::before{opacity:.18;}
@@ -1331,7 +1315,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background:linear-gradient(135deg,rgba(59,130,246,.32) 0%,rgba(59,130,246,.16) 100%),var(--glass);
   color:#fff;box-shadow:var(--gloss),0 10px 26px -14px rgba(59,130,246,.55);}
 .tc-btn-primary::before{opacity:.95;padding:2px;}   /* 2px rim marks the primary action */
-.tc-btn-primary:hover{background:linear-gradient(135deg,rgba(59,130,246,.44) 0%,rgba(59,130,246,.24) 100%),var(--glass-hi);}
 
 /* Cards: same glass, foil rim held back so it frames rather than shouts. */
 .tc-card2{
@@ -1375,7 +1358,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   -webkit-mask-composite:xor;
           mask-composite:exclude;
   opacity:.45;z-index:2;pointer-events:none;transition:opacity .18s ease;}
-.tc-batchchip:hover::after{opacity:.9;}
 @media (prefers-reduced-motion:reduce){ .tc-batchchip::after{transition:none;} }
 
 
@@ -1402,8 +1384,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   -webkit-mask-composite:xor;
           mask-composite:exclude;
   opacity:.42;pointer-events:none;transition:opacity .18s ease;}
-.tc-tile:hover:not(:disabled){background:var(--glass-hi);}
-.tc-tile:hover:not(:disabled)::before{opacity:.9;}
 .tc-tile:active:not(:disabled){transform:scale(.97);}
 .tc-tile small{font:var(--t-caps);letter-spacing:.04em;color:var(--mut-2);text-transform:none;}
 .tc-tile-jp{font-size:19px;}
@@ -1505,4 +1485,62 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-strandpct i{font-style:normal;font-size:11px;opacity:.55;margin-left:5px;}
 @media (max-width:460px){ .tc-strandname{min-width:66px;} }
 @media (prefers-reduced-motion:reduce){ .tc-volseen,.tc-voldone{transition:none;} }
+
+/* ── phone ergonomics (TODO-202, TODO-203) ──────────────────────────────────────────── */
+
+/* A 44px minimum is the smallest reliably tappable target; below it a thumb misses and the
+   miss lands on whatever is next to it. Measured offenders: the priority chips at 27px and
+   the act picker at 41px. */
+.tc-priobtn,.tc-goalarea,.tc-actsel,.tc-fchip,.tc-search,.tc-conjchip{min-height:var(--tap);}
+/* The ✕ is the smallest target in the app and the most expensive to hit by accident: it
+   deletes a card. Square, so the width floor matters as much as the height. */
+.tc-del{min-height:var(--tap);min-width:var(--tap);}
+/* A checkbox renders ~13px however it is styled, so the LABEL carries the target. */
+.tc-minerow{min-height:var(--tap);display:flex;align-items:center;}
+
+/* iOS zooms the whole page when a focused input's text is under 16px, and then leaves it
+   zoomed. Coarse pointers only: 16px is a floor for thumbs, not a design choice for mice. */
+@media (pointer:coarse){
+  .tc-search,.tc-mnin,.tc-restorebox,.tc-sentinput,.tc-textarea,.tc-input,.tc-dinput,.tc-spellinput,.tc-checkin{font-size:16px;}
+}
+
+/* The on-screen keyboard covers the bottom of the viewport, so an input near the fold ends
+   up underneath it. Reserving the bottom two-fifths as scroll padding lets the browser's
+   own focus-scrolling put the field somewhere visible. */
+html{scroll-padding-bottom:40vh;}
+.tc-root :is(input,textarea){scroll-margin-bottom:40vh;}
+
+/* ── hover, only where hovering exists (TODO-202) ─────────────────────────────────────
+   Touch browsers apply :hover to the last element tapped and leave it applied, so every
+   one of these read as a stuck highlight after a tap. Behind (hover:hover) they do not
+   exist on a phone at all. */
+@media (hover:hover){
+  .tc-tab:hover{color:#fff;}
+  .tc-segbtn:hover{background:rgba(255,255,255,.14);}
+  .tc-batchchip:hover{box-shadow:0 0 30px -8px rgba(255,255,255,.28);}
+  .tc-btn-danger:hover{background:rgba(216,72,47,.16);}
+  .tc-btn-got:hover{filter:brightness(1.08);background:#3d9150;}
+  .tc-learn-tap:hover{background:radial-gradient(140% 130% at 30% -12%, rgba(124,92,255,.3) 0%, rgba(64,84,168,.16) 45%, rgba(255,255,255,.06) 80%);}
+  .tc-noaudio:hover{background:rgba(255,255,255,.13);color:#fff;}
+  .tc-mcopt:hover:not(:disabled){background:rgba(255,255,255,.13);border-color:rgba(255,255,255,.3);}
+  .tc-whybtn:hover{color:#fff;}
+  .tc-rpill:hover{color:#fff;}
+  .tc-del:hover{color:var(--shu-soft);background:rgba(216,72,47,.12);}
+  .tc-focus-btn:hover{background:rgba(216,72,47,.12);}
+  .tc-smart-btn:hover{filter:brightness(1.12);}
+  .tc-hookbtn:hover{background:rgba(43,38,32,.06);}
+  .tc-idk:hover{background:rgba(216,72,47,.12);}
+  .tc-scriptopen:hover{border-color:var(--shu);background:rgba(216,72,47,.1);}
+  .tc-listenstart:hover{border-color:var(--info);}
+  .tc-replay:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.35);}
+  .tc-listenstart.is-dialogue:hover{border-color:var(--ok);}
+  .tc-conjchip:hover{color:#fff;background:rgba(255,255,255,.12);}
+  .tc-glass:hover::before{opacity:.9;}
+  .tc-btn:hover{background:var(--glass-hi);}
+  .tc-btn:hover::before{opacity:.95;}
+  .tc-btn-primary:hover{background:linear-gradient(135deg,rgba(59,130,246,.44) 0%,rgba(59,130,246,.24) 100%),var(--glass-hi);}
+  .tc-batchchip:hover::after{opacity:.9;}
+  .tc-tile:hover:not(:disabled){background:var(--glass-hi);}
+  .tc-tile:hover:not(:disabled)::before{opacity:.9;}
+}
 `;
