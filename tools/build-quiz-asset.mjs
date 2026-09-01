@@ -20,6 +20,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_DIR = path.join(ROOT, "data", "private");
 const OUT = path.join(OUT_DIR, "quizzes.json");
 
+/* "b", "3", "c)" — an answer that only points at something printed on the page. */
+const BARE_LABEL = /^[a-z][.)]?$|^\d{1,2}[.)]?$/i;
+
 const files = process.argv.slice(2);
 if (!files.length) {
   console.error("usage: node tools/build-quiz-asset.mjs <activity-book.txt> [more.txt]");
@@ -36,6 +39,13 @@ for (const f of files) {
        nothing to ask. They are counted below so the omission is visible, not silent. */
     if (!ex.answered) continue;
     if (out.some((x) => x.id === ex.id)) continue;      // an exercise reprinted in both books
+    /* An answer that is a bare letter refers to options PRINTED IN THE BOOK — "3. b" means
+       nothing without the page in front of you, and the app does not have it. Shipping
+       those produced questions that could not be answered, only guessed: 201 of 558 items
+       and 40 whole exercises. They are dropped rather than shown, because a quiz that asks
+       what it cannot answer is worse than a shorter quiz. */
+    const answerable = ex.items.filter((it) => !BARE_LABEL.test(String(it.answer).trim()));
+    if (!answerable.length) continue;
     out.push({
       id: ex.id,
       act: ex.act,
@@ -46,7 +56,7 @@ for (const f of files) {
       // the volume bars the same way a word's act does.
       volume: volumeOfAct(ex.act) || null,
       title: ex.title,
-      items: ex.items.map((it) => ({ id: `${ex.id}:${it.n}`, n: it.n, prompt: it.prompt, answer: it.answer })),
+      items: answerable.map((it) => ({ id: `${ex.id}:${it.n}`, n: it.n, prompt: it.prompt, answer: it.answer })),
     });
   }
 }

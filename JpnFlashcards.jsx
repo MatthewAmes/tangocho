@@ -1829,14 +1829,31 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     /* Wrong answers by curriculum priority: this learner's own confusion pairs, then the
        same NihonGO NOW! act-scene, then nearby scenes, then words that sound or look
        alike. Each pick carries the tier it came from; the UI shows only the word. */
-    const picked = pickDistractors(card, pool, 3, {
+    /* Three distractors, unless this is a quiz item whose exercise has fewer answers than
+       that. pickDistractors widens past `restrict` as a last resort — reasonable for
+       vocabulary, where a third option of the wrong part of speech still beats a two-option
+       question, and wrong here: padding an agree/disagree exercise with an answer from an
+       unrelated act offers something visibly foreign, which is the "answerable by shape
+       alone" flaw again. Asking for fewer means the widening never fires. */
+    const want = card.src === "quiz"
+      ? Math.max(1, Math.min(3, new Set(pool.filter((c) => c.ex === card.ex).map((c) => shortGloss(c.meaning))).size))
+      : 3;
+    const picked = pickDistractors(card, pool, want, {
       confusedWith: confusion.get(card.id) || [],
       seed,
       /* Part of speech is a vocabulary idea. A kana has none, a date has none, and every
          conjugation shares one — so applying it to a borrowed card either restricts to
          nothing or restricts to everything. Being in the same deck is the plausibility
-         constraint there, and the pool above already enforces it. */
-      restrict: card.src ? null : (c) => posOf(c) === myPos,
+         constraint there, and the pool above already enforces it.
+
+         A quiz item needs one more turn of the screw: its alternatives are the OTHER
+         answers ITS OWN exercise uses. Drawn from the whole quiz deck instead, an
+         agree/disagree question would be offered beside answers from an unrelated exercise
+         in another act, and the odd one out would be obvious without reading the Japanese —
+         the same "answerable by shape alone" flaw the kana distractors had. */
+      restrict: card.src === "quiz" ? (c) => c.ex === card.ex
+              : card.src ? null
+              : (c) => posOf(c) === myPos,
     });
     /* Two DISTRACTORS that render identically is the other half of this bug, and the half
        that shipped: the pool above only removes glosses that clash with the ANSWER, so
@@ -4614,13 +4631,14 @@ function kanjiUnlocked(all, stats) {
    kanji matching grid, the conjugation drill — stay where they are, because they are the
    whole point of those tabs. What Smart Review adds is the thing none of them can do:
    noticing that a kana you have not seen since June has quietly faded. */
-const DECK_SRC = ["kana", "kanji", "conj", "dates", "freq"];
+const DECK_SRC = ["kana", "kanji", "conj", "dates", "quiz", "freq"];
 
 function foreignKey(src) {
   if (src === "kana") return KANA_KEY;
   if (src === "kanji") return KANJI_KEY;
   if (src === "conj") return CONJ_KEY;
   if (src === "dates") return DATES_KEY;
+  if (src === "quiz") return QUIZ_KEY;
   return "jpn101:freq";
 }
 
@@ -4662,6 +4680,10 @@ const QUIZ_KEY = "jpn101:quiz";
 
 /* The daily new-word budget for the class deck. 6 is what session.mjs already used as its
    `maxNew` default, so leaving the setting untouched keeps today's behaviour exactly. */
+const JP_TEXT = /[ぁ-んァ-ン一-龯]/;
+/* Longer than this and the answer stops being a choice and starts being a paragraph. */
+const QUIZ_ANSWER_MAX = 40;
+
 const NEW_QUOTA_KEY = "jpn101:newQuota";
 const NEW_QUOTAS = [3, 6, 10, 15];
 const NEW_QUOTA_DEFAULT = 6;
@@ -4757,6 +4779,17 @@ function foreignCard(src, raw) {
   if (src === "dates") {
     return { id: "dates:" + raw.id, src, srcId: raw.id, term: raw.kanji,
              reading: raw.reading, romaji: "", meaning: raw.en, kind: "dates", emoji: "📅" };
+  }
+  /* An activity-book item. The prompt is the question the book asks and the answer is what
+     it expects — which is a recognition question and nothing more, so `reading` stays empty
+     and the caps derived from it (typing, listening) stay off. An exercise answer is not a
+     pronunciation, and pretending otherwise is exactly how the conjugation card ended up
+     claiming 食べる is read たべない. `ex` rides along so distractors can be drawn from the
+     same exercise: the alternatives to one of its answers are the OTHER answers it uses. */
+  if (src === "quiz") {
+    return { id: "quiz:" + raw.id, src, srcId: raw.id, ex: raw.ex,
+             term: raw.prompt, reading: "", romaji: "", meaning: raw.answer,
+             kind: "quiz", emoji: "📘" };
   }
   return { ...raw, id: "freq:" + raw.id, src, srcId: raw.id };
 }
@@ -4857,6 +4890,26 @@ async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
     const stats = raw ? JSON.parse(raw) : {};
     const items = withFrontier(DATE_ITEMS.map((d) => foreignCard("dates", d)), stats);
     out.push({ deck: "dates", items, stats: remapStats(stats, "dates") });
+  } catch (e) {}
+  /* The activity books. 357 items survive the import with an answer the app can actually
+     mark; of those, only the ones ASKED IN JAPANESE come here.
+
+     The rest are not lesser, they are different. An English-prompt comprehension judgement
+     ("hearsay or not hearsay") is a listening exercise about a recording, and dropping it
+     into a queue of vocabulary recognition would make the session incoherent — the same
+     mistake as asking a conjugation through a card shape that means "word" and
+     "pronunciation". Those stay in the Quizzes tab, where the exercise has its own context.
+     An answer too long to sit on a choice button is dropped for the same reason. */
+  try {
+    const [all, raw] = await Promise.all([loadQuizzes(), sGet(QUIZ_KEY)]);
+    const stats = raw ? JSON.parse(raw) : {};
+    const asked = (all || []).flatMap((q) => q.items
+      .filter((it) => JP_TEXT.test(it.prompt) && it.answer.length <= QUIZ_ANSWER_MAX)
+      .map((it) => foreignCard("quiz", { ...it, ex: q.id, act: q.act })));
+    if (asked.length) {
+      const items = withFrontier(asked, stats);
+      out.push({ deck: "quiz", items, stats: remapStats(stats, "quiz") });
+    }
   } catch (e) {}
   try {
     const [d, raw] = await Promise.all([loadKanji(), sGet(KANJI_KEY)]);
