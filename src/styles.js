@@ -1482,5 +1482,16 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-actname{font:var(--t-caps);letter-spacing:.05em;color:var(--mut-2);min-width:48px;}
 .tc-actpct{font:var(--t-body-sm);color:var(--mut);min-width:38px;text-align:right;
   font-variant-numeric:tabular-nums;}
+/* The strand breakdown under each volume bar. Borrows the act-row layout wholesale so the
+   two read as the same kind of detail — one splits a volume by act, the other by strand. */
+.tc-volstrands{display:flex;flex-direction:column;gap:6px;margin:8px 0 0;}
+.tc-strandrow{display:flex;align-items:center;gap:10px;}
+.tc-strandname{font:var(--t-caps);letter-spacing:.05em;color:var(--mut-2);min-width:82px;}
+.tc-strandpct{font:var(--t-body-sm);color:var(--mut);min-width:62px;text-align:right;
+  font-variant-numeric:tabular-nums;}
+/* How many items the percentage is OF, said quietly: 100% of nine is not 100% of eight
+   hundred, and a bare percentage hides which one it is. */
+.tc-strandpct i{font-style:normal;font-size:11px;opacity:.55;margin-left:5px;}
+@media (max-width:460px){ .tc-strandname{min-width:66px;} }
 @media (prefers-reduced-motion:reduce){ .tc-volseen,.tc-voldone{transition:none;} }
 `;

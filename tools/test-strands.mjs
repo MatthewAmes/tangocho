@@ -2,7 +2,7 @@
 //   node tools/test-strands.mjs
 import {
   STRANDS, strandInVolume, unify, mixOf, describeMix,
-  strandProgress, volumeComposite, allVolumes, byVolume, describeComposite,
+  strandProgress, volumeComposite, allVolumes, byVolume, unplaced, describeComposite,
 } from "./strands.mjs";
 
 let fail = 0, run = 0;
@@ -90,6 +90,19 @@ t("items with no act still land in their strand's volumes", () => {
   const got = byVolume([item("h-a", "kana"), item("w", "vocab", { act: 9 })], 1);
   eq(got.length, 1); eq(got[0].id, "h-a", "kana has no act but belongs to Volume 1");
 });
+t("an unplaceable item is counted in NEITHER volume, not in both", () => {
+  /* Conjugation and dates carry no act, and their strands are scoped to every volume. The
+     naive reading of "no act means it belongs wherever its strand does" put the identical
+     264 verb forms into Volume 1 and Volume 2 in full and inflated both. */
+  const conj = Array.from({ length: 10 }, (_, i) => item("c" + i, "conj"));
+  eq(byVolume(conj, 1).length, 0);
+  eq(byVolume(conj, 2).length, 0, "counting it twice is worse than not counting it");
+});
+t("what a volume cannot count, it can at least name", () => {
+  const u = unplaced([item("c1", "conj"), item("c2", "conj"), item("d1", "dates"), item("h-a", "kana")]);
+  eq(u.find((x) => x.strand === "conj").n, 2);
+  ok(!u.find((x) => x.strand === "kana"), "kana is scoped to Volume 1, so it placed");
+});
 t("act-bearing items land in the volume their act belongs to", () => {
   const items = [item("w1", "vocab", { act: 2 }), item("w2", "vocab", { act: 9 })];
   eq(byVolume(items, 1).map((x) => x.id).join(), "w1");
@@ -118,33 +131,33 @@ t("an empty strand is safe", () => {
 t("the composite is weighted by ITEM COUNT, not one vote per strand", () => {
   // 800 words half known and 40 conjugations fully known is not "75% of the volume".
   const v = volumeComposite({
-    vocab: Array.from({ length: 800 }, (_, i) => item("w" + i, "vocab", { over: { seen: 1, level: 2.5 } })),
-    conj: Array.from({ length: 40 }, (_, i) => item("c" + i, "conj", { over: { seen: 1, level: 5 } })),
+    vocab: Array.from({ length: 800 }, (_, i) => item("w" + i, "vocab", { act: 9, over: { seen: 1, level: 2.5 } })),
+    kanji: Array.from({ length: 40 }, (_, i) => item("k" + i, "kanji", { act: 9, over: { seen: 1, level: 5 } })),
   }, 2);
   ok(v.done < 0.6, "an equal-vote average would say ~0.75, got " + v.done);
   near(v.done, (0.5 * 800 + 1 * 40) / 840, 0.01);
 });
 t("the breakdown names every strand that has items here", () => {
   const v = volumeComposite({
-    vocab: [item("w", "vocab", { over: { seen: 1, level: 5 } })],
-    kanji: [item("k", "kanji", { over: { seen: 1, level: 0 } })],
+    vocab: [item("w", "vocab", { act: 9, over: { seen: 1, level: 5 } })],
+    kanji: [item("k", "kanji", { act: 9, over: { seen: 1, level: 0 } })],
     conj: [],
   }, 2);
   eq(v.strands.map((s) => s.strand).sort().join(","), "kanji,vocab", "an empty strand is not listed");
 });
 t("a volume nobody has touched is null, not zero", () => {
-  const v = volumeComposite({ vocab: [{ id: "a", strand: "vocab", stat: null }] }, 2);
+  const v = volumeComposite({ vocab: [{ id: "a", strand: "vocab", act: 9, stat: null }] }, 2);
   eq(v.done, null);
   eq(v.items, 1);
 });
 t("kana is excluded from Volume 2's composite entirely", () => {
   const kana = Array.from({ length: 50 }, (_, i) => item("h" + i, "kana", { over: { seen: 1, level: 0 } }));
-  const v2 = volumeComposite({ kana, vocab: [item("w", "vocab", { over: { seen: 1, level: 5 } })] }, 2);
+  const v2 = volumeComposite({ kana, vocab: [item("w", "vocab", { act: 9, over: { seen: 1, level: 5 } })] }, 2);
   eq(v2.strands.length, 1, "only words count toward Volume 2");
   near(v2.done, 1, 0.001, "50 unknown kana must not drag Volume 2 to near zero");
 });
 t("every configured volume is reported, including untouched ones", () => {
-  const vs = allVolumes({ vocab: [item("w", "vocab", { over: { seen: 1, level: 5 } })] });
+  const vs = allVolumes({ vocab: [item("w", "vocab", { act: 9, over: { seen: 1, level: 5 } })] });
   ok(vs.length >= 2);
   ok(vs.every((v) => typeof v.volume === "number"));
 });
@@ -152,10 +165,20 @@ t("every configured volume is reported, including untouched ones", () => {
 console.log("=== the sentence matches the numbers ===");
 t("it names the weakest strand, which is the actionable half", () => {
   const v = volumeComposite({
-    vocab: [item("w", "vocab", { over: { seen: 1, level: 5 } })],
-    conj: [item("c", "conj", { over: { seen: 1, level: 0 } })],
+    vocab: [item("w", "vocab", { act: 9, over: { seen: 1, level: 5 } })],
+    kanji: [item("k", "kanji", { act: 9, over: { seen: 1, level: 0 } })],
   }, 2);
-  ok(/weakest is conjugation/.test(describeComposite(v)), "got: " + describeComposite(v));
+  ok(/weakest is kanji/.test(describeComposite(v)), "got: " + describeComposite(v));
+});
+t("'weakest' needs two MEASURED strands, not two strands", () => {
+  /* Volume 1 with only kana touched announced "weakest is kana" — the minimum of a
+     one-element set, which reads as a finding about kana when it only meant that nothing
+     else had been tried yet. */
+  const v = volumeComposite({
+    kana: [item("h-a", "kana", { over: { seen: 1, level: 0 } })],
+    vocab: [{ id: "w", strand: "vocab", act: 2, stat: null }],
+  }, 1);
+  ok(!/weakest/.test(describeComposite(v)), "got: " + describeComposite(v));
 });
 t("unmeasured and empty read differently, and neither says 0%", () => {
   ok(/none measured/.test(describeComposite({ volume: 2, items: 3, strands: [], done: null })));

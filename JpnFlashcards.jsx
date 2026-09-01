@@ -37,8 +37,9 @@ import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
          LISTEN_FORMATS, LISTEN_LABEL, LISTEN_DECK } from "./tools/listening.mjs";
 import { playableScripts, buildDialogue, gradeTurn, downshift, turnEvidence, scoreTurn,
          dialogueSummary, nextStep, TURN, STEP, DIALOGUE_DECK } from "./tools/dialogue.mjs";
-import { currentAct, volumeOfAct, VOLUME_ACTS } from "./tools/curriculum.mjs";
-import { volumeProgress, actProgress, describeVolume } from "./tools/progress.mjs";
+import { currentAct, volumeOfAct, VOLUME_ACTS, provenanceOf } from "./tools/curriculum.mjs";
+import { volumeProgress, actProgress, describeVolume, actOfScene } from "./tools/progress.mjs";
+import { allVolumes, unplaced, describeComposite, STRANDS } from "./tools/strands.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
@@ -3366,6 +3367,29 @@ function Plan({ cards = [] }) {
   /* The same evidence rolled up the curriculum tree: scene -> act -> volume. Nothing new
      is measured here; the question is just asked at the altitude the learner asks it at. */
   const volumes = useMemo(() => volumeProgress(mastery), [mastery]);
+  /* Every strand's own store, read once. This is the whole of "one database": nothing is
+     copied or migrated, the stores stay exactly where their tabs write them, and the
+     composite below is computed from a read across all of them. */
+  const [strandStats, setStrandStats] = useState(null);
+  useEffect(() => { (async () => {
+    const [kanji, kana, conj, dates, quiz] = await Promise.all(
+      [KANJI_KEY, KANA_KEY, CONJ_KEY, DATES_KEY, QUIZ_KEY].map(async (k) => {
+        try { const r = await sGet(k); return r ? JSON.parse(r) : {}; } catch (e) { return {}; }
+      }));
+    setStrandStats({ kanji, kana, conj, dates, quiz });
+  })(); }, []);
+  const [kanjiData, setKanjiData] = useState(null);
+  useEffect(() => { loadKanji().then(setKanjiData).catch(() => {}); }, []);
+
+  const itemsByStrand = useMemo(
+    () => strandItems(cards, strandStats, kanjiData),
+    [cards, strandStats, kanjiData]);
+  /* One number per volume across every strand, with the breakdown that explains it. The
+     older scene-based bars stay underneath as the per-act detail: they answer a different
+     question (which SCENE is weak) and this one cannot. */
+  const composites = useMemo(() => allVolumes(itemsByStrand), [itemsByStrand]);
+  const unplacedItems = useMemo(
+    () => unplaced(Object.values(itemsByStrand).flat()), [itemsByStrand]);
   const [openVolume, setOpenVolume] = useState(null);
   const actsOfOpen = useMemo(
     () => (openVolume ? actProgress(mastery, openVolume) : []),
@@ -3595,13 +3619,14 @@ function Plan({ cards = [] }) {
           cannot be moved by clicking through cards. */}
       <section className="tc-plansec">
         <h2 className="tc-planh">How much of the course <span className="tc-planh-sub">NihonGO NOW! Level 1</span></h2>
-        {volumes.volumes.every((v) => !v.items) ? (
-          <p className="tc-planhint">No act-tagged words in the deck yet, so there is nothing to measure against the book.</p>
+        {composites.every((v) => !v.items) ? (
+          <p className="tc-planhint">No act-tagged material yet, so there is nothing to measure against the book.</p>
         ) : (
           <>
-            {volumes.volumes.map((v) => {
+            {composites.map((v) => {
               const pct = v.done == null ? 0 : Math.round(v.done * 100);
               const open = openVolume === v.volume;
+              const scene = volumes.volumes.find((x) => x.volume === v.volume) || {};
               return (
                 <div key={v.volume} className="tc-volrow">
                   <button type="button" className="tc-volhead"
@@ -3617,9 +3642,27 @@ function Plan({ cards = [] }) {
                     <div className="tc-volseen" style={{ width: Math.round((v.coverage || 0) * 100) + "%" }} />
                     <div className="tc-voldone" style={{ width: pct + "%" }} />
                   </div>
+                  {/* The breakdown is the point of the single number: one figure invites the
+                      question "made of what", and every strand that has material here
+                      answers it. Sorted weakest first, because that is the actionable end. */}
+                  <div className="tc-volstrands">
+                    {[...v.strands].sort((a, b) => (a.done ?? 2) - (b.done ?? 2)).map((s) => (
+                      <div key={s.strand} className="tc-strandrow">
+                        <span className="tc-strandname">{s.label}</span>
+                        <div className="tc-volbar tc-volbar-sm">
+                          <div className="tc-volseen" style={{ width: Math.round((s.coverage || 0) * 100) + "%" }} />
+                          <div className="tc-voldone" style={{ width: (s.done == null ? 0 : Math.round(s.done * 100)) + "%" }} />
+                        </div>
+                        <span className="tc-strandpct">
+                          {s.done == null ? "—" : Math.round(s.done * 100) + "%"}
+                          <i>{s.items}</i>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                   <p className="tc-volnote">
-                    {describeVolume(v)}
-                    {v.measuring > 0 ? ` · ${v.measuring} scene${v.measuring === 1 ? "" : "s"} still being measured` : ""}
+                    {describeComposite(v)}
+                    {scene.measuring > 0 ? ` · ${scene.measuring} scene${scene.measuring === 1 ? "" : "s"} still being measured` : ""}
                   </p>
                   {open && (
                     <div className="tc-volacts">
@@ -3641,8 +3684,20 @@ function Plan({ cards = [] }) {
             <p className="tc-planhint" style={{ marginTop: 10 }}>
               The bar is how much of the volume you've met <i>and</i> are holding — the pale
               part behind it is everything you've met. A dash means nothing there has been
-              measured yet, which is not the same as none of it being known.
+              measured yet, which is not the same as none of it being known. The number is
+              every strand together, weighted by how much material each one is.
             </p>
+            {/* Said out loud rather than quietly omitted. These strands are scheduled and do
+                appear in Smart Review; what they lack is any act tag in the book data, so no
+                volume can honestly claim them. */}
+            {unplacedItems.length > 0 && (
+              <p className="tc-planhint">
+                Not counted in either volume:{" "}
+                {unplacedItems.map((u) => `${u.n} ${u.label.toLowerCase()}`).join(", ")} — the
+                books don't tag these to an act, so they're practised and scheduled but can't
+                be attributed to Volume 1 or 2.
+              </p>
+            )}
           </>
         )}
       </section>
@@ -4409,6 +4464,66 @@ function conjAll() {
       const answer = c[f.pol] && c[f.pol][f.key];
       if (answer) out.push({ id: w.reading + "|" + f.id, w, f, answer });
     }
+  }
+  return out;
+}
+
+const QUIZ_KEY = "jpn101:quiz";
+
+/* ── every strand's items, in the one shape the composite reads ──
+   {id, strand, stat, act}. The stat is that strand's OWN record, read straight from its own
+   store and never copied anywhere; act is what places the item in a volume.
+
+   Placement is the honest part. Words carry their act in card.sec. A kanji has no act of
+   its own, so it borrows the earliest act among the deck words it appears in — the point at
+   which the course first asks you to read it. Kana is not act-scoped at all, and its strand
+   is pinned to Volume 1 instead. Conjugation and dates carry no curriculum tag anywhere in
+   the data, so they are left unplaced rather than guessed at: they still schedule and still
+   reach Smart Review, and the volume bar says out loud that it is not counting them. */
+function strandItems(cards, stats, kanjiData) {
+  if (!stats) return {};
+  const out = { vocab: [], kanji: [], kana: [], conj: [], dates: [], quiz: [] };
+
+  /* provenanceOf, not actOfScene(card.sec). The earliest batch of cards predates the sec
+     field entirely and is placed through SECTION_MAP instead — reading sec alone left 274
+     words attributed to no volume at all, and the curriculum module exists precisely so
+     that this placement is made in one place and made the same way everywhere. */
+  for (const c of cards || []) {
+    if (!c) continue;
+    out.vocab.push({ id: c.id, strand: "vocab", act: provenanceOf(c).act, stat: c });
+  }
+
+  if (kanjiData) {
+    /* Built here rather than from deckKanjiIndex, whose words[] is capped at six per
+       character to keep the UI list short. Six is plenty for showing examples and wrong for
+       this: the earliest act is a minimum over EVERY word using the character, and sampling
+       six of 日's forty-two would place it in whichever act happened to be in the sample. */
+    const earliestAct = new Map();
+    for (const c of cards || []) {
+      const a = actOfScene(c && c.sec);
+      if (a == null) continue;
+      for (const ch of c.term || "") {
+        if (!/[一-龯]/.test(ch)) continue;
+        const cur = earliestAct.get(ch);
+        if (cur == null || a < cur) earliestAct.set(ch, a);
+      }
+    }
+    /* Only the characters this course actually teaches, plus any already practised. The
+       full jōyō set is 2,140 and the books use around 660 of them — counting the rest as
+       "material this volume did not place" is true and useless, and it turned the note
+       below into a warning about 1,479 characters NihonGO NOW never mentions. */
+    for (const k of kanjiData.kanji || []) {
+      const act = earliestAct.has(k.c) ? earliestAct.get(k.c) : null;
+      if (act == null && !(stats.kanji[k.c] && stats.kanji[k.c].seen)) continue;
+      out.kanji.push({ id: k.c, strand: "kanji", act, stat: stats.kanji[k.c] });
+    }
+  }
+
+  for (const k of kanaAll()) out.kana.push({ id: k.id, strand: "kana", act: null, stat: stats.kana[k.id] });
+  for (const c of conjAll()) out.conj.push({ id: c.id, strand: "conj", act: null, stat: stats.conj[c.id] });
+  for (const d of DATE_ITEMS) out.dates.push({ id: d.id, strand: "dates", act: null, stat: stats.dates[d.id] });
+  for (const [id, st] of Object.entries(stats.quiz || {})) {
+    out.quiz.push({ id, strand: "quiz", act: st && st.act != null ? st.act : null, stat: st });
   }
   return out;
 }

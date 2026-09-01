@@ -144,13 +144,19 @@ export function strandProgress(items) {
 /** Composite for one volume, plus the per-strand breakdown that explains it. */
 export function volumeComposite(itemsByStrand, volume) {
   const strands = [];
-  let doneWeight = 0, itemWeight = 0, anyMeasured = false;
+  let doneWeight = 0, itemWeight = 0, anyMeasured = false, seenTotal = 0, itemTotal = 0;
   for (const s of STRANDS) {
     if (!strandInVolume(s.id, volume)) continue;
-    const items = (itemsByStrand && itemsByStrand[s.id]) || [];
+    /* Scoped HERE rather than trusting the caller to have done it. Passing a strand's whole
+       item list is the obvious thing to do from the app, and it would silently count every
+       act toward every volume — the same inflation byVolume exists to prevent, arriving
+       through the front door instead. Filtering twice is harmless; forgetting once is not. */
+    const items = byVolume((itemsByStrand && itemsByStrand[s.id]) || [], volume);
     const p = strandProgress(items);
     if (!p.items) continue;                       // a strand with nothing in this volume
     strands.push({ strand: s.id, label: s.label, ...p });
+    seenTotal += p.seen;
+    itemTotal += p.items;
     if (p.done == null) continue;
     anyMeasured = true;
     doneWeight += p.done * p.items;
@@ -159,7 +165,11 @@ export function volumeComposite(itemsByStrand, volume) {
   return {
     volume,
     strands,
-    items: strands.reduce((n, s) => n + s.items, 0),
+    items: itemTotal,
+    seen: seenTotal,
+    // Everything met at least once, across every strand — the pale bar behind `done`. It
+    // needs no measured mastery to exist, so it is a number even when done is still null.
+    coverage: itemTotal ? seenTotal / itemTotal : 0,
     // Null rather than 0 when nothing has been measured: "not measured" and "none of it"
     // are very different claims and a bar cannot tell them apart on its own.
     done: anyMeasured && itemWeight ? doneWeight / itemWeight : null,
@@ -171,17 +181,40 @@ export function allVolumes(itemsByStrand, opts = {}) {
   return (opts.volumes || VOLUME_ACTS).map((v) => volumeComposite(itemsByStrand, v.volume));
 }
 
-/** Split a strand's items into volumes by the act each one belongs to. */
+/* Split a strand's items into volumes by the act each one belongs to.
+
+   An item with no act is the awkward case, and the two kinds of it are not the same. Kana
+   has no act because it is not act-scoped material, but its strand IS scoped — Volume 1 —
+   so it places fine. Conjugation and dates have no act because the curriculum tag simply
+   is not in the data, and their strands are scoped to every volume: counting them wherever
+   they land would put the identical 264 verb forms into Volume 1 AND Volume 2 in full, and
+   inflate both. Unplaceable is unplaceable, so they are excluded here and reported by
+   unplaced() rather than being quietly filed under a volume nobody taught them in. They
+   still schedule and still reach Smart Review; it is only "how much of Volume 2" that
+   cannot honestly count them. */
 export function byVolume(items, volume) {
-  const s = (items || []).filter((it) => {
+  return (items || []).filter((it) => {
     if (!it) return false;
     if (!strandInVolume(it.strand, volume)) return false;
-    // Items with no act (kana, and anything the curriculum cannot place) belong to whatever
-    // volumes their strand is scoped to, rather than being silently dropped.
-    if (it.act == null) return true;
-    return volumeOfAct(it.act) === volume;
+    if (it.act != null) return volumeOfAct(it.act) === volume;
+    // No act: only an explicitly scoped strand can place it.
+    const s = BY_ID.get(it.strand);
+    return !!(s && s.volumes);
   });
-  return s;
+}
+
+/** Items that belong to no volume, so a bar can say what it is not counting. */
+export function unplaced(items) {
+  const by = new Map();
+  for (const it of items || []) {
+    if (!it || it.act != null) continue;
+    const s = BY_ID.get(it.strand);
+    if (s && s.volumes) continue;                 // scoped, so it placed
+    by.set(it.strand, (by.get(it.strand) || 0) + 1);
+  }
+  return [...by.entries()]
+    .map(([id, n]) => ({ strand: id, label: (BY_ID.get(id) || {}).label || id, n }))
+    .sort((a, b) => b.n - a.n);
 }
 
 /** One honest sentence about a volume, so the wording cannot drift from the numbers. */
@@ -189,7 +222,12 @@ export function describeComposite(v) {
   if (!v || !v.items) return "nothing from this volume yet";
   if (v.done == null) return `${v.items} items, none measured yet`;
   const pct = Math.round(v.done * 100);
-  const worst = [...v.strands].filter((s) => s.done != null).sort((a, b) => a.done - b.done)[0];
-  const tail = worst && v.strands.length > 1 ? ` — weakest is ${worst.label.toLowerCase()}` : "";
+  /* "Weakest" needs at least two MEASURED strands to mean anything. Counting strands
+     instead let a volume where only kana had been touched announce "weakest is kana" —
+     technically the minimum of a one-element set, and read as a finding about kana when it
+     was really a statement that nothing else had been tried. */
+  const measured = v.strands.filter((s) => s.done != null);
+  const worst = [...measured].sort((a, b) => a.done - b.done)[0];
+  const tail = measured.length > 1 ? ` — weakest is ${worst.label.toLowerCase()}` : "";
   return `${pct}% of Volume ${v.volume}${tail}`;
 }
