@@ -1213,7 +1213,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 @media (max-width:460px){.tc-kanjibig{font-size:88px;}}
 
 /* ── 入力 / input ── */
-.tc-input{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
+/* The Input TAB wrapper. Renamed off .tc-input, which also names a text-field style 200
+   lines above: both rules matched both elements, so the tab wrapper wore a form field’s
+   background and border (the “stray box”) and any real input wearing this class was laid
+   out as a flex column. One name, two intents, and both of them wrong somewhere. */
+.tc-inputtab{display:flex;flex-direction:column;gap:12px;padding:0 4px 28px;}
 .tc-inlevels{display:flex;gap:10px;}
 .tc-inlevel{flex:1;display:flex;flex-direction:column;gap:5px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px 12px;}
 .tc-inlevlabel{font-size:12px;color:var(--mut);}

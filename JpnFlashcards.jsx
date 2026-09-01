@@ -7444,7 +7444,7 @@ function Input({ cards, onAdd, onPark }) {
   if (!st) return <div className="tc-empty">Loading…</div>;
 
   return (
-    <div className="tc-input">
+    <div className="tc-inputtab">
       {st.pending.length > 0 && (
         <div className="tc-inrate">
           <p className="tc-eyebrow">How was it? · どうだった？</p>
@@ -8799,13 +8799,13 @@ function Quizzes({ cards = [] }) {
           <span className="tc-rehname">{quiz.id}</span>
         </div>
         {done ? (
-          <div className="tc-card-face">
+          <div className="tc-card2">
             <p className="tc-donerate"><b>{right}</b> of {rows.length} right</p>
             <p className="tc-planhint">{quiz.title}</p>
             <button className="tc-btn tc-btn-primary" onClick={() => setQuiz(null)}>Back to quizzes</button>
           </div>
         ) : (
-          <div className="tc-card-face">
+          <div className="tc-card2">
             <p className="tc-planhint">{quiz.title} · {at + 1}/{quiz.items.length}</p>
             <p className="tc-quizprompt">{item.prompt}</p>
             {choices ? (
