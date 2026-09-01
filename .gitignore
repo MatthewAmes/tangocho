@@ -42,3 +42,11 @@ books/
 # Cloudflare serves it — the app gets the content, git never does.
 # Regenerate: node tools/build-scripts-asset.mjs <dir with pdftotext output>
 data/private/
+
+# Scraped course-website pages and the scenes parsed out of them. Same reasoning as the
+# block above: this is the publisher's script text, and the repo is public. The cache only
+# spares the site a re-fetch, and tools/scrape-scripts.mjs rebuilds it from scratch.
+# Regenerate: node tools/scrape-scripts.mjs > data/private/scripts-web.json
+tools/.site-cache/
+tools/.annot-cache/
+tools/.scrape.log

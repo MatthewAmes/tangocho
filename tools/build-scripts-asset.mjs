@@ -1,5 +1,6 @@
-/* Turn the parsed textbook scripts into the runtime asset the app loads.
-     node tools/build-scripts-asset.mjs <dir-with-book*.txt>
+/* Turn the scraped scene scripts into the runtime asset the app loads.
+     node tools/scrape-scripts.mjs > data/private/scripts-web.json
+     node tools/build-scripts-asset.mjs
 
    Writes data/private/scripts-books.json, which is GITIGNORED on purpose.
 
@@ -10,56 +11,73 @@
    static file. The scripts reach the deployed app and never reach git.
 
    The consequence to know about: this asset lives on Cloudflare and on his machines, not in
-   version control. Losing it means re-running two commands against the PDFs, which is why
-   the parser is committed and its output is not. */
+   version control. Losing it means re-running two commands, which is why the tools are
+   committed and their output is not.
+
+   ## Why the source is the website and not the PDFs
+
+   This read the textbook PDFs first (tools/import-scripts.mjs, still used for the furigana
+   dictionary). The book sets each speaker's lines in a column, so a scene came out grouped
+   by speaker instead of interleaved: 9-2 is eight alternating turns on the page and arrived
+   as two long blocks. The site publishes the same scenes already split into labelled turns,
+   which is the structure the app needs, so it wins on the one thing that was wrong. */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseScenes } from "./import-scripts.mjs";
+import { SCRIPT_SEED } from "../src/data/scripts-seed.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SRC = process.argv[2] || path.join(ROOT, "data", "private", "scripts-web.json");
 const OUT_DIR = path.join(ROOT, "data", "private");
 const OUT = path.join(OUT_DIR, "scripts-books.json");
 
-const dir = process.argv[2];
-if (!dir || !fs.existsSync(dir)) {
-  console.error("usage: node tools/build-scripts-asset.mjs <dir with pdftotext output>");
-  console.error("  pdftotext -enc UTF-8 'NihonGO NOW Vol 2.pdf' book.txt");
+if (!fs.existsSync(SRC)) {
+  console.error(`no ${path.relative(ROOT, SRC)} — run tools/scrape-scripts.mjs first:`);
+  console.error("  node tools/scrape-scripts.mjs > data/private/scripts-web.json");
   process.exit(1);
 }
 
-const files = fs.readdirSync(dir).filter((f) => f.endsWith(".txt"));
-const scenes = [];
-for (const f of files) {
-  const text = fs.readFileSync(path.join(dir, f), "utf8");
-  for (const s of parseScenes(text)) {
-    // A scene can appear in more than one book (a Vol 1 scene reprinted in Vol 2's review);
-    // first parse wins, and richer parses do not silently replace poorer ones.
-    if (scenes.some((x) => x.name === s.name)) continue;
-    scenes.push(s);
-  }
-}
-scenes.sort((a, b) => a.act - b.act || a.scene - b.scene);
+const scenes = JSON.parse(fs.readFileSync(SRC, "utf8"));
+const textOf = (l) => (l.tokens || []).map((t) => t.t).join("");
 
-/* Emitted in SCRIPT_SEED's shape so the Scripts tab, the cloze index and the session
-   composer all take it without knowing where it came from. */
-const out = scenes.map((s) => ({
-  id: `book-${s.name}`,
-  name: s.name,
-  act: s.act,
-  scene: s.scene,
-  title: s.jaTitle,
-  lines: s.turns.map((t) => ({
-    speaker: t.speaker || "",
-    tokens: t.tokens,
-    // romaji and en are left out rather than guessed; the Scripts tab can annotate on
-    // demand through /api/ai, and a wrong translation is worse than a missing one.
-    en: "",
-  })),
-}));
+/* The 34 hand-entered Vol 1 scenes already carry furigana, romaji and a translation, which
+   is strictly more than the site gives. The app merges by name and keeps what it has, so a
+   scraped duplicate would only sit in storage unused — drop it here instead. */
+const seeded = new Set(SCRIPT_SEED.map((s) => s.name));
+
+const out = [];
+for (const s of scenes) {
+  if (seeded.has(s.name)) continue;
+  const lines = s.lines.map((l) => ({
+    speaker: l.speaker || "",
+    tokens: l.tokens,
+    romaji: l.romaji || "",
+    en: l.en || "",
+  }));
+  const annotated = lines.some((l) => l.romaji);
+  out.push({
+    id: `web-${s.name}`,
+    name: s.name,
+    act: s.act,
+    scene: s.scene,
+    title: s.title || "",
+    lines,
+    /* raw and plain are what the Scripts tab's existing "＋ふりがな" path runs on: plain marks
+       a scene as missing furigana/romaji/English, raw is what gets sent to the annotate task
+       to fill them in. The site publishes none of the three, so every scraped scene starts
+       plain and is completed in the app, where a signed-in session exists — rather than
+       here, where reaching the AI endpoint would mean handling a session secret. */
+    raw: lines.map((l) => `${l.speaker}：${textOf(l)}`).join("\n"),
+    plain: !annotated,
+  });
+}
+out.sort((a, b) => a.act - b.act || a.scene - b.scene);
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify(out));
 const kb = (n) => (n / 1024).toFixed(1) + " KB";
-console.log(`${out.length} scenes, ${out.reduce((n, s) => n + s.lines.length, 0)} lines -> data/private/scripts-books.json (${kb(fs.statSync(OUT).size)})`);
+const lines = out.reduce((n, s) => n + s.lines.length, 0);
+console.log(`${out.length} scenes, ${lines} lines -> data/private/scripts-books.json (${kb(fs.statSync(OUT).size)})`);
+console.log(`${scenes.length - out.length} skipped — already hand-entered in SCRIPT_SEED with romaji and translations.`);
+console.log(`${out.filter((s) => s.plain).length} start plain; the Scripts tab annotates them via /api/ai.`);
 console.log("gitignored; the build mirrors it into cf/public/ for Cloudflare to serve.");

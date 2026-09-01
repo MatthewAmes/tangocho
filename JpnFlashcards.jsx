@@ -5917,6 +5917,7 @@ function Scripts({ cards = [] }) {
   const [name, setName] = useState("");
   const [raw, setRaw] = useState("");
   const [building, setBuilding] = useState(false);
+  const [bulk, setBulk] = useState(null);   // {done,total} while annotateAll runs, else null
   const [error, setError] = useState("");
   const [saveWarn, setSaveWarn] = useState("");
   const [part, setPart] = useState("A");
@@ -5947,7 +5948,11 @@ function Scripts({ cards = [] }) {
       parse(r2).forEach((s) => { if (!String(s.id).startsWith("seed-") && !ids.has(s.id)) { list.push(s); ids.add(s.id); recovered = true; } });
       // retire outdated seed drills (renamed in b43) — user-added scripts are untouched
       const before = list.length;
-      list = list.filter((s) => !(s.id === "seed-3-2" || (s.id === "seed-3-3" && s.name === "3-3")));
+      /* book-* are the PDF-parsed scenes. The textbook sets each speaker's lines in a column,
+         so they came out as one block per speaker instead of interleaved turns — 9-2 is eight
+         turns on the page and arrived as two. They are replaced by the web-* scenes below,
+         which merge by NAME and so would never land while these still hold those names. */
+      list = list.filter((s) => !(s.id === "seed-3-2" || (s.id === "seed-3-3" && s.name === "3-3") || String(s.id).startsWith("book-")));
       let changed = recovered || list.length !== before;
       const names = new Set(list.map((s) => s.name));
       SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; changed = true; } });
@@ -6023,6 +6028,44 @@ function Scripts({ cards = [] }) {
     } catch (e) {
       setSaveWarn("⚠️ Annotation failed (" + (e.message || "unknown") + ") — the script is safe, just plain.");
     }
+    setBuilding(false);
+  };
+
+  /* The 47 imported scenes all arrive plain — the course website publishes the Japanese and
+     who says it, and no furigana, romaji or translation. Annotating them one ＋ふりがな tap at
+     a time is 47 taps, so this does the batch.
+
+     Written to be interrupted: each scene persists as it lands, so closing the tab keeps
+     whatever finished, and a re-run resumes because completed scenes are no longer plain.
+     The Worker caches annotate replies by input forever, so a second pass over an already
+     annotated scene costs a request and no tokens. Three consecutive failures stop it — past
+     that it is the endpoint that is down, not the scene, and 47 doomed calls help nobody. */
+  const annotateAll = async () => {
+    if (!AI_ENABLED || building) return;
+    const todo = scripts.filter((s) => s.plain && s.raw);
+    if (!todo.length) return;
+    setBuilding(true); setSaveWarn("");
+    let done = 0, failed = 0, streak = 0;
+    for (const s of todo) {
+      setBulk({ done, total: todo.length });
+      try {
+        const lines = await annotateRaw(s.raw);
+        // Read from the setter, not from `scripts`: this loop outlives the render it started
+        // in, and the captured list goes stale the moment the first scene persists.
+        setScripts((prev) => {
+          const next = prev.map((x) => (x.id === s.id ? { ...x, lines, plain: false } : x));
+          const json = JSON.stringify(next);
+          sSet("jpn101:scripts", json); sSet("jpn101:scripts:mirror", json);
+          return next;
+        });
+        done++; streak = 0;
+      } catch (e) {
+        failed++; streak++;
+        if (streak >= 3) { setSaveWarn(`⚠️ Stopped after ${done} — the AI endpoint keeps failing (${e.message || "unknown"}). The scenes are safe, just plain. Try again later.`); break; }
+      }
+    }
+    setBulk(null);
+    if (!saveWarn && failed && done) setSaveWarn(`Annotated ${done} of ${todo.length}. ${failed} didn't come back — tap ＋ふりがな on those, or run this again.`);
     setBuilding(false);
   };
 
@@ -6165,6 +6208,20 @@ function Scripts({ cards = [] }) {
         </div>
       ) : (
         <ul className="tc-scriptlist">
+          {/* The imported scenes come in plain. Offered once for all of them rather than as
+              47 separate taps, and only when there is something to do. */}
+          {AI_ENABLED && scripts.some((s) => s.plain && s.raw) && (
+            <li className="tc-scriptrow tc-scriptbulk">
+              <span className="tc-scriptmeta">
+                {bulk
+                  ? `Adding furigana… ${bulk.done}/${bulk.total}`
+                  : `${scripts.filter((s) => s.plain && s.raw).length} scenes have no furigana or translation yet.`}
+              </span>
+              <button className="tc-btn tc-btn-sm" disabled={building} onClick={annotateAll}>
+                {building ? "…" : "＋ふりがな all"}
+              </button>
+            </li>
+          )}
           {scripts.map((s) => (
             <li key={s.id} className="tc-scriptrow">
               <button className="tc-scriptopen" onClick={() => startRehearse(s)}>

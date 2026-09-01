@@ -866,6 +866,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rehname{font-size:15px;font-weight:600;color:#fff;}
 .tc-scriptlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
 .tc-scriptrow{display:flex;align-items:stretch;gap:6px;}
+.tc-scriptbulk{align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;margin-bottom:8px;border-radius:var(--r-m);background:var(--surface-2);border:1px solid var(--outline-2);}
+.tc-scriptbulk .tc-scriptmeta{flex:1;min-width:0;}
 .tc-scriptopen{flex:1;appearance:none;text-align:left;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:var(--washi);font:inherit;padding:14px 16px;border-radius:12px;cursor:pointer;transition:all .15s;display:flex;justify-content:space-between;align-items:center;}
 .tc-scriptopen:hover{border-color:var(--shu);background:rgba(216,72,47,.1);}
 .tc-scriptname{font-size:16px;font-weight:600;color:#fff;}
