@@ -201,6 +201,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rate-new{color:var(--mut-2);}
 .tc-setupfoot{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
 .tc-hintline{text-align:center;font-size:12px;color:var(--mut-2);margin:14px 0 0;}
+/* The Space/arrow-key tip is useless on a phone, which has none of those keys (TODO-202).
+   Hidden by default and shown only where a real pointer and hover exist, so a device that
+   reports neither errs towards hiding advice it cannot act on. Only this one hint is
+   gated -- the other .tc-hintline uses describe taps and stay on every device. */
+.tc-kbdtip{display:none;}
+@media (hover:hover) and (pointer:fine){.tc-kbdtip{display:block;}}
 
 /* buttons */
 

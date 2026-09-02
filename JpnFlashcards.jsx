@@ -2419,7 +2419,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             <button className="tc-btn tc-btn-sm" onClick={() => start(weak)}>Weak · {weak.length}</button>
           )}
         </div>
-        <p className="tc-hintline">Tip: Space flips · → got it · ← missed</p>
+        <p className="tc-hintline tc-kbdtip">Tip: Space flips · → got it · ← missed</p>
       </div>
     );
   }
