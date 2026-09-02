@@ -5,7 +5,7 @@
 //   node tools/test-worker.mjs
 import {
   iso8601ToSeconds, parseFeed, unent, validateSnapshotBody,
-  signSession, verifySession, withSecurityHeaders, bumpQuota, sha256Hex,
+  handleSync, signSession, verifySession, withSecurityHeaders, bumpQuota, sha256Hex,
 } from "../cf/src/index.js";
 import { handleAi } from "../cf/src/ai.js";
 
@@ -573,6 +573,93 @@ async function main() {
     eq(res.status, 503);
   });
 
+
+  console.log("=== handleSync round-trip (server-stamped record) ===");
+  /* The stored record used to be whatever the client posted, so a device with a skewed
+     clock could decide a merge with a wrong updatedAt. These drive handleSync directly
+     against a KV stub rather than asserting on the validator alone. */
+  function syncKV() {
+    const store = new Map();
+    return {
+      raw: store,
+      get: async (k, opts) => {
+        const v = store.has(k) ? store.get(k) : null;
+        if (v === null) return null;
+        return opts && opts.type === "json" ? JSON.parse(v) : v;
+      },
+      put: async (k, v) => { store.set(k, v); },
+    };
+  }
+  const SYNC_SECRET = "test-secret-for-sync";
+  const syncEnv = () => ({ SESSION_SECRET: SYNC_SECRET, SYNC: syncKV() });
+  const syncReq = async (env, method, body, token) => new Request("https://x/api/sync", {
+    method,
+    headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  await t("POST stores v:1 and a server updatedAt, and returns it", async () => {
+    const env = syncEnv();
+    const token = await signSession(SYNC_SECRET, "user-1", null);
+    const before = Date.now();
+    const res = await handleSync(await syncReq(env, "POST", { snapshot: { "jpn101:deck": "[]" }, updatedAt: 1 }, token), env);
+    eq(res.status, 200);
+    const out = await res.json();
+    ok(typeof out.updatedAt === "number", "response carries updatedAt");
+    ok(out.updatedAt >= before, "updatedAt is the server clock, not the sent 1");
+    const stored = JSON.parse(env.SYNC.raw.get("g:user-1"));
+    eq(stored.v, 1);
+    ok(typeof stored.updatedAt === "number", "stored updatedAt is a number");
+    ok(stored.updatedAt !== 1, "the sender's updatedAt was not trusted");
+    eq(stored.snapshot["jpn101:deck"], "[]");
+  });
+
+  await t("GET returns the server clock as now", async () => {
+    const env = syncEnv();
+    const token = await signSession(SYNC_SECRET, "user-2", null);
+    await handleSync(await syncReq(env, "POST", { snapshot: { "jpn101:deck": "[]" } }, token), env);
+    const res = await handleSync(await syncReq(env, "GET", undefined, token), env);
+    eq(res.status, 200);
+    const out = await res.json();
+    ok(typeof out.now === "number", "GET carries now");
+    notNull(out.data);
+    eq(out.data.snapshot["jpn101:deck"], "[]");
+  });
+
+  await t("a pre-v1 record still reads back (no migration needed)", async () => {
+    const env = syncEnv();
+    const token = await signSession(SYNC_SECRET, "user-3", null);
+    // the old shape: exactly what the client posted, no v, no server updatedAt
+    await env.SYNC.put("g:user-3", JSON.stringify({ snapshot: { "jpn101:deck": "[1]" }, updatedAt: 42 }));
+    const res = await handleSync(await syncReq(env, "GET", undefined, token), env);
+    const out = await res.json();
+    eq(out.data.snapshot["jpn101:deck"], "[1]");
+    eq(out.data.updatedAt, 42);
+  });
+
+  await t("malformed JSON is 400, oversized body is 413", async () => {
+    const env = syncEnv();
+    const token = await signSession(SYNC_SECRET, "user-4", null);
+    const bad = new Request("https://x/api/sync", {
+      method: "POST",
+      headers: { authorization: "Bearer " + token },
+      body: "{not json",
+    });
+    eq((await handleSync(bad, env)).status, 400);
+    const huge = new Request("https://x/api/sync", {
+      method: "POST",
+      headers: { authorization: "Bearer " + token },
+      body: JSON.stringify({ snapshot: { "jpn101:deck": "x".repeat(1024 * 1024 + 10) } }),
+    });
+    eq((await handleSync(huge, env)).status, 413);
+  });
+
+  await t("an unsigned request never reaches KV", async () => {
+    const env = syncEnv();
+    const res = await handleSync(await syncReq(env, "POST", { snapshot: {} }, "not-a-token"), env);
+    eq(res.status, 401);
+    eq(env.SYNC.raw.size, 0);
+  });
   console.log(fail ? `\n${fail} of ${run} FAILED` : `\nall ${run} worker tests passed`);
   // Set the code and let Node wind down on its own. Forcing process.exit() here tripped a
   // libuv teardown assertion on Windows (exit 127, AFTER every test had reported passing)

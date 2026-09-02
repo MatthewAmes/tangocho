@@ -127,7 +127,7 @@ async function handleSync(req, env) {
 
   if (req.method === "GET") {
     const data = await env.SYNC.get(storageKey, { type: "json" });
-    return json({ data: data || null });
+    return json({ data: data || null, now: Date.now() });
   }
   if (req.method === "POST") {
     const MAX_BODY = 1024 * 1024;   // 1 MiB; real snapshots are ~300 KB
@@ -139,8 +139,13 @@ async function handleSync(req, env) {
     try { body = JSON.parse(raw); } catch (e) { return json({ error: "invalid JSON body" }, 400); }
     const bad = validateSnapshotBody(body);
     if (bad) return json({ error: bad }, 400);
-    await env.SYNC.put(storageKey, JSON.stringify(body));
-    return json({ ok: true });
+    /* Server clock, not the sender's: mergeSnapshots compares updatedAt, and a device
+       with a skewed clock could otherwise win or lose a merge on a wrong timestamp.
+       Older records have no v and no updatedAt; both shapes carry .snapshot, so readers
+       stay compatible and no migration is needed. */
+    const record = { v: 1, updatedAt: Date.now(), snapshot: body.snapshot };
+    await env.SYNC.put(storageKey, JSON.stringify(record));
+    return json({ ok: true, updatedAt: record.updatedAt });
   }
   return new Response("Method not allowed", { status: 405 });
 }
@@ -441,4 +446,4 @@ export default {
   },
 };
 
-export { iso8601ToSeconds, parseFeed, unent, validateSnapshotBody, signSession, verifySession, withSecurityHeaders, bumpQuota, sha256Hex, json };
+export { handleSync, iso8601ToSeconds, parseFeed, unent, validateSnapshotBody, signSession, verifySession, withSecurityHeaders, bumpQuota, sha256Hex, json };

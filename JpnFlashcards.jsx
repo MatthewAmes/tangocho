@@ -403,14 +403,16 @@ async function pullAndMergeCloud() {
     const res = await fetch(req.url, req.opts);
     if (res.status === 401) { handleAuthFailure(); return false; }
     if (!res.ok) return false;
-    const { data } = await res.json();
+    const { data, now } = await res.json();
     if (!data || !data.snapshot) return false;
     const localSnap = collectLocalSnapshot();
     let lastPulled = 0;
     try { lastPulled = Number(window.localStorage.getItem("jpn101:syncLastPulled") || 0); } catch (e) {}
     const merged = mergeSnapshots(localSnap, data.snapshot, data.updatedAt, lastPulled, SYNC_SKIP_KEYS);
     Object.keys(merged).forEach((k) => { try { window.localStorage.setItem(k, merged[k]); } catch (e) {} });
-    try { window.localStorage.setItem("jpn101:syncLastPulled", String(Date.now())); } catch (e) {}
+    // Stamp from the server clock the GET just returned, so the freshness comparison in
+    // mergeSnapshots sits on one timebase instead of this device's.
+    try { window.localStorage.setItem("jpn101:syncLastPulled", String(now || Date.now())); } catch (e) {}
     // Only now that every merged key is on disk: let cached readers drop/refresh, so the
     // next write serialises the merged value rather than the pre-pull one.
     _afterPull.forEach((fn) => { try { fn(Object.keys(merged)); } catch (e) {} });
