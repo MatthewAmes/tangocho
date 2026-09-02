@@ -718,7 +718,11 @@ export default function JpnFlashcards() {
   useEffect(() => {
     const el = tabsRef.current;
     if (!el) return;
-    const on = el.querySelector('[aria-selected="true"]');
+    /* aria-current, not aria-selected: TODO-206 replaced the ARIA tablist with a nav of
+       links, and this selector kept looking for the attribute that went with it. It had
+       matched nothing since, so the strip stayed parked at the start and the active tab
+       could sit off-screen on a narrow phone -- the exact thing this effect prevents. */
+    const on = el.querySelector('[aria-current="page"]');
     if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [tab]);
 

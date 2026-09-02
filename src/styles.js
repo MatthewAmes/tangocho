@@ -254,7 +254,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rescueicon{color:rgb(105,219,124);font-size:11px;}
 .tc-xp{font-family:var(--mono);font-size:12px;font-weight:700;color:rgb(232,191,90);
   letter-spacing:.04em;animation:tc-xp-bump .3s ease;}
-.tc-xp i{font-style:normal;opacity:.6;margin-left:2px;font-size:10px;}
+.tc-xp i{font-style:normal;opacity:.6;margin-left:2px;font-size:11px;}
 @keyframes tc-xp-bump{from{transform:scale(1.35);}to{transform:scale(1);}}
 .tc-award{display:flex;align-items:center;gap:7px;margin:0 0 12px;font-family:var(--mono);
   font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut-2);
@@ -354,7 +354,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-term-5{font-size:62px;line-height:1.1;}
 .tc-frontromaji{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:rgba(255,255,255,.55);font-style:normal;}
 .tc-prompt-en{font-size:26px;font-weight:600;text-align:center;color:#fff;line-height:1.3;}
-.tc-flipcue{position:absolute;bottom:14px;font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);}
+.tc-flipcue{position:absolute;bottom:14px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);}
 .tc-reading{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:34px;font-weight:600;color:#fff;}
 .tc-romaji{font-family:var(--mono);font-size:14px;letter-spacing:.14em;color:var(--shu-soft);font-style:normal;}
@@ -627,7 +627,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
 .tc-row{display:grid;grid-template-columns:auto 1.3fr 1.3fr 1.4fr auto auto;gap:12px;align-items:center;
   padding:11px 8px;border-bottom:1px solid rgba(255,255,255,.07);font-size:14px;}
-.tc-rowkind{font-family:"Yu Gothic","Noto Sans JP",sans-serif;font-size:10px;color:var(--ai);
+.tc-rowkind{font-family:"Yu Gothic","Noto Sans JP",sans-serif;font-size:11px;color:var(--ai);
   background:var(--washi-2);border-radius:4px;padding:3px 6px;text-align:center;white-space:nowrap;}
 .tc-rowterm{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:19px;color:#fff;}
 .tc-rowread{display:flex;flex-direction:column;color:var(--washi);}
@@ -779,7 +779,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kanacell{appearance:none;border:0;background:rgba(255,255,255,.055);border-radius:var(--r-s);flex:1;min-width:0;min-height:56px;padding:8px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;font:inherit;color:#fff;transition:transform .1s,border-color .15s;}
 .tc-kanacell:active{transform:scale(.94);}
 .tc-kanach{font-size:24px;line-height:1.15;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
-.tc-kanar{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--mut-2);}
+.tc-kanar{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--mut-2);}
 .kn-untouched{opacity:.55;}
 .kn-good{background:radial-gradient(120% 130% at 50% -10%, rgba(80,200,120,.38) 0%, rgba(80,200,120,.08) 70%);border-color:rgba(95,185,106,.45);}
 .kn-mid{background:radial-gradient(120% 130% at 50% -10%, rgba(230,162,60,.32) 0%, rgba(230,162,60,.06) 70%);border-color:rgba(230,162,60,.4);}
@@ -798,7 +798,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .kn-ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px;line-height:1;color:rgba(31,45,84,.15);pointer-events:none;user-select:none;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .kn-ghost-strong{color:rgba(216,72,47,.5);}
 .tc-build{font-size:11px;font-weight:600;color:var(--mut-2);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);padding:2px 7px;border-radius:99px;vertical-align:middle;letter-spacing:.04em;}
-.tc-verfoot{margin:28px 0 10px;text-align:center;font-size:10.5px;letter-spacing:.08em;color:var(--mut-2);opacity:.55;user-select:none;}
+.tc-verfoot{margin:28px 0 10px;text-align:center;font-size:11px;letter-spacing:.08em;color:var(--mut-2);opacity:.55;user-select:none;}
 .tc-backbtn{border-color:rgba(255,255,255,.3);font-weight:600;min-width:84px;}
 .tc-hookbtn{appearance:none;margin-top:10px;border:0;background:rgba(255,255,255,.12);color:rgba(255,255,255,.75);font:inherit;font-size:13px;font-weight:500;min-height:34px;padding:6px 14px;border-radius:99px;cursor:pointer;transition:background .15s,transform .1s;}
 .tc-hookbtn:active{transform:scale(.95);}
@@ -821,7 +821,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-summary{display:flex;gap:8px;margin-bottom:12px;}
 .tc-sumitem{flex:1;background:transparent;border:0;border-radius:0;padding:8px 4px;text-align:center;display:flex;flex-direction:column;gap:2px;}
 .tc-sumitem b{font-size:30px;font-weight:300;letter-spacing:-.02em;color:#fff;font-variant-numeric:tabular-nums;}
-.tc-sumitem span{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut-2);}
+.tc-sumitem span{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut-2);}
 .tc-sum-good b{color:#5fb96a;}
 .tc-sum-need b{color:var(--shu-soft);}
 .tc-sum-new b{color:#e6a23c;}
@@ -924,7 +924,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
   color:#fff;font-size:38px;line-height:1;width:96px;height:96px;border-radius:50%;cursor:pointer;
   transition:background .15s,border-color .15s,transform .1s;}
 .tc-replay:active{transform:scale(.95);}
-.tc-listensrc{margin:2px 0 0;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+.tc-listensrc{margin:2px 0 0;font-family:var(--mono);font-size:11px;letter-spacing:.14em;
   text-transform:uppercase;color:rgba(255,255,255,.38);}
 /* The escape hatch, and what it costs: the line is on screen, so the answer is no longer
    evidence about hearing it. */
@@ -954,7 +954,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-dialrow.is-off{opacity:.5;}
 .tc-dialmeta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .tc-dialname{font-size:16px;font-weight:600;color:var(--washi);display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.tc-bosschip{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+.tc-bosschip{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
   color:rgb(232,191,90);background:rgba(232,191,90,.12);border:1px solid rgba(232,191,90,.35);
   border-radius:99px;padding:3px 9px;}
 .tc-dialparts{display:flex;flex-wrap:wrap;gap:8px;}
@@ -1249,7 +1249,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-inlevlabel{font-size:12px;color:var(--mut);}
 .tc-inlevlabel i,.tc-inband i{font-style:normal;opacity:.55;font-size:.85em;}
 .tc-bi{display:inline-flex;flex-direction:column;align-items:center;line-height:1.15;gap:1px;}
-.tc-bi small{font-size:10px;opacity:.6;font-weight:400;letter-spacing:.02em;}
+.tc-bi small{font-size:11.5px;opacity:.6;font-weight:400;letter-spacing:.02em;}
 .tc-inpickja{display:block;font-style:normal;font-size:13px;font-weight:400;color:var(--mut-2);margin-top:2px;}
 .tc-inloading{color:var(--mut-2);font-weight:400;font-size:15px;}
 .tc-inloading::after{content:"";display:inline-block;width:1em;text-align:left;animation:tc-dots 1.2s steps(4,end) infinite;}
