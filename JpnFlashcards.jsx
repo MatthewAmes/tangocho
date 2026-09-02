@@ -2883,7 +2883,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     + (picked && picked.key === tile.key ? " is-picked" : "")
                     + (shakeKey === tile.key ? " is-wrong" : "")}
                   disabled={paired.has(tile.id)} onClick={() => onTile(tile)}>
-                  <span lang="ja" className="tc-jp">{tile.text}</span>
+                  <span lang="ja">{tile.text}</span>
                   {tile.sub && tile.sub !== tile.text ? <small>{tile.sub}</small> : null}
                 </button>
               ))}
@@ -3026,7 +3026,6 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     className="tc-spellinput" type="text" value={typed} autoFocus
                     autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false"
                     placeholder="type the reading in rōmaji"
-                    aria-label="Type the reading in rōmaji"
                     onChange={(e) => setTyped(e.target.value)}
                     onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") checkSpelling(); }}
                   />
@@ -6047,7 +6046,7 @@ function ScriptListen({ scripts, cards, onExit }) {
             </button>
           )}
           {shown && (
-            <p lang="ja" className="tc-listenshown tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
+            <p lang="ja" className="tc-listenshown"><Furigana tokens={ex.reveal.tokens} /></p>
           )}
         </div>
 
@@ -6058,7 +6057,7 @@ function ScriptListen({ scripts, cards, onExit }) {
             const isAnswer = c === ex.answer;
             const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
             return (
-              <button key={c} type="button" className={"tc-mcopt" + cls + (ex.format === LISTEN_FORMATS.MISSING ? " tc-jp" : "")}
+              <button key={c} type="button" lang={ex.format === LISTEN_FORMATS.MISSING ? "ja" : undefined} className={"tc-mcopt" + cls}
                       disabled={!!verdict} onClick={() => answer(c)}>{c}</button>
             );
           })}
@@ -6066,7 +6065,7 @@ function ScriptListen({ scripts, cards, onExit }) {
 
         {verdict && (
           <div className="tc-listenrev">
-            <p lang="ja" className="tc-listenjp tc-jp"><Furigana tokens={ex.reveal.tokens} /></p>
+            <p lang="ja" className="tc-listenjp"><Furigana tokens={ex.reveal.tokens} /></p>
             {ex.reveal.romaji && <p className="tc-sentans">{ex.reveal.romaji}</p>}
             {ex.reveal.en && <p className="tc-listenen">{ex.reveal.speaker ? ex.reveal.speaker + ": " : ""}{ex.reveal.en}</p>}
             <button className="tc-btn tc-btn-primary" onClick={next}>
@@ -6274,14 +6273,14 @@ function ScriptDialogue({ scripts, onExit }) {
                 {b.npc.map((n) => (
                   <li key={"n" + n.lineIdx} className="tc-dialline">
                     <span className="tc-dialwho">{n.speaker}</span>
-                    <span lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></span>
+                    <span lang="ja" className="tc-dialjp"><Furigana tokens={n.tokens} /></span>
                     <span className="tc-dialen">{n.en}</span>
                   </li>
                 ))}
                 {b.turn && (
                   <li key={"m" + b.turn.lineIdx} className="tc-dialline is-mine">
                     <span className="tc-dialwho">{b.turn.speaker}</span>
-                    <span lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={b.turn.reveal.tokens} /></span>
+                    <span lang="ja" className="tc-dialjp"><Furigana tokens={b.turn.reveal.tokens} /></span>
                     <span className="tc-dialen">{b.turn.reveal.en}</span>
                   </li>
                 )}
@@ -6333,7 +6332,7 @@ function ScriptDialogue({ scripts, onExit }) {
 
         {history.slice(-3).map((h) => (
           <p key={"h" + h.lineIdx} className={"tc-dialpast" + (h.mine ? " is-mine" : "")}>
-            <b>{h.speaker}</b> <span lang="ja" className="tc-jp">{h.text}</span>
+            <b>{h.speaker}</b> <span lang="ja">{h.text}</span>
           </p>
         ))}
 
@@ -6343,7 +6342,7 @@ function ScriptDialogue({ scripts, onExit }) {
               <button type="button" className="tc-speakbtn" aria-label={"Hear " + n.speaker + " again"}
                 onClick={() => speak(n.text)}>🔊</button>
             </p>
-            <p lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={n.tokens} /></p>
+            <p lang="ja" className="tc-dialjp"><Furigana tokens={n.tokens} /></p>
             {/* The English is the one thing withheld: understanding what was just said is
                 what the reply is being asked to prove. */}
             {(resolved || !turn) && <p className="tc-dialen">{n.en}</p>}
@@ -6363,7 +6362,7 @@ function ScriptDialogue({ scripts, onExit }) {
                   ? (isAnswer ? " is-answer" : picks.includes(c) ? " is-wrongpick" : "")
                   : "";
                 return (
-                  <button key={c} type="button" className={"tc-mcopt tc-jp" + cls}
+                  <button key={c} type="button" lang="ja" className={"tc-mcopt" + cls}
                           disabled={resolved} onClick={() => answer(c)}>{c}</button>
                 );
               })}
@@ -6383,7 +6382,7 @@ function ScriptDialogue({ scripts, onExit }) {
                 <button className="tc-btn tc-btn-primary" onClick={said}>Reveal</button>
               </>
             ) : (
-              <p lang="ja" lang="ja" className="tc-dialjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
+              <p lang="ja" className="tc-dialjp"><Furigana tokens={turn.reveal.tokens} /></p>
             )}
           </div>
         )}
@@ -6392,7 +6391,7 @@ function ScriptDialogue({ scripts, onExit }) {
           <div className="tc-listenrev">
             {turn && turn.kind === TURN.CHOICE && (
               <>
-                <p lang="ja" className="tc-listenjp tc-jp"><Furigana tokens={turn.reveal.tokens} /></p>
+                <p lang="ja" className="tc-listenjp"><Furigana tokens={turn.reveal.tokens} /></p>
                 {turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
                 {turn.reveal.en && <p className="tc-listenen">{turn.reveal.en}</p>}
               </>

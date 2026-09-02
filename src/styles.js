@@ -57,7 +57,21 @@ body{min-height:100%;overscroll-behavior-y:none;}
           calc(40px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));
   box-sizing:border-box;
 }
-.tc-jp{font-family:"Noto Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;}
+/* Japanese font selection follows the lang attribute, not a hand-applied class (TODO-205).
+   The old class had to be remembered at every JP site and was forgotten at most of them;
+   the lang attribute has to be there anyway for screen readers, so one rule keyed off it
+   cannot drift out of sync with the markup the way a class did.
+
+   NOTE: no backticks anywhere in this file's comments — the whole stylesheet is one
+   template literal, so a backtick in a comment ends the string and breaks the build.
+
+   Specificity is deliberately (0,1,0) — a bare :lang(ja), NOT a .tc-root :lang(ja)
+   descendant selector. The per-class stacks below (.tc-term, .tc-sentjp, the Mincho serif
+   ones and the rest) are also (0,1,0) and come later, so they still win on source order.
+   Prefixing .tc-root here would make this (0,2,0) and silently override every one of
+   them, turning the Mincho serif headings sans. This rule is only the default for JP text
+   that has no stack of its own. */
+:lang(ja){font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 
 /* ---- Academic Dark type scale (DESIGN.md). Utility classes so new markup can opt in
    without every existing rule having to be rewritten. ---- */
@@ -388,6 +402,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.16);border-radius:12px;
   padding:12px 15px;cursor:pointer;transition:background .12s,border-color .12s;}
 .tc-mcopt:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
+/* font:inherit above resets family to the parent's Latin stack, and it is declared later
+   than the :lang(ja) default, so multiple-choice options holding Japanese fell back to
+   per-character browser substitution rather than the app's JP stack. The old .tc-jp class
+   never fixed this either — same specificity, same losing position — so the class those
+   buttons carried was doing nothing. Specificity (0,2,0) to beat the plain .tc-mcopt. */
+.tc-mcopt:lang(ja){font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .tc-mcopt:disabled{cursor:default;opacity:.55;}
 .tc-mcopt.is-answer{background:rgba(90,220,150,.2);border-color:rgba(90,220,150,.65);color:#d6ffe9;opacity:1;}
 .tc-mcopt.is-wrongpick{background:rgba(255,110,90,.18);border-color:rgba(255,110,90,.6);color:#ffd5cf;opacity:1;}
