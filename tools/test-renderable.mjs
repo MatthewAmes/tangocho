@@ -39,20 +39,22 @@ function whatRenders(activity, has) {
   const grid = activity === ACTIVITY.MATCH && has.grid;
   const drill = [ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && has.drill;
   const cloze = activity === ACTIVITY.CLOZE && has.cloze;
+  const spell = activity === ACTIVITY.SPELL && (has.spell ?? has.drill);
   const showsChoices =
     activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN
     || (activity === ACTIVITY.MATCH && !has.grid)
     || (activity === ACTIVITY.CLOZE && !has.cloze)
+    || (activity === ACTIVITY.SPELL && !spell)
     || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !has.drill);
   const renderActivity = showsChoices && !has.choices ? ACTIVITY.RECALL : activity;
   const mc = showsChoices && has.choices;
   const flip = renderActivity === ACTIVITY.RECALL || renderActivity === ACTIVITY.TYPE;
   const learn = renderActivity === ACTIVITY.LEARN;
-  const body = grid || drill || cloze || mc || flip || learn;
+  const body = grid || drill || cloze || spell || mc || flip || learn;
   // the control deck: silent only when a board is genuinely on screen
   const deck = (renderActivity === ACTIVITY.MATCH && grid) ? "grid-advances-itself"
     : renderActivity === ACTIVITY.LEARN ? "button"
-    : ["mc", "listen", "cloze", "tapfill", "build", "order"].includes(renderActivity) ? "hint-or-button"
+    : ["mc", "listen", "cloze", "tapfill", "build", "order", "spell"].includes(renderActivity) ? "hint-or-button"
     : "reveal/missed/got";
   return { body, deck };
 }

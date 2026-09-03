@@ -826,7 +826,7 @@ export function buildSession(sources, opts = {}) {
 
    Learning-step repeats deliberately change format between showings. Seeing the identical
    card three times teaches the card; being asked three different ways teaches the word. */
-export const FORMATS = ["learn", "mc", "recall", "listen", "type", "cloze"];
+export const FORMATS = ["learn", "mc", "recall", "listen", "type", "cloze", "spell"];
 
 /* Format is now a CONSEQUENCE of choosing an ability and a cue level, not the thing being
    chosen. The decision lives in learner.mjs — chooseIntervention() — because it is about the
@@ -842,11 +842,12 @@ export function interventionFor(pick, opts = {}) {
   return chooseIntervention({
     fresh: pick.fresh || !((st && st.seen) || 0),
     step: pick.step || 0,
-    caps: pick.caps || { type: pick.canType, listen: pick.canListen },
+    caps: pick.caps || { type: pick.canType, listen: pick.canListen, spell: pick.canSpell },
     recognition: pick.recognition || skillOf(st, "fsrs"),
     production: pick.production || skillOf(st, "rfsrs"),
     listening: pick.listening || {},
     context: pick.context || {},
+    orthography: pick.orthography || skillOf(st, "orthography") || {},
     lastFailure: pick.lastFailure || (st && st.lastFailure) || null,
   }, {
     target: o.targetSuccess,
