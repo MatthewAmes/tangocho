@@ -17,7 +17,16 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CSS = fs.readFileSync(path.join(ROOT, "src", "styles.js"), "utf8");
-const JSX = fs.readFileSync(path.join(ROOT, "JpnFlashcards.jsx"), "utf8");
+function readJsxFiles(dir) {
+  let content = "";
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory() && ent.name !== "node_modules" && ent.name !== ".git") content += readJsxFiles(p);
+    else if (ent.isFile() && ent.name.endsWith(".jsx")) content += fs.readFileSync(p, "utf8") + "\n";
+  }
+  return content;
+}
+const JSX = readJsxFiles(ROOT);
 
 /** Every .tc-foo that a rule defines. */
 const defined = new Set();

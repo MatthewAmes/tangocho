@@ -14,3 +14,17 @@ export function saveSession(session, email) {
     if (email) window.localStorage.setItem(USER_EMAIL_KEY, email);
   } catch (e) {}
 }
+
+let _sessionBusy = false;
+const _busyWatchers = new Set();
+
+export function setSessionBusy(b) {
+  if (_sessionBusy === b) return;
+  _sessionBusy = b;
+  _busyWatchers.forEach((fn) => { try { fn(b); } catch (e) {} });
+}
+
+export function watchSessionBusy(fn) {
+  _busyWatchers.add(fn);
+  return () => _busyWatchers.delete(fn);
+}
