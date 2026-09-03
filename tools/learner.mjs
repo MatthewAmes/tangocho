@@ -43,6 +43,7 @@ export function skillForFormat(format) {
        generated, and not listening, because the options are on screen. */
     case "dialogue_turn": return "context";
     case "cloze": return "context";
+    case "spell": return "orthography";
     default: return null;                  // "learn" is exposure, not evidence
   }
 }
@@ -233,6 +234,7 @@ export function classifyFailure({ format, expected = "", got = "" } = {}) {
   if (format === "listen") return "listening";
   if (format === "mc" || format === "recall") return "meaning";
   if (format === "cloze") return "context";
+  if (format === "spell") return "orthography";
   if (format === "type") {
     if (!g.trim()) return "blank";                   // nothing retrieved at all
     /* Right word, wrong shape. たべました for たべる is not a vocabulary failure — the
@@ -640,6 +642,7 @@ function formatFromSkillCue(skill, cue) {
     case "listening": return "listen";
     case "context": return "cloze";
     case "production": return cue >= CUE.CONTEXT ? "cloze" : "type";
+    case "orthography": return "spell";
     default: return cue <= CUE.CHOOSE ? "mc" : "recall";
   }
 }
@@ -648,6 +651,7 @@ function directionFor(skill) {
   if (skill === "listening") return DIRECTIONS.AUDIO_EN;
   if (skill === "context") return DIRECTIONS.IN_CONTEXT;
   if (skill === "production") return DIRECTIONS.EN_JP;
+  if (skill === "orthography") return DIRECTIONS.JP_EN;
   return DIRECTIONS.JP_EN;
 }
 
@@ -674,6 +678,7 @@ export function chooseIntervention(pick, opts = {}) {
     production: pick.production || {},
     listening: pick.listening || {},
     context: pick.context || {},
+    orthography: pick.orthography || {},
   };
 
   // Never met: show it. There is nothing to retrieve yet.
@@ -711,6 +716,7 @@ export function chooseIntervention(pick, opts = {}) {
     unlocked.push("listening");
   }
   if (caps.context && (states.production.tried || recDemonstrated)) unlocked.push("context");
+  if (caps.spell && recDemonstrated) unlocked.push("orthography");
 
   /* Target the WEAKEST unlocked ability — the whole point of modelling them separately.
      An untried ability counts as weak: it is the one with no evidence at all. */
@@ -721,7 +727,7 @@ export function chooseIntervention(pick, opts = {}) {
 
      Ties break toward the harder, less-practised direction: producing a word beats
      recognising it, and recognition is the fallback rather than the default. */
-  const ORDER = ["production", "context", "listening", "recognition"];
+  const ORDER = ["production", "context", "listening", "orthography", "recognition"];
   const ranked = ORDER.filter((s) => unlocked.includes(s));
   let skill = ranked[0] || unlocked[0];
   let best = -1;

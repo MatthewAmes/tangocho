@@ -27,7 +27,7 @@ import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
          describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
 import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
 import { pickDistractors } from "./tools/distractors.mjs";
-import { contrastSet } from "./tools/contrast.mjs";
+import { contrastSet, contrastDrill, hasContrast } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
 import { stopOffer, easedTarget, PACING, PACES, paceMinutes } from "./tools/pacing.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
@@ -1270,7 +1270,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
            generated one already fetched. Promising the rung and then having to go and get the
            sentence is how a card renders blank mid-session. */
         capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term),
-                            context: hasContext(clozeIndex, it.id) || !!contextFor(it.id) }) },
+                            context: hasContext(clozeIndex, it.id) || !!contextFor(it.id),
+                            spell: hasContrast(it) }) },
       ...foreign.map((s) => ({
         ...s,
         weight: deckWeight(plan, s.deck),
@@ -1616,7 +1617,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     // Only claim a particle gap when the generator can actually produce one to grade.
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
     canMatch: (id) => canMatchBoard(queue.find((q) => q && q.id === id), cards, confusion),
+    canSpell: (id) => hasContrast(queue.find((q) => q && q.id === id) || cards.find((c) => c && c.id === id)),
   }), [sentenceOf, knownWords, queue, cards, confusion]);
+
+  const spellDrill = useMemo(
+    () => (card && card.reading ? contrastDrill(card, { seed: (card._step || 0) + String(card.id).length }) : null),
+    [card],
+  );
 
   /* The composer decided this when the session was built; recomputing here would risk a
      different answer from the one the arrangement was based on. Cards that never went
@@ -1798,6 +1805,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        Each fix was right; neither knew about the other. */
     || (activity === ACTIVITY.MATCH && !grid)
     || (activity === ACTIVITY.CLOZE && !clozeEx)
+    || (activity === ACTIVITY.SPELL && !spellDrill)
     || ([ACTIVITY.BUILD, ACTIVITY.ORDER, ACTIVITY.TAPFILL].includes(activity) && !sessionDrill)
   );
 
@@ -1897,7 +1905,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
      So the fallback chain ends somewhere that always works. Every card in the deck has a
      term and a meaning, so the flip card is always renderable; that is the floor. */
-  const renderActivity = showsChoices && choices.length === 0 ? ACTIVITY.RECALL : activity;
+  const renderActivity =
+    showsChoices && choices.length === 0 ? ACTIVITY.RECALL
+    : activity === ACTIVITY.SPELL && !spellDrill ? ACTIVITY.RECALL
+    : activity;
 
   const answerChoice = useCallback((choice) => {
     if (verdict) return;
@@ -1963,10 +1974,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        answer is writing practice and a listening question is listening practice even
        when the word is ordinary vocabulary — otherwise the coverage report says you
        never listen while you have been listening all week. */
-    const workedArea = fmt === "listen" ? "listening" : fmt === "type" ? "writing" : areaForDeck(c.src || "class");
+    const workedArea = fmt === "listen" ? "listening" : (fmt === "type" || fmt === "spell") ? "writing" : areaForDeck(c.src || "class");
     // Kana, kanji and 10k cards belong to their own decks and go home to their own keys.
     const outcome = { failure: got ? null : classifyFailure({ format: fmt,
-      expected: c.reading || c.term, got: verdict && verdict.got ? verdict.got : "" }),
+      expected: c.reading || c.term, got: verdict && verdict.chose ? verdict.chose : (verdict && verdict.got ? verdict.got : "") }),
       skill: skillForFormat(fmt) };
     /* Requeue passes are relearning steps. missRef is incremented BELOW, after this call,
        so it is still falsy the first time a card is graded and truthy on every retry. */
@@ -2941,6 +2952,37 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         </div>
       )}
 
+      {/* ── minimal-pair spelling / contrast drill ── */}
+      {renderActivity === ACTIVITY.SPELL && spellDrill && (
+        <div className="tc-mcwrap" style={masteryStyle(live || card)}>
+          <span className="tc-kindchip tc-clozechip">{spellDrill.label}</span>
+          {spellDrill.emoji && <div className="tc-emoji tc-emoji-lg">{spellDrill.emoji}</div>}
+          <div className={"tc-term" + (spellDrill.term.length <= 5 ? " tc-term-" + spellDrill.term.length : "")}>{spellDrill.term}</div>
+          {spellDrill.meaning && <p className="tc-clozeen">{spellDrill.meaning}</p>}
+          <p className="tc-conjnote" style={{ marginTop: 0 }}>Which spelling is right?</p>
+          <div className="tc-mcopts">
+            {spellDrill.options.map((o) => {
+              const chosen = verdict && verdict.chose === o;
+              const isAnswer = o === spellDrill.answer;
+              const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
+              return (
+                <button key={o} type="button" className={"tc-mcopt tc-mcopt-kana" + cls}
+                  disabled={!!verdict} onClick={() => {
+                    if (verdict) return;
+                    if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
+                    const ok = o === spellDrill.answer;
+                    setVerdict({ ok, chose: o, want: spellDrill.answer, note: spellDrill.note });
+                    setFlipped(true);
+                  }}>{o}</button>
+              );
+            })}
+          </div>
+          {verdict && (
+            <p className="tc-conjnote">{spellDrill.note}</p>
+          )}
+        </div>
+      )}
+
       {/* A cloze with no sentence renders nothing at all — an empty card with buttons under
           it. The capability gate is meant to make that impossible, but the gate reads a
           store that could be mid-load or hold an entry whose word no longer appears in its
@@ -3509,10 +3551,11 @@ function ProductionBlock({ drills, onDone }) {
 /* Activities the learner answers by tapping the content itself — options, tiles, a word
    bank. None of them wants a bottom control until it has been answered, because the answer
    is already on screen and a second control is just a way to get it wrong. */
-const ANSWERED_BY_TAPPING = ["mc", "listen", "cloze", "tapfill", "build", "order"];
+const ANSWERED_BY_TAPPING = ["mc", "listen", "cloze", "tapfill", "build", "order", "spell"];
 const PROMPT_FOR = {
   mc: "Pick the meaning", listen: "What did you hear?", cloze: "Which word belongs?",
   tapfill: "Which particle?", build: "Build the sentence", order: "Put it in order",
+  spell: "Which spelling is right?",
 };
 
 /* Exercise formats, in learner words rather than internal ones. */
@@ -3572,10 +3615,12 @@ function Plan({ cards = [] }) {
   })(); }, []);
   const [kanjiData, setKanjiData] = useState(null);
   useEffect(() => { loadKanji().then(setKanjiData).catch(() => {}); }, []);
+  const [quizData, setQuizData] = useState(null);
+  useEffect(() => { loadQuizzes().then(setQuizData).catch(() => {}); }, []);
 
   const itemsByStrand = useMemo(
-    () => strandItems(cards, strandStats, kanjiData),
-    [cards, strandStats, kanjiData]);
+    () => strandItems(cards, strandStats, kanjiData, quizData),
+    [cards, strandStats, kanjiData, quizData]);
   /* One number per volume across every strand, with the breakdown that explains it. The
      older scene-based bars stay underneath as the per-act detail: they answer a different
      question (which SCENE is weak) and this one cannot. */
@@ -4387,6 +4432,7 @@ function composeQueue(pool, clozeIndex, known, confusion) {
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
     // Same pool the board will use, or the gate promises a grid the builder cannot make.
     canMatch: (id) => canMatchBoard(byId.get(id), pool.filter((c) => c && c.id !== id), confusion),
+    canSpell: (id) => hasContrast(byId.get(id)),
   };
   const items = pool.map((c) => {
     let format = "recall", cue = null;
@@ -4703,7 +4749,7 @@ const NEW_QUOTA_DEFAULT = 6;
    is pinned to Volume 1 instead. Conjugation and dates carry no curriculum tag anywhere in
    the data, so they are left unplaced rather than guessed at: they still schedule and still
    reach Smart Review, and the volume bar says out loud that it is not counting them. */
-function strandItems(cards, stats, kanjiData) {
+function strandItems(cards, stats, kanjiData, quizData) {
   if (!stats) return {};
   const out = { vocab: [], kanji: [], kana: [], conj: [], dates: [], quiz: [] };
 
@@ -4743,10 +4789,30 @@ function strandItems(cards, stats, kanjiData) {
   }
 
   for (const k of kanaAll()) out.kana.push({ id: k.id, strand: "kana", act: null, stat: stats.kana[k.id] });
-  for (const c of conjAll()) out.conj.push({ id: c.id, strand: "conj", act: null, stat: stats.conj[c.id] });
-  for (const d of DATE_ITEMS) out.dates.push({ id: d.id, strand: "dates", act: null, stat: stats.dates[d.id] });
-  for (const [id, st] of Object.entries(stats.quiz || {})) {
-    out.quiz.push({ id, strand: "quiz", act: st && st.act != null ? st.act : null, stat: st });
+  for (const c of conjAll()) {
+    const act = c.f.pol === "formal" ? 4 : 8;
+    out.conj.push({ id: c.id, strand: "conj", act, stat: stats.conj[c.id] });
+  }
+  for (const d of DATE_ITEMS) {
+    out.dates.push({ id: d.id, strand: "dates", act: 4, stat: stats.dates[d.id] });
+  }
+  if (quizData && quizData.length) {
+    for (const q of quizData) {
+      for (const it of (q.items || [])) {
+        if (JP_TEXT.test(it.prompt) && it.answer && it.answer.length <= QUIZ_ANSWER_MAX) {
+          out.quiz.push({
+            id: it.id,
+            strand: "quiz",
+            act: q.act != null ? q.act : null,
+            stat: (stats.quiz && stats.quiz[it.id]) || null,
+          });
+        }
+      }
+    }
+  } else {
+    for (const [id, st] of Object.entries(stats.quiz || {})) {
+      out.quiz.push({ id, strand: "quiz", act: st && st.act != null ? st.act : null, stat: st });
+    }
   }
   return out;
 }
@@ -4887,13 +4953,19 @@ async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
   try {
     const raw = await sGet(CONJ_KEY);
     const stats = raw ? JSON.parse(raw) : {};
-    const items = withFrontier(conjAll().map((c) => foreignCard("conj", c)), stats);
+    const items = withFrontier(conjAll().map((c) => ({
+      ...foreignCard("conj", c),
+      act: c.f.pol === "formal" ? 4 : 8,
+    })), stats);
     out.push({ deck: "conj", items, stats: remapStats(stats, "conj") });
   } catch (e) {}
   try {
     const raw = await sGet(DATES_KEY);
     const stats = raw ? JSON.parse(raw) : {};
-    const items = withFrontier(DATE_ITEMS.map((d) => foreignCard("dates", d)), stats);
+    const items = withFrontier(DATE_ITEMS.map((d) => ({
+      ...foreignCard("dates", d),
+      act: 4,
+    })), stats);
     out.push({ deck: "dates", items, stats: remapStats(stats, "dates") });
   } catch (e) {}
   /* The activity books. 357 items survive the import with an answer the app can actually
