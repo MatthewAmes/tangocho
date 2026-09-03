@@ -399,6 +399,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
   color:rgba(255,255,255,.75);border-radius:99px;font:inherit;font-size:12px;padding:6px 13px;cursor:pointer;}
 .tc-listenreveal{margin-top:10px;font-family:"Hiragino Sans","Noto Sans JP",sans-serif;font-size:22px;color:rgba(255,255,255,.8);}
 .tc-mcopts{display:flex;flex-direction:column;gap:9px;width:min(100%,380px);}
+.tc-emojichip{background:rgba(255,180,90,.2);color:#ffe0b2;}
+.tc-emojiopts{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;width:min(100%,320px);}
+.tc-emojiopt{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:90px;padding:12px;text-align:center;}
+.tc-emojichar{font-size:42px;line-height:1;margin-bottom:2px;}
+.tc-emojisub{font-size:12px;color:rgba(255,255,255,.75);margin-top:4px;}
 
 /* Kana options are compared character by character, so they need to be big, monospaced-ish
    and generously spaced — the whole task is spotting a one-kana difference. */
@@ -917,6 +922,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-cue{margin:0;font-size:15px;color:rgba(255,255,255,.6);font-style:italic;}
 .tc-ladder{margin:0;font-size:12px;color:var(--mut-2);line-height:1.5;}
 .tc-offnote{margin:0;font-size:12px;color:var(--mut-2);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);padding:9px 12px;border-radius:8px;}
+.tc-rescuenote{border-color:rgba(201,156,92,.45);color:var(--washi);font-weight:500;}
 
 /* ---- script listening (MP-14). Mobile first: the replay button is the biggest thing on
    the card because it is the control the learner uses most, and the options are on the

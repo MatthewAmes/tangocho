@@ -53,7 +53,8 @@ export default function ConjDrill() {
       if (!c) return;
       CONJ_FORMS.forEach((f) => {
         if (!forms.has(f.id)) return;
-        out.push({ id: w.reading + "|" + f.id, w, f, answer: c[f.pol][f.key] });
+        const ans = f.pol === "te" ? c.te : f.pol === "tai" ? c.tai : c[f.pol][f.key];
+        if (ans) out.push({ id: w.reading + "|" + f.id, w, f, answer: ans });
       });
     });
     return out;
@@ -211,7 +212,7 @@ export default function ConjDrill() {
           ))}
           <button className="tc-conjchip"
             onClick={() => setForms(forms.size === CONJ_FORMS.length ? new Set(["p-pn"]) : new Set(CONJ_FORMS.map((f) => f.id)))}>
-            {forms.size === CONJ_FORMS.length ? "just one" : "all 8"}
+            {forms.size === CONJ_FORMS.length ? "just one" : `all ${CONJ_FORMS.length}`}
           </button>
         </div>
         <div className="tc-kanaseg tc-kanalen">

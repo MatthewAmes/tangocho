@@ -43,12 +43,13 @@ export const ACTIVITY = {
   BUILD: "build",       // English in, Japanese assembled from a bank that holds extras
   TYPE: "type",         // produce it from meaning, spelled out, no support
   SPELL: "spell",       // minimal-pair orthography discrimination (sokuon, yoon, long vowels)
+  EMOJI: "emoji",       // visual recognition: prompt term -> pick matching emoji
 };
 
 /* Support, most to least. Used to escalate within a session and to pick the finale — the
    ordering is the point, the numbers are not. */
 export const SUPPORT = {
-  [ACTIVITY.LEARN]: 0, [ACTIVITY.MC]: 1, [ACTIVITY.MATCH]: 2, [ACTIVITY.SPELL]: 2, [ACTIVITY.LISTEN]: 2, [ACTIVITY.CLOZE]: 3,
+  [ACTIVITY.LEARN]: 0, [ACTIVITY.MC]: 1, [ACTIVITY.EMOJI]: 1, [ACTIVITY.MATCH]: 2, [ACTIVITY.SPELL]: 2, [ACTIVITY.LISTEN]: 2, [ACTIVITY.CLOZE]: 3,
   [ACTIVITY.TAPFILL]: 3, [ACTIVITY.ORDER]: 4, [ACTIVITY.BUILD]: 5, [ACTIVITY.RECALL]: 5,
   [ACTIVITY.TYPE]: 6,
 };
@@ -96,11 +97,19 @@ export function activityFor(pick, material = {}, opts = {}) {
     return ACTIVITY.TYPE;
   }
 
+  if (fmt === "emoji") {
+    if (material.canEmoji && !material.canEmoji(pick.id)) return ACTIVITY.MC;
+    return ACTIVITY.EMOJI;
+  }
+
   /* Recognition becomes a matching grid when a worthwhile board can be built — one that
      holds a word this learner actually mixes up with the anchor. Four unrelated words in a
      grid is four recognition questions shown at once, which is EASIER than asking them one
      at a time; the confusable is what makes it an exercise. No confusable, no grid. */
   if (fmt === "mc" && material.canMatch && material.canMatch(pick.id)) return ACTIVITY.MATCH;
+  if (fmt === "mc" && material.canEmoji && material.canEmoji(pick.id) && material.wantsEmoji && material.wantsEmoji(pick.id)) {
+    return ACTIVITY.EMOJI;
+  }
 
   if (fmt === "spell") {
     if (material.canSpell && !material.canSpell(pick.id)) return ACTIVITY.MC;

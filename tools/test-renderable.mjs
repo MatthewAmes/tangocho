@@ -41,7 +41,7 @@ function whatRenders(activity, has) {
   const cloze = activity === ACTIVITY.CLOZE && has.cloze;
   const spell = activity === ACTIVITY.SPELL && (has.spell ?? has.drill);
   const showsChoices =
-    activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN
+    activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN || activity === ACTIVITY.EMOJI
     || (activity === ACTIVITY.MATCH && !has.grid)
     || (activity === ACTIVITY.CLOZE && !has.cloze)
     || (activity === ACTIVITY.SPELL && !spell)
@@ -54,7 +54,7 @@ function whatRenders(activity, has) {
   // the control deck: silent only when a board is genuinely on screen
   const deck = (renderActivity === ACTIVITY.MATCH && grid) ? "grid-advances-itself"
     : renderActivity === ACTIVITY.LEARN ? "button"
-    : ["mc", "listen", "cloze", "tapfill", "build", "order", "spell"].includes(renderActivity) ? "hint-or-button"
+    : ["mc", "listen", "cloze", "tapfill", "build", "order", "spell", "emoji"].includes(renderActivity) ? "hint-or-button"
     : "reveal/missed/got";
   return { body, deck };
 }

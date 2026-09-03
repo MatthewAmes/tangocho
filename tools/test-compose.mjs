@@ -30,6 +30,13 @@ t("a sentence with a gradeable particle gap becomes a particle tap", () => {
   const m = { ...withSentence, hasParticleGap: () => true };
   eq(activityFor(pick({ format: "cloze", cue: CUE.CONTEXT }), m), ACTIVITY.TAPFILL);
 });
+t("visual recognition: an emoji card routes to emoji activity when eligible", () => {
+  const m = { canEmoji: () => true, wantsEmoji: () => true };
+  eq(activityFor(pick({ format: "mc" }), m), ACTIVITY.EMOJI);
+  eq(activityFor(pick({ format: "emoji" }), m), ACTIVITY.EMOJI);
+  const noEmoji = { canEmoji: () => false };
+  eq(activityFor(pick({ format: "emoji" }), noEmoji), ACTIVITY.MC);
+});
 
 console.log("=== production is laddered by how much support is still needed ===");
 t("low cue -> arrange the pieces (all tiles correct)", () => {

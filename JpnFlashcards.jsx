@@ -1621,6 +1621,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
     canMatch: (id) => canMatchBoard(queue.find((q) => q && q.id === id), cards, confusion),
     canSpell: (id) => hasContrast(queue.find((q) => q && q.id === id) || cards.find((c) => c && c.id === id)),
+    canEmoji: (id) => {
+      const c = queue.find((q) => q && q.id === id) || cards.find((x) => x && x.id === id);
+      return !!(c && c.emoji);
+    },
+    wantsEmoji: (id) => {
+      const c = queue.find((q) => q && q.id === id) || cards.find((x) => x && x.id === id);
+      if (!c || !c.emoji) return false;
+      const num = String(c.id).split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+      return num % 4 === 1;
+    },
   }), [sentenceOf, knownWords, queue, cards, confusion]);
 
   const spellDrill = useMemo(
@@ -1796,7 +1806,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      One boolean now decides both whether the block renders and whether it has anything to
      render. Two conditions that must agree, written twice, is what produced the mismatch. */
   const showsChoices = !!card && (
-    activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN
+    activity === ACTIVITY.MC || activity === ACTIVITY.LISTEN || activity === ACTIVITY.EMOJI
     /* A grid whose board could not be built lands here too, and this line is the whole bug
        the Comeback card hit: the MATCH renderer requires a board, and the control deck's
        MATCH branch renders nothing on purpose (the grid advances itself) — so a null board
@@ -1843,6 +1853,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        learner has actually confused with this one is offered whatever its part of speech. */
     const myPos = posOf(card);
     const seed = String(card.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0) + (card._step || 0);
+    const isEmoji = activity === ACTIVITY.EMOJI && !!card.emoji;
+    const emojiPool = isEmoji ? pool.filter((c) => c.emoji && c.emoji !== card.emoji) : pool;
     /* Wrong answers by curriculum priority: this learner's own confusion pairs, then the
        same NihonGO NOW! act-scene, then nearby scenes, then words that sound or look
        alike. Each pick carries the tier it came from; the UI shows only the word. */
@@ -1855,7 +1867,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const want = card.src === "quiz"
       ? Math.max(1, Math.min(3, new Set(pool.filter((c) => c.ex === card.ex).map((c) => shortGloss(c.meaning))).size))
       : 3;
-    const picked = pickDistractors(card, pool, want, {
+    const picked = pickDistractors(card, emojiPool.length >= want ? emojiPool : pool, want, {
       confusedWith: confusion.get(card.id) || [],
       seed,
       /* Part of speech is a vocabulary idea. A kana has none, a date has none, and every
@@ -1870,6 +1882,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
          the same "answerable by shape alone" flaw the kana distractors had. */
       restrict: card.src === "quiz" ? (c) => c.ex === card.ex
               : card.src ? null
+              : isEmoji ? (c) => !!c.emoji
               : (c) => posOf(c) === myPos,
     });
     /* Two DISTRACTORS that render identically is the other half of this bug, and the half
@@ -1879,18 +1892,23 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        gloss — what the button actually shows — and topped back up, because losing a
        distractor to the dedupe would leave a three-option question. */
     const seenGloss = new Set([myGloss]);
+    const seenEmoji = new Set(isEmoji ? [card.emoji] : []);
     const uniq = [];
     for (const p of picked) {
       const g = shortGloss(p.card.meaning);
       if (!g || seenGloss.has(g)) continue;
+      if (isEmoji && (!p.card.emoji || seenEmoji.has(p.card.emoji))) continue;
       seenGloss.add(g);
+      if (isEmoji) seenEmoji.add(p.card.emoji);
       uniq.push(p.card);
     }
-    for (const c of pool) {
+    for (const c of (isEmoji ? emojiPool : pool)) {
       if (uniq.length >= 3) break;
       const g = shortGloss(c.meaning);
       if (!g || seenGloss.has(g)) continue;
+      if (isEmoji && (!c.emoji || seenEmoji.has(c.emoji))) continue;
       seenGloss.add(g);
+      if (isEmoji) seenEmoji.add(c.emoji);
       uniq.push(c);
     }
     const all = [...uniq, card];
@@ -1911,6 +1929,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const renderActivity =
     showsChoices && choices.length === 0 ? ACTIVITY.RECALL
     : activity === ACTIVITY.SPELL && !spellDrill ? ACTIVITY.RECALL
+    : activity === ACTIVITY.EMOJI && (!card.emoji || choices.length < 4 || choices.some((c) => !c.emoji)) ? ACTIVITY.MC
     : activity;
 
   const answerChoice = useCallback((choice) => {
@@ -2672,6 +2691,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {card && card._redeem && (
         <p className="tc-offnote tc-redeem">Let us fix the ones you missed.</p>
       )}
+      {card && card._rescue && card._rescue.note && (
+        <p className="tc-offnote tc-rescuenote" role="note">{card._rescue.note}</p>
+      )}
       <div className="tc-progress">
         {/* One segment per beat of the session. Duolingo’s single most load-bearing UI
             element: it turns "this continues" into "this ends, and soon". */}
@@ -2994,8 +3016,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           An assembled activity whose drill could not be built lands here too. */}
       {showsChoices && choices.length > 0 && (
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
-          <span className={"tc-kindchip " + (renderActivity === ACTIVITY.LISTEN ? "tc-listenchip" : "tc-mcchip")}>
-            {renderActivity === ACTIVITY.LISTEN ? "listen" : "which one?"}
+          <span className={"tc-kindchip " + (renderActivity === ACTIVITY.LISTEN ? "tc-listenchip" : renderActivity === ACTIVITY.EMOJI ? "tc-emojichip" : "tc-mcchip")}>
+            {renderActivity === ACTIVITY.LISTEN ? "listen" : renderActivity === ACTIVITY.EMOJI ? "picture" : "which one?"}
           </span>
           {renderActivity === ACTIVITY.LISTEN ? (
             <div className="tc-listenprompt">
@@ -3020,26 +3042,22 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               <SpeakBtn text={card.reading || card.term} />
             </div>
           )}
-          <div className="tc-mcopts">
+          <div className={"tc-mcopts" + (renderActivity === ACTIVITY.EMOJI ? " tc-emojiopts" : "")}>
             {choices.map((c) => {
               const chosen = verdict && verdict.chose === c.meaning;
               const isAnswer = c.id === card.id;
               const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
               return (
-                <button key={c.id} type="button" className={"tc-mcopt" + cls}
+                <button key={c.id} type="button" className={"tc-mcopt" + (renderActivity === ACTIVITY.EMOJI ? " tc-emojiopt" : "") + cls}
                         disabled={!!verdict} onClick={() => answerChoice(c)}>
-                  {/* Trimmed of grammar annotations while the question is live. A gloss like
-                      "to hurry (u-verb; past: 急いだ)" among three bare nouns is the longest
-                      and most decorated option on screen, which is a second way to pick the
-                      answer without knowing the word. The full gloss returns once answered. */}
-                  {/* The full meaning, before and after answering. It used to be trimmed while
-                      you chose and expanded once you had — which removed a real tell (a
-                      long gloss among short ones is usually the answer) but read as the
-                      question changing its mind, and got reported as a bug twice. An
-                      inconsistency the learner has to explain to themselves costs more than
-                      the tell does; the tell is worth fixing by evening the LENGTHS, not by
-                      hiding half the sentence. */}
-                  {c.meaning}
+                  {renderActivity === ACTIVITY.EMOJI ? (
+                    <>
+                      <span className="tc-emojichar" aria-hidden="true">{c.emoji}</span>
+                      {verdict && <span className="tc-emojisub">{shortGloss(c.meaning)}</span>}
+                    </>
+                  ) : (
+                    c.meaning
+                  )}
                 </button>
               );
             })}
@@ -3554,18 +3572,18 @@ function ProductionBlock({ drills, onDone }) {
 /* Activities the learner answers by tapping the content itself — options, tiles, a word
    bank. None of them wants a bottom control until it has been answered, because the answer
    is already on screen and a second control is just a way to get it wrong. */
-const ANSWERED_BY_TAPPING = ["mc", "listen", "cloze", "tapfill", "build", "order", "spell"];
+const ANSWERED_BY_TAPPING = ["mc", "listen", "cloze", "tapfill", "build", "order", "spell", "emoji"];
 const PROMPT_FOR = {
   mc: "Pick the meaning", listen: "What did you hear?", cloze: "Which word belongs?",
   tapfill: "Which particle?", build: "Build the sentence", order: "Put it in order",
-  spell: "Which spelling is right?",
+  spell: "Which spelling is right?", emoji: "Pick the picture for the word",
 };
 
 /* Exercise formats, in learner words rather than internal ones. */
 const FORMAT_LABEL = {
   mc: "Multiple choice", choice: "Multiple choice", recall: "Flip and rate",
   type: "Typing", fill: "Fill the blank", build: "Build the sentence",
-  order: "Word order", listen: "Listening", write: "Writing", unknown: "Other",
+  order: "Word order", listen: "Listening", write: "Writing", emoji: "Picture", unknown: "Other",
 };
 const fmtLabel = (k) => FORMAT_LABEL[k] || (k ? k[0].toUpperCase() + k.slice(1) : "Other");
 
