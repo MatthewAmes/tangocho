@@ -819,9 +819,27 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rehnav .tc-btn-primary{flex:1;}
 .tc-rehnav .tc-btn-sm:disabled{opacity:.35;cursor:default;}
 .tc-summary{display:flex;gap:8px;margin-bottom:12px;}
-.tc-sumitem{flex:1;background:transparent;border:0;border-radius:0;padding:8px 4px;text-align:center;display:flex;flex-direction:column;gap:2px;}
+.tc-sumitem{flex:1;min-width:0;background:transparent;border:0;border-radius:0;padding:8px 4px;text-align:center;display:flex;flex-direction:column;gap:2px;}
+/* min-width:0 is load-bearing, not tidiness. Raising these labels from 10px to 11px for the
+   type-size floor (TODO-208) pushed this row 9px past a 320px viewport: flex:1 does not let
+   an item shrink below its own content, because flex items default to min-width:auto. With
+   min-width:0 they shrink and the row fits, so the 11px floor and the no-horizontal-overflow
+   rule (TODO-203) are both satisfied instead of traded against each other. Measured at
+   320px: 9px of overflow before, 0 after. */
 .tc-sumitem b{font-size:30px;font-weight:300;letter-spacing:-.02em;color:#fff;font-variant-numeric:tabular-nums;}
 .tc-sumitem span{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut-2);}
+/* Four columns of these labels do not fit a 320px phone. At 10px they just barely did; the
+   11px type floor (TODO-208) pushed the row 9px past the viewport, and min-width:0 alone
+   "fixed" that by clipping MASTERED and UNTOUCHED into their neighbours -- single words
+   that cannot wrap. Two rows of two gives each label the width it needs, so the type floor
+   and the no-horizontal-overflow rule (TODO-203) hold together without clipping.
+   This block sits AFTER .tc-sumitem span deliberately: an earlier one loses on source
+   order, which is how the first attempt at this silently did nothing. */
+@media (max-width:400px){
+  .tc-summary{flex-wrap:wrap;}
+  .tc-sumitem{flex:1 1 40%;}
+  .tc-sumitem span{letter-spacing:.08em;}
+}
 .tc-sum-good b{color:#5fb96a;}
 .tc-sum-need b{color:var(--shu-soft);}
 .tc-sum-new b{color:#e6a23c;}
