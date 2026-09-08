@@ -229,12 +229,16 @@ body{min-height:100%;overscroll-behavior-y:none;}
   background:var(--surface-3);overflow:hidden;}
 .tc-objbar i{display:block;height:100%;border-radius:999px;}
 .tc-objbar i.is-good{background:var(--ok);}
-.tc-objbar i.is-mid{background:var(--due);}
+.tc-objbar i.is-mid{background:var(--warn);}   /* --due does not exist; the amber token is --warn, and var() on a missing token silently renders transparent */
 .tc-objbar i.is-low{background:var(--shu);}
 .tc-objpct{grid-column:2;font-family:var(--mono);font-size:12px;color:var(--mut);}
 /* Words, not a bar. An unmeasured objective drawn as an empty track says "you failed this"
    when the truth is "nobody has asked you". */
 .tc-objnone{grid-column:1 / -1;font-size:12px;color:var(--mut-2);font-style:italic;}
+/* The sub-rule line under a grammar row. An aggregate can read fine while one rule inside
+   it is failing, so this is where the actionable half of the diagnosis lives. */
+.tc-objsub{grid-column:1 / -1;font-size:12px;line-height:1.5;color:var(--shu-soft);}
+.tc-objblocked{color:var(--mut-2);}
 
 /* What the session's minutes are going on, per skill. Quiet by design: it is the coach
    showing its working, not a control. */

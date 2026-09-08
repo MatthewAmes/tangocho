@@ -49,6 +49,7 @@ import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
 import { playableScripts, buildDialogue, gradeTurn, downshift, turnEvidence, scoreTurn,
          dialogueSummary, nextStep, TURN, STEP, DIALOGUE_DECK } from "./tools/dialogue.mjs";
 import { currentAct, volumeOfAct, VOLUME_ACTS, provenanceOf, actProfiles, actSkills, deriveObjectives, objectiveMastery, OBJECTIVE_KINDS } from "./tools/curriculum.mjs";
+import { grammarProfiles, nodeStatus, weakestSubRule, nodesForAct, GRAMMAR_NODES } from "./tools/grammar.mjs";
 import { volumeProgress, actProgress, describeVolume, actOfScene } from "./tools/progress.mjs";
 import { allVolumes, unplaced, describeComposite, STRANDS } from "./tools/strands.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
@@ -3713,6 +3714,20 @@ function Plan({ cards = [] }) {
     const skills = actSkills(shownAct, actProf);
     return deriveObjectives(shownAct).map((o) => objectiveMastery(o, skills));
   }, [shownAct, actProf]);
+
+  /* Grammar mastery is keyed by FORM, not by verb. A conjugation card is
+     `たべる|p-te`, so the deck can say 食べる-in-て-form is due and cannot say て-form
+     itself is shaky — which is the thing that actually goes wrong in an act. */
+  const gramProf = useMemo(() => grammarProfiles(evidence, { days: 60 }), [evidence]);
+  const actGrammar = useMemo(() => {
+    if (!Number.isFinite(shownAct)) return [];
+    return nodesForAct(shownAct).map((n) => ({
+      ...n,
+      row: gramProf[n.id],
+      status: nodeStatus(n.id, gramProf),
+      weak: weakestSubRule(n.id, gramProf),
+    }));
+  }, [shownAct, gramProf]);
   /* The same evidence rolled up the curriculum tree: scene -> act -> volume. Nothing new
      is measured here; the question is just asked at the altitude the learner asks it at. */
   const volumes = useMemo(() => volumeProgress(mastery), [mastery]);
@@ -4204,6 +4219,45 @@ function Plan({ cards = [] }) {
               </div>
             );
           })}
+          {actGrammar.length > 0 && (
+            <div className="tc-objgroup">
+              <p className="tc-objkind">grammar</p>
+              {actGrammar.map((g) => {
+                const pct = g.row && g.row.measured ? Math.round(g.row.mean * 100) : null;
+                return (
+                  <div key={g.id} className="tc-objrow">
+                    <span className="tc-objlabel">{g.title}</span>
+                    <span className="tc-objitems">{g.row ? g.row.n : 0} answers</span>
+                    {pct == null ? (
+                      <span className="tc-objnone">not measured yet</span>
+                    ) : (
+                      <>
+                        <span className="tc-objbar" role="progressbar" aria-valuemin={0}
+                              aria-valuemax={100} aria-valuenow={pct} aria-label={g.title}>
+                          <i className={pct >= 80 ? "is-good" : pct >= 55 ? "is-mid" : "is-low"}
+                             style={{ width: pct + "%" }} />
+                        </span>
+                        <span className="tc-objpct">{pct}%</span>
+                      </>
+                    )}
+                    {/* The aggregate can read fine while one rule inside it is failing:
+                        て-form at 63% was って at 89% and んで at 21%. Naming the rule is
+                        the difference between 'practise more' and something to do. */}
+                    {g.weak && (
+                      <span className="tc-objsub">
+                        {g.weak.explain || g.weak.rule} is at {Math.round(g.weak.mean * 100)}%
+                      </span>
+                    )}
+                    {g.status && !g.status.ready && (
+                      <span className="tc-objsub tc-objblocked">
+                        needs {g.status.blockedBy.map((b) => (NODE_TITLES[b] || b)).join(", ")} first
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <p className="tc-planhint">
             Scored from this act's answers only, over the last 60 days. An objective with
             too little evidence to judge says so rather than showing an empty bar.
@@ -4734,6 +4788,10 @@ const SCOPE_CHOICES = [
 
 /* The acts the book actually has, read off curriculum.mjs's volume table rather than typed
    out here — Volume 3 arrives as a data row (spec §24) and this list grows with it. */
+/* Prerequisite ids read as ids; a learner needs the name of the thing they should do
+   first. Derived from the node list so the two cannot drift apart. */
+const NODE_TITLES = Object.fromEntries(GRAMMAR_NODES.map((n) => [n.id, n.title]));
+
 const ACT_CHOICES = VOLUME_ACTS.flatMap((v) =>
   Array.from({ length: v.to - v.from + 1 }, (_, i) => v.from + i));
 
