@@ -240,6 +240,33 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-objsub{grid-column:1 / -1;font-size:12px;line-height:1.5;color:var(--shu-soft);}
 .tc-objblocked{color:var(--mut-2);}
 
+/* ── the conversational tutor ──
+   A transcript, not a chat app: the learner's turns sit right, the tutor's left, and the
+   English gloss is subordinate to the Japanese rather than beside it — the Japanese is the
+   thing being read, and a two-column layout invites reading only the English. */
+.tc-tutor{display:flex;flex-direction:column;gap:10px;}
+.tc-tutorempty{padding:20px 0;}
+.tc-tutortargets{margin:0;font-size:12px;letter-spacing:.02em;color:var(--mut-2);}
+.tc-tutorlog{display:flex;flex-direction:column;gap:12px;min-height:220px;max-height:52vh;
+  overflow-y:auto;padding:12px;border:1px solid var(--surface-3);border-radius:12px;
+  background:var(--surface);}
+.tc-turn{max-width:88%;padding:10px 12px;border-radius:14px;}
+.tc-turn.is-tutor{align-self:flex-start;background:var(--surface-3);border-top-left-radius:4px;}
+.tc-turn.is-learner{align-self:flex-end;background:rgba(59,130,246,.14);border-top-right-radius:4px;}
+.tc-turntext{margin:0;font-size:17px;line-height:1.7;color:var(--washi);}
+.tc-turn.is-tutor .tc-turntext{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-turnen{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--mut-2);}
+/* A correction is the one thing that must not look like conversation. */
+.tc-turnfix{margin:8px 0 0;padding-top:8px;border-top:1px solid var(--surface-4);
+  font-size:14px;line-height:1.6;color:var(--ok);}
+.tc-tutorerr{margin:0;font-size:13px;color:var(--shu-soft);}
+.tc-tutorbar{display:flex;gap:8px;align-items:stretch;}
+.tc-tutorin{flex:1 1 auto;min-width:0;min-height:var(--tap);padding:10px 12px;font:inherit;
+  font-size:16px;color:var(--washi);background:var(--surface-2);border:1px solid var(--surface-3);
+  border-radius:10px;}
+.tc-tutorin:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
+.tc-tutorfoot{display:flex;flex-wrap:wrap;gap:8px;}
+
 /* What the session's minutes are going on, per skill. Quiet by design: it is the coach
    showing its working, not a control. */
 .tc-planline{margin:8px 0 0;text-align:center;font-size:12px;line-height:1.6;color:var(--mut-2);}

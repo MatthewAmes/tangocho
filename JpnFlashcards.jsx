@@ -19,6 +19,7 @@ import ConjDrill from "./src/tabs/ConjDrill.jsx";
 import Write from "./src/tabs/Write.jsx";
 import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
 import Quizzes from "./src/tabs/Quizzes.jsx";
+import Tutor from "./src/tabs/Tutor.jsx";
 import Kana from "./src/tabs/Kana.jsx";
 import Browse from "./src/tabs/Browse.jsx";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
@@ -536,7 +537,7 @@ function isEmoji(s) {
    opens each section — a screen reader's rotor lists headings to navigate by, and before
    this the entire app offered exactly two: the brand, and "Conjugation". */
 const TABS = [
-  ["study", "Study"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"],
+  ["study", "Study"], ["tutor", "Tutor"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"],
   ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"], ["spell", "Spelling"],
   ["scripts", "Scripts"], ["quizzes", "Quizzes"], ["browse", "Browse"], ["plan", "Plan"],
 ];
@@ -931,6 +932,10 @@ export default function JpnFlashcards() {
              not the feature — it is the only production-recall practice in the app and
              deleting it to make room would be throwing away the harder retrieval. */
           <Write cards={cards} onResult={recordResult} />
+        ) : tab === "tutor" ? (
+          /* The conversational tutor. It is handed the learner brief, never a prompt —
+             cf/src/ai.js owns every instruction, same as every other AI call here. */
+          <TutorTab cards={cards} />
         ) : tab === "plan" ? (
           <Plan cards={cards} />
         ) : tab === "spell" ? (
@@ -3665,6 +3670,27 @@ const FORMAT_LABEL = {
   order: "Word order", listen: "Listening", write: "Writing", emoji: "Picture", unknown: "Other",
 };
 const fmtLabel = (k) => FORMAT_LABEL[k] || (k ? k[0].toUpperCase() + k.slice(1) : "Other");
+
+/* The tutor tab's data owner. Evidence lives per-tab in this app rather than in the root,
+   so this mirrors what Plan already does: load once, then follow the subscription. The
+   component below is presentation; tools/tutor.mjs decides what the tutor is told. */
+function TutorTab({ cards }) {
+  const [evidence, setEvidence] = useState([]);
+  useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
+  const [signedIn, setSignedIn] = useState(() => !!loadSession());
+  useEffect(() => {
+    /* The sign-in can land on another tab while this one is mounted, and a tutor that
+       still says "sign in first" after you have is a dead end with no way back. */
+    const id = setInterval(() => setSignedIn(!!loadSession()), 2000);
+    return () => clearInterval(id);
+  }, []);
+  /* loadPlan is ASYNC. Reading .pace off the promise gave undefined, which paceMinutes
+     silently turns into the 10-minute default — so the brief would have carried a session
+     length the learner never chose, and been confidently wrong about it. */
+  const [minutes, setMinutes] = useState(0);
+  useEffect(() => { loadPlan().then((p) => setMinutes(paceMinutes(p && p.pace))).catch(() => {}); }, []);
+  return <Tutor evidence={evidence} cards={cards} minutes={minutes} callAI={callAI} signedIn={signedIn} />;
+}
 
 function Plan({ cards = [] }) {
   const [plan, setPlan] = useState(PLAN_DEFAULT);

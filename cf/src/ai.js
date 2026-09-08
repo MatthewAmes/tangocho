@@ -175,6 +175,58 @@ const TASKS = {
       feedback: str(), corrected: str(),
     }, ["rating", "feedback", "corrected"]),
   },
+  /* ── the conversational tutor ──
+     The one task whose input carries free-form learner text, which is worth being explicit
+     about because this file's whole guard is that the client cannot send a prompt. It still
+     cannot: the SYSTEM half is authored here and fixed, the schema is fixed, and the client
+     supplies only a transcript and a learner brief. What varies is the conversation, not the
+     instructions — so this is still "one of a fixed handful of server-authored prompts",
+     not an open proxy. The system prompt pins it to Japanese tutoring; anything else is
+     declined by the model under instruction rather than by a filter here.
+
+     `brief` is tools/tutor.mjs's output: the ground truth about what this learner knows.
+     The model is told, because a model asked to guess will guess fluently and be wrong. It
+     is instructed never to assert anything about the learner that the brief does not say. */
+  converse: {
+    max_tokens: 700,
+    nocache: true,     // a conversation must never replay a canned turn — see the cache note
+    system:
+      "You are a warm, patient Japanese tutor talking with a learner working through the "
+      + "NihonGO NOW! textbook (JPN 101 / beginner). You are having a real conversation, not "
+      + "running a quiz.\n\n"
+      + "You will receive a LEARNER BRIEF — measured facts about this learner — and the "
+      + "conversation so far. The brief is the ONLY thing you know about them. Never claim "
+      + "they know or struggle with something the brief does not say. A skill with mastery "
+      + "null has not been measured: treat it as unknown, not as weak, and feel free to give "
+      + "them a natural chance to show it.\n\n"
+      + "HOW MUCH ENGLISH — obey brief.scaffold:\n"
+      + "  always: every Japanese line followed by a short English gloss in parentheses.\n"
+      + "  when_struggling: Japanese first; add English only when they stall, ask, or err.\n"
+      + "  rarely: Japanese only, unless they are clearly stuck.\n"
+      + "  japanese_only: Japanese throughout; rephrase more simply instead of translating.\n\n"
+      + "WHEN TO CORRECT — obey brief.correction:\n"
+      + "  immediate: correct a real error at once, warmly, then invite them to say it again.\n"
+      + "  major_only: correct only what blocks meaning; let small slips pass.\n"
+      + "  end_of_conversation: do NOT interrupt to correct. Keep talking naturally.\n\n"
+      + "WHAT TO AIM AT: brief.targets names what they need practice at. Do not announce it "
+      + "or lecture. Create a natural REASON to use it — ask something that can only be "
+      + "answered with the form or particle in question. If they hit it, notice and move on.\n\n"
+      + "Keep your Japanese at or just above their level. One or two sentences per turn, and "
+      + "end with something they can respond to. If they write in English, that is fine: "
+      + "answer them, give them the Japanese they were reaching for, and invite them to try "
+      + "it. Stay on Japanese learning; if asked for something unrelated, say warmly that you "
+      + "are here to practise Japanese and offer a way back into the conversation.",
+    user: (i) =>
+      "LEARNER BRIEF (ground truth — do not contradict):\n" + (i.brief || "{}")
+      + "\n\nCONVERSATION SO FAR (oldest first; empty means you are opening):\n"
+      + ((i.history || []).map((m) => (m && m.role === "tutor" ? "TUTOR: " : "LEARNER: ") + String((m && m.text) || "").slice(0, 400)).join("\n") || "(none yet)"),
+    schema: obj({
+      reply: str("Your next turn, in Japanese (plus English only as brief.scaffold allows)."),
+      en: str("A plain English translation of your reply, always — the client decides whether to show it."),
+      correction: str("If correcting now, the learner's sentence repaired. Empty string when not correcting."),
+      targeted: str("Which brief.targets entry this turn is aiming at, or empty string if none."),
+    }, ["reply", "en"]),
+  },
 };
 
 export async function handleAi(req, env) {
@@ -218,7 +270,11 @@ export async function handleAi(req, env) {
      still the old bad one" starts. Changing the setting invalidates the cache, which is
      the behaviour you want when you change models. */
   const key = `ai:v2:${models.join("|")}:${body.task}:${await sha256Hex(inputStr)}`;
-  const hit = await env.TTS.get(key, { type: "json" });
+  /* A conversation is never a cache hit. The key is a hash of the whole input, so a growing
+     transcript would rarely collide anyway -- but "rarely" is the wrong guarantee here:
+     saying the same thing twice would replay the identical reply word for word, which is
+     the one thing that makes a tutor feel like a machine. */
+  const hit = task.nocache ? null : await env.TTS.get(key, { type: "json" });
   if (hit) return json({ result: hit, cached: true, remaining: null });
 
   if (!(await bumpQuota(env, "ai:u:" + session.sub, AI_DAILY_PER_USER)) || !(await bumpQuota(env, "ai:all", AI_DAILY_GLOBAL))) {
@@ -473,7 +529,7 @@ export async function handleAi(req, env) {
     return json({ error: "unusable reply", detail: "the model's answer did not satisfy this task's requirements" }, 502);
   }
 
-  await env.TTS.put(key, JSON.stringify(result), task.ttl ? { expirationTtl: task.ttl } : undefined);
+  if (!task.nocache) await env.TTS.put(key, JSON.stringify(result), task.ttl ? { expirationTtl: task.ttl } : undefined);
   /* ms and usageMetadata make "why is this slow" answerable from `wrangler tail` alone:
      usage.thoughtsTokenCount is the thinking burn, and a big one on a no-thinking shape
      says the model ignored — or was never sent — a working thinking control. */
