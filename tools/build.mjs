@@ -217,9 +217,42 @@ for (const [file, label] of [["scripts-books.json", "textbook scenes"], ["quizze
     continue;
   }
   try {
-    const n = JSON.parse(raw).length;
+    let parsed = JSON.parse(raw);
+    let dropped = 0;
+
+    /* ── exercises the app cannot honestly present ──
+       The activity book has matching tasks whose answer key is a bare reference into the
+       printed page: "a", "b", "(7)". The Quizzes tab builds its options from the distinct
+       answers in the exercise, so those arrived on screen as a choice between "a", "b" and
+       "c" with nothing to say what any of them meant — the options themselves are printed
+       in the book and were never extracted.
+
+       That is not a rendering bug to paper over. The exercise genuinely cannot be answered
+       without the page in front of you, so it is dropped here rather than shipped: an
+       exercise the app cannot present honestly should not be presented. Reported rather
+       than silent, because a jump in this number means the extractor changed. */
+    if (file === "quizzes.json" && Array.isArray(parsed)) {
+      const isReference = (a) => {
+        const s = String(a == null ? "" : a).trim();
+        return s === "" || /^[a-z]$/i.test(s) || /^\(\s*\d+\s*\)$/.test(s) || /^\d+$/.test(s);
+      };
+      const before = parsed.length;
+      parsed = parsed.filter((q) => {
+        const items = (q && q.items) || [];
+        if (!items.length) return false;
+        // Judge the exercise, not the item: one stray reference among real answers is a
+        // gap in the extraction, but an exercise answered ENTIRELY in references is a
+        // matching task that lives on paper.
+        return !items.every((it) => isReference(it.answer));
+      });
+      dropped = before - parsed.length;
+      raw = JSON.stringify(parsed);
+    }
+
+    const n = parsed.length;
     fs.writeFileSync(path.join(CF_PUBLIC, file), raw, "utf8");
-    console.log(`    ${file.replace(/\.json$/, "").padEnd(14)} ${n} ${label} -> cf/public (from ${from}, not committed)`);
+    console.log(`    ${file.replace(/\.json$/, "").padEnd(14)} ${n} ${label} -> cf/public (from ${from}, not committed)`
+      + (dropped ? `  [${dropped} unanswerable without the book, dropped]` : ""));
   } catch (e) {
     console.error(`BUILD ABORTED — ${file} is not valid JSON.`);
     process.exit(1);

@@ -5071,9 +5071,20 @@ function foreignCard(src, raw) {
        `reading` is how that word sounds. A conjugation only fits if the conjugated form
        itself is the word, which it is — たべない is the thing being learned, and what it
        means (eat, plain negative) is the answer. */
+    /* The FORM leads, and the dictionary meaning is parenthetical. It read the other way
+       round — "good — plain negative of いい" on a card whose term is よくない — which does not
+       merely bury the form, it states the wrong meaning: よくない means NOT good. The same
+       sentence appeared on every negative cell in the grid (近くない glossed as "close"), so
+       four of the ten forms were teaching the opposite of the answer.
+
+       Leading with the form fixes it without having to negate English glosses, which is
+       where this would have got fragile: "to eat" negates to "do not eat", "exist" to
+       "there isn't", and a rule that produces one from the other for arbitrary dictionary
+       text does not exist. Naming the form and citing the base word asserts only things
+       that are true. */
     return { id: "conj:" + raw.id, src, srcId: raw.id, term: raw.answer,
              reading: raw.answer, romaji: "",
-             meaning: `${raw.w.meaning} — ${raw.f.ask} of ${raw.w.dict}`,
+             meaning: `${raw.f.ask} of ${raw.w.dict} (${raw.w.meaning})`,
              kind: "conj", emoji: "🔀" };
   }
   /* Dates and counters. The question is the kanji, the answer is how it is read, which is

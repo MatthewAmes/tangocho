@@ -49,6 +49,56 @@ export const CONJ_BANK = [
   { dict: "病気", reading: "びょうき", meaning: "sick (noun)", type: "na", neg: "病気じゃない", negR: "びょうきじゃない", polite: "病気じゃないです", how: "病気 + じゃない" },
   { dict: "先生", reading: "せんせい", meaning: "teacher (noun)", type: "na", neg: "先生じゃない", negR: "せんせいじゃない", polite: "先生じゃないです", how: "先生 + じゃない" },
   { dict: "休み", reading: "やすみ", meaning: "day off (noun)", type: "na", neg: "休みじゃない", negR: "やすみじゃない", polite: "休みじゃないです", how: "休み + じゃない" },
+
+  /* ── grown from the deck, not authored by hand ──
+     The bank was 33 verbs with only two in the む・ぶ・ぬ group, which is the 音便 row
+     learners actually get wrong -- so the sub-rule diagnosis in tools/grammar.mjs had
+     almost no evidence to work from.
+
+     These come from NihonGO NOW!'s own glossary, which tags every verb ("to make
+     (u-verb; past: 作った)"), so the class is STATED rather than guessed -- かえる alone
+     (帰る godan, 変える ichidan) is enough to show why guessing is a bad idea. Each entry
+     was derived by tools/conj-candidates.mjs and kept only where conjugate()'s past
+     matched the past the glossary prints. Anything that disagreed was dropped, not
+     reconciled. Regenerate with: node tools/conj-candidates.mjs --emit */
+  { dict: "作る", reading: "つくる", meaning: "to make", type: "godan", neg: "作らない", negR: "つくらない", polite: "つくりません / つくらないです", how: "つくり〼 + ない" },
+  { dict: "買う", reading: "かう", meaning: "to buy", type: "godan", neg: "買わない", negR: "かわない", polite: "かいません / かわないです", how: "かい〼 + ない" },
+  { dict: "使う", reading: "つかう", meaning: "to use", type: "godan", neg: "使わない", negR: "つかわない", polite: "つかいません / つかわないです", how: "つかい〼 + ない" },
+  { dict: "取る", reading: "とる", meaning: "to take", type: "godan", neg: "取らない", negR: "とらない", polite: "とりません / とらないです", how: "とり〼 + ない" },
+  { dict: "考える", reading: "かんがえる", meaning: "to think about, consider", type: "ichidan", neg: "考えない", negR: "かんがえない", polite: "かんがえません / かんがえないです", how: "かんがえ〼 + ない" },
+  { dict: "手伝う", reading: "てつだう", meaning: "to help", type: "godan", neg: "手伝わない", negR: "てつだわない", polite: "てつだいません / てつだわないです", how: "てつだい〼 + ない" },
+  { dict: "聞く", reading: "きく", meaning: "to hear, listen", type: "godan", neg: "聞かない", negR: "きかない", polite: "ききません / きかないです", how: "きき〼 + ない" },
+  { dict: "かかる", reading: "かかる", meaning: "to take", type: "godan", neg: "かからない", negR: "かからない", polite: "かかりません / かからないです", how: "かかり〼 + ない" },
+  { dict: "決める", reading: "きめる", meaning: "to decide", type: "ichidan", neg: "決めない", negR: "きめない", polite: "きめません / きめないです", how: "きめ〼 + ない" },
+  { dict: "急ぐ", reading: "いそぐ", meaning: "to hurry", type: "godan", neg: "急がない", negR: "いそがない", polite: "いそぎません / いそがないです", how: "いそぎ〼 + ない" },
+  { dict: "構う", reading: "かまう", meaning: "to mind, care, be concerned about", type: "godan", neg: "構わない", negR: "かまわない", polite: "かまいません / かまわないです", how: "かまい〼 + ない" },
+  { dict: "やる", reading: "やる", meaning: "to do", type: "godan", neg: "やらない", negR: "やらない", polite: "やりません / やらないです", how: "やり〼 + ない" },
+  { dict: "出す", reading: "だす", meaning: "to submit, take out , send out", type: "godan", neg: "出さない", negR: "ださない", polite: "だしません / ださないです", how: "だし〼 + ない" },
+  { dict: "持つ", reading: "もつ", meaning: "to hold, have, carry", type: "godan", neg: "持たない", negR: "もたない", polite: "もちません / もたないです", how: "もち〼 + ない" },
+  { dict: "借りる", reading: "かりる", meaning: "to borrow", type: "ichidan", neg: "借りない", negR: "かりない", polite: "かりません / かりないです", how: "かり〼 + ない" },
+  { dict: "任せる", reading: "まかせる", meaning: "to leave it to someone else, let someone else do it", type: "ichidan", neg: "任せない", negR: "まかせない", polite: "まかせません / まかせないです", how: "まかせ〼 + ない" },
+  { dict: "出る", reading: "でる", meaning: "to go out, leave, attend , appear, answer", type: "ichidan", neg: "出ない", negR: "でない", polite: "でません / でないです", how: "で〼 + ない" },
+  { dict: "助かる", reading: "たすかる", meaning: "to be helped, be saved, be rescued", type: "godan", neg: "助からない", negR: "たすからない", polite: "たすかりません / たすからないです", how: "たすかり〼 + ない" },
+  { dict: "歩く", reading: "あるく", meaning: "to walk", type: "godan", neg: "歩かない", negR: "あるかない", polite: "あるきません / あるかないです", how: "あるき〼 + ない" },
+  { dict: "乗る", reading: "のる", meaning: "to ride, get onboard", type: "godan", neg: "乗らない", negR: "のらない", polite: "のりません / のらないです", how: "のり〼 + ない" },
+  { dict: "呼ぶ", reading: "よぶ", meaning: "to call, invite", type: "godan", neg: "呼ばない", negR: "よばない", polite: "よびません / よばないです", how: "よび〼 + ない" },
+  { dict: "伺う", reading: "うかがう", meaning: "to visit", type: "godan", neg: "伺わない", negR: "うかがわない", polite: "うかがいません / うかがわないです", how: "うかがい〼 + ない" },
+  { dict: "喜ぶ", reading: "よろこぶ", meaning: "to be delighted, be pleased", type: "godan", neg: "喜ばない", negR: "よろこばない", polite: "よろこびません / よろこばないです", how: "よろこび〼 + ない" },
+  { dict: "教える", reading: "おしえる", meaning: "to tell, teach", type: "ichidan", neg: "教えない", negR: "おしえない", polite: "おしえません / おしえないです", how: "おしえ〼 + ない" },
+  { dict: "見せる", reading: "みせる", meaning: "to show", type: "ichidan", neg: "見せない", negR: "みせない", polite: "みせません / みせないです", how: "みせ〼 + ない" },
+  { dict: "参る", reading: "まいる", meaning: "to go, come", type: "godan", neg: "参らない", negR: "まいらない", polite: "まいりません / まいらないです", how: "まいり〼 + ない" },
+  { dict: "なる", reading: "なる", meaning: "to become", type: "godan", neg: "ならない", negR: "ならない", polite: "なりません / ならないです", how: "なり〼 + ない" },
+  { dict: "見える", reading: "みえる", meaning: "to appear, be visible", type: "ichidan", neg: "見えない", negR: "みえない", polite: "みえません / みえないです", how: "みえ〼 + ない" },
+  { dict: "立つ", reading: "たつ", meaning: "to stand; to stand, be built", type: "godan", neg: "立たない", negR: "たたない", polite: "たちません / たたないです", how: "たち〼 + ない" },
+  { dict: "座る", reading: "すわる", meaning: "to sit", type: "godan", neg: "座らない", negR: "すわらない", polite: "すわりません / すわらないです", how: "すわり〼 + ない" },
+  { dict: "寄る", reading: "よる", meaning: "to get close to, drop by, lean on", type: "godan", neg: "寄らない", negR: "よらない", polite: "よりません / よらないです", how: "より〼 + ない" },
+  { dict: "空く", reading: "あく", meaning: "to become free, become empty", type: "godan", neg: "空かない", negR: "あかない", polite: "あきません / あかないです", how: "あき〼 + ない" },
+  { dict: "休む", reading: "やすむ", meaning: "to take a break, rest, go on vacation/holiday", type: "godan", neg: "休まない", negR: "やすまない", polite: "やすみません / やすまないです", how: "やすみ〼 + ない" },
+  { dict: "頼む", reading: "たのむ", meaning: "to order , request", type: "godan", neg: "頼まない", negR: "たのまない", polite: "たのみません / たのまないです", how: "たのみ〼 + ない" },
+  { dict: "迷う", reading: "まよう", meaning: "to become confused, get lost, hesitate", type: "godan", neg: "迷わない", negR: "まよわない", polite: "まよいません / まよわないです", how: "まよい〼 + ない" },
+  { dict: "困る", reading: "こまる", meaning: "to be troubled, be bothered, be embarrassed", type: "godan", neg: "困らない", negR: "こまらない", polite: "こまりません / こまらないです", how: "こまり〼 + ない" },
+  { dict: "知る", reading: "しる", meaning: "to find out, come to know", type: "godan", neg: "知らない", negR: "しらない", polite: "しりません / しらないです", how: "しり〼 + ない" },
+  { dict: "勧める", reading: "すすめる", meaning: "to recommend to , advise, encourage", type: "ichidan", neg: "勧めない", negR: "すすめない", polite: "すすめません / すすめないです", how: "すすめ〼 + ない" },
 ];
 
 export const CONJ_FILTERS = [["all", "All"], ["ichidan", "① る"], ["godan", "⑤ う"], ["irregular", "Irreg"], ["iadj", "い-adj"], ["na", "Noun/な"]];

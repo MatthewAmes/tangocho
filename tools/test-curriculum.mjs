@@ -20,6 +20,7 @@ import { SKILLS, skillForFormat } from "./learner.mjs";
 import { SEED } from "../src/data/seed.js";
 import { SECTION_MAP } from "../src/data/sections.js";
 import { SCRIPT_SEED } from "../src/data/scripts-seed.js";
+import { CONJ_BANK } from "../src/data/conj-bank.js";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
@@ -486,12 +487,24 @@ t("no objective is emitted with nothing behind it", () => {
   for (const act of Object.keys(OBJ)) for (const o of OBJ[act]) gte(o.items, 1, `${o.id} counts nothing;`);
 });
 t("grammar appears only where a conj-bank word is actually taught", () => {
-  // The bank carries no act of its own; the mapping is a term match against the act's
-  // cards. Acts 4, 5 and 6 match nothing, and inventing a pattern for them is the failure.
-  for (const act of [1, 4, 5, 6, 7, 10, 12]) {
-    eq(OBJ[act].some((o) => o.kind === "grammar"), false, `act ${act} claimed a grammar objective;`);
+  /* DERIVED, not hardcoded. The rule is "this act teaches the word the pattern is
+     drilled on" — nothing weaker, or every act would claim every pattern. This used to
+     assert a frozen list of acts that matched nothing, which broke the moment the bank
+     grew from the deck: the acts changed, the rule did not. Asserting the rule keeps the
+     real failure (inventing a pattern for an act that teaches none of its words) caught,
+     without pinning a fact that is expected to move. */
+  for (let act = 1; act <= 12; act++) {
+    const mine = SEED.filter((c) => provenanceOf(c).act === act);
+    const terms = new Set();
+    for (const c of mine) { if (c.term) terms.add(c.term); if (c.reading) terms.add(c.reading); }
+    const teaches = CONJ_BANK.some((g) => terms.has(g.dict) || terms.has(g.reading));
+    eq(OBJ[act].some((o) => o.kind === "grammar"), teaches,
+      `act ${act} ${teaches ? "teaches a bank word but claims no grammar" : "claimed a grammar objective it teaches no word for"};`);
   }
-  const g = OBJ[2].find((o) => o.type === "construct_form");
+  /* And whichever act does carry one must be able to name the words it drills. */
+  const withGrammar = Object.keys(OBJ).map(Number).find((a) => OBJ[a].some((o) => o.type === "construct_form"));
+  ok(withGrammar, "at least one act should support a grammar objective");
+  const g = OBJ[withGrammar].find((o) => o.type === "construct_form");
   gte(g.items, 1);
   eq(g.provenance.sourceType, "conj-bank");
   ok(g.provenance.sample.length > 0, "a grammar objective names the words it drills");
