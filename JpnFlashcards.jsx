@@ -3689,7 +3689,26 @@ function TutorTab({ cards }) {
      length the learner never chose, and been confidently wrong about it. */
   const [minutes, setMinutes] = useState(0);
   useEffect(() => { loadPlan().then((p) => setMinutes(paceMinutes(p && p.pace))).catch(() => {}); }, []);
-  return <Tutor evidence={evidence} cards={cards} minutes={minutes} callAI={callAI} signedIn={signedIn} />;
+  /* The textbook scenes, for the mode that needs no server. Same merge the Scripts tab
+     does — the seeded scripts plus the parsed book scenes — so both entrances play the
+     same corpus rather than two drifting copies of it. */
+  const [scripts, setScripts] = useState([]);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      let list = [];
+      try { const r = await sGet("jpn101:scripts"); if (r) list = JSON.parse(r) || []; } catch (e) {}
+      const names = new Set(list.map((s) => s && s.name));
+      SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } });
+      try { (await loadBookScripts()).forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } }); } catch (e) {}
+      if (live) setScripts(list);
+    })();
+    return () => { live = false; };
+  }, []);
+  return <Tutor evidence={evidence} cards={cards} minutes={minutes} callAI={callAI} signedIn={signedIn}
+                renderDialogue={(onExit) => (scripts.length
+                  ? <ScriptDialogue scripts={scripts} exitLabel="Free talk" onExit={onExit} />
+                  : <p className="tc-planhint">Loading the textbook scenes…</p>)} />;
 }
 
 function Plan({ cards = [] }) {
@@ -6093,7 +6112,9 @@ function ScriptListen({ scripts, cards, onExit }) {
 
 // The whole conversation. There is no session length to pick: the run is one dialogue, and
 // stopping halfway would give up the only thing this mode has that the others do not.
-function ScriptDialogue({ scripts, onExit }) {
+/* exitLabel because this component now has two front doors — the Scripts tab and the
+   Tutor tab's Textbook mode — and "← Scripts" is a lie in one of them. */
+function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
   // Bumped by "Play it again", so a second run draws different wrong answers.
   const [seed, setSeed] = useState(() => Math.floor(Date.now() / 1000));
   const [chosen, setChosen] = useState(null);       // {id, part} — null = still choosing
@@ -6185,7 +6206,7 @@ function ScriptDialogue({ scripts, onExit }) {
   const head = (
     <div className="tc-rehhead">
       <button className="tc-btn tc-btn-sm" onClick={() => { stopJa(); if (chosen) setChosen(null); else onExit(); }}>
-        ← {chosen ? "Pick another" : "Scripts"}
+        ← {chosen ? "Pick another" : exitLabel}
       </button>
       <span className="tc-rehname">Dialogue</span>
     </div>

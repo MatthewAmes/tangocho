@@ -37,7 +37,16 @@ function trimHistory(history, budget = HISTORY_CHARS) {
   return out;
 }
 
+/* "dialogue" is not one of tools/tutor.mjs's MODES, and deliberately: those describe how
+   the MODEL should behave, and this one does not use the model at all. It runs the
+   deterministic dialogue engine (tools/dialogue.mjs) over the real textbook scenes — the
+   one conversation practice in this app that costs nothing, works offline, and cannot be
+   wrong about Japanese, because every line on offer was actually printed in the book. */
+const OFFLINE = "dialogue";
+const ALL_MODES = [OFFLINE, ...MODES];
+
 const MODE_LABEL = {
+  dialogue: "Textbook",
   free: "Free talk",
   tutor: "Tutor",
   roleplay: "Roleplay",
@@ -45,6 +54,7 @@ const MODE_LABEL = {
   repair: "Repair",
 };
 const MODE_NOTE = {
+  dialogue: "A real conversation from the book — you play one side. No AI, no limit.",
   free: "Natural conversation. Mistakes are noted, not interrupted.",
   tutor: "Corrections as they happen, then a chance to say it again.",
   roleplay: "A scene to play through — shop, station, meeting someone.",
@@ -52,7 +62,7 @@ const MODE_NOTE = {
   repair: "Practice getting unstuck: asking again, more slowly, in other words.",
 };
 
-export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, signedIn }) {
+export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, signedIn, renderDialogue }) {
   const [mode, setMode] = useState("free");
   const [history, setHistory] = useState([]);
   const [draft, setDraft] = useState("");
@@ -139,14 +149,39 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
 
   const restart = useCallback(() => { setHistory([]); setErr(null); send("", true); }, [send]);
 
+  if (mode === OFFLINE) {
+    return (
+      <div className="tc-tutor">
+        <div className="tc-modeseg" role="group" aria-label="Conversation mode">
+          {ALL_MODES.map((m) => (
+            <button key={m} className={"tc-segbtn" + (mode === m ? " is-on" : "")}
+                    aria-pressed={mode === m} title={MODE_NOTE[m]}
+                    onClick={() => { setMode(m); setHistory([]); }}>{MODE_LABEL[m] || m}</button>
+          ))}
+        </div>
+        <p className="tc-planhint">{MODE_NOTE[OFFLINE]}</p>
+        {renderDialogue ? renderDialogue(() => setMode("free")) : <p className="tc-planhint">Dialogue practice isn't available here.</p>}
+      </div>
+    );
+  }
+
   if (!signedIn) {
     return (
       <div className="tc-tutorempty">
         <h2 className="tc-planh">Talk with a tutor</h2>
         <p className="tc-planhint">
-          Sign in on the Browse tab first — the tutor runs on the server, and the server needs
-          to know which learner it is talking to.
+          Sign in on the Browse tab first — the AI tutor runs on the server, and the server
+          needs to know which learner it is talking to.
         </p>
+        <p className="tc-planhint">
+          Textbook mode above needs none of that — it runs entirely on this device.
+        </p>
+        <div className="tc-modeseg" role="group" aria-label="Conversation mode">
+          {ALL_MODES.map((m) => (
+            <button key={m} className={"tc-segbtn" + (mode === m ? " is-on" : "")}
+                    aria-pressed={mode === m} onClick={() => setMode(m)}>{MODE_LABEL[m] || m}</button>
+          ))}
+        </div>
       </div>
     );
   }
@@ -154,7 +189,7 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
   return (
     <div className="tc-tutor">
       <div className="tc-modeseg" role="group" aria-label="Conversation mode">
-        {MODES.map((m) => (
+        {ALL_MODES.map((m) => (
           <button key={m} className={"tc-segbtn" + (mode === m ? " is-on" : "")}
                   aria-pressed={mode === m} title={MODE_NOTE[m]}
                   onClick={() => { setMode(m); setHistory([]); }}>{MODE_LABEL[m] || m}</button>
