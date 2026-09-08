@@ -48,7 +48,7 @@ import { listeningSet, gradeListening, listeningEvidence, listeningSummary,
          LISTEN_FORMATS, LISTEN_LABEL, LISTEN_DECK } from "./tools/listening.mjs";
 import { playableScripts, buildDialogue, gradeTurn, downshift, turnEvidence, scoreTurn,
          dialogueSummary, nextStep, TURN, STEP, DIALOGUE_DECK } from "./tools/dialogue.mjs";
-import { currentAct, volumeOfAct, VOLUME_ACTS, provenanceOf } from "./tools/curriculum.mjs";
+import { currentAct, volumeOfAct, VOLUME_ACTS, provenanceOf, actProfiles, actSkills, deriveObjectives, objectiveMastery, OBJECTIVE_KINDS } from "./tools/curriculum.mjs";
 import { volumeProgress, actProgress, describeVolume, actOfScene } from "./tools/progress.mjs";
 import { allVolumes, unplaced, describeComposite, STRANDS } from "./tools/strands.mjs";
 import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
@@ -3698,6 +3698,21 @@ function Plan({ cards = [] }) {
   /* What the app worked out on its own, shown next to the override so the setting is a
      correction rather than a guess. Same call the Study tab makes. */
   const derivedAct = useMemo(() => currentAct(evidence, cards), [evidence, cards]);
+
+  /* ── what you can do in one act ──
+     masteryByLesson already answers 'how much of this scene is holding'. It cannot
+     answer 'holding WHICH WAY' -- a scene at 70% could be 70% because you read it
+     fluently and cannot say a word of it, or the reverse, and those need different
+     evenings. actProfiles buckets the evidence by act AND skill so the act's own
+     objectives can each be scored against the ability they actually test. */
+  const actProf = useMemo(() => actProfiles(evidence, cards, { days: 60 }), [evidence, cards]);
+  const [mapAct, setMapAct] = useState(null);
+  const shownAct = mapAct != null ? mapAct : derivedAct;
+  const actObjectives = useMemo(() => {
+    if (!Number.isFinite(shownAct)) return [];
+    const skills = actSkills(shownAct, actProf);
+    return deriveObjectives(shownAct).map((o) => objectiveMastery(o, skills));
+  }, [shownAct, actProf]);
   /* The same evidence rolled up the curriculum tree: scene -> act -> volume. Nothing new
      is measured here; the question is just asked at the altitude the learner asks it at. */
   const volumes = useMemo(() => volumeProgress(mastery), [mastery]);
@@ -4136,6 +4151,65 @@ function Plan({ cards = [] }) {
           </p>
         )}
       </section>
+
+      {/* ── what you can DO in this act ──
+          The section above says how much of a scene is holding; this says which way.
+          Every row is an objective the act's own material can actually support --
+          deriveObjectives refuses to claim one the book does not teach -- scored
+          against the evidence for THIS act rather than the whole deck.
+
+          'Not measured yet' is a first-class answer and deliberately not a 0% bar. An
+          ability nobody has tested in this act is unmeasured, not failing, and drawing
+          it as an empty bar would say the opposite of what is known. */}
+      {Number.isFinite(shownAct) && actObjectives.length > 0 && (
+        <section className="tc-plansec">
+          <h2 className="tc-planh">What you can do in Act {shownAct}
+            <span className="tc-planh-sub">Volume {volumeOfAct(shownAct)}</span></h2>
+          <div className="tc-actpick" role="group" aria-label="Which act to inspect">
+            {ACT_CHOICES.map((a) => (
+              <button key={a} type="button"
+                      className={"tc-actchip" + (a === shownAct ? " is-on" : "")}
+                      aria-pressed={a === shownAct}
+                      onClick={() => setMapAct(a)}>{a}</button>
+            ))}
+          </div>
+          {OBJECTIVE_KINDS.map((kind) => {
+            const rows = actObjectives.filter((o) => o.kind === kind);
+            if (!rows.length) return null;
+            return (
+              <div key={kind} className="tc-objgroup">
+                <p className="tc-objkind">{kind}</p>
+                {rows.map((o) => {
+                  const pct = o.measured ? Math.round(o.mastered * 100) : null;
+                  return (
+                    <div key={o.id} className="tc-objrow">
+                      <span className="tc-objlabel">{o.label}</span>
+                      <span className="tc-objitems">{o.items} {o.unit}</span>
+                      {pct == null ? (
+                        <span className="tc-objnone">not measured yet</span>
+                      ) : (
+                        <>
+                          <span className="tc-objbar" role="progressbar" aria-valuemin={0}
+                                aria-valuemax={100} aria-valuenow={pct}
+                                aria-label={o.label}>
+                            <i className={pct >= 80 ? "is-good" : pct >= 55 ? "is-mid" : "is-low"}
+                               style={{ width: pct + "%" }} />
+                          </span>
+                          <span className="tc-objpct">{pct}%</span>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          <p className="tc-planhint">
+            Scored from this act's answers only, over the last 60 days. An objective with
+            too little evidence to judge says so rather than showing an empty bar.
+          </p>
+        </section>
+      )}
 
       <section className="tc-plansec">
         <h2 className="tc-planh">What a minute of study buys <span className="tc-planh-sub">last 30 days</span></h2>

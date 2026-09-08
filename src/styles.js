@@ -205,6 +205,37 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* The session options, closed by default. Deliberately quiet: a text-weight control, not a
    button that competes with Smart Review. When shut it names the current settings, so the
    screen still answers "what am I about to do" without making you choose anything. */
+/* ── the act objectives map ──
+   One row per thing the act's own material can actually ask of you. The bar is only drawn
+   where there is evidence: "not measured yet" is a different statement from 0% and gets
+   words rather than an empty track, because an empty track reads as failure. */
+.tc-actpick{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px;}
+.tc-actchip{appearance:none;min-width:var(--tap);min-height:var(--tap);padding:6px 10px;
+  border:1px solid var(--surface-3);border-radius:10px;background:transparent;
+  color:var(--mut);font:inherit;font-size:13px;cursor:pointer;}
+.tc-actchip.is-on{background:var(--surface-3);color:var(--washi);font-weight:600;
+  box-shadow:inset 0 0 0 1px var(--info);}
+@media (hover:hover){.tc-actchip:hover{background:rgba(255,255,255,.06);color:var(--washi);}}
+.tc-actchip:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
+
+.tc-objgroup{margin:0 0 14px;}
+.tc-objkind{margin:0 0 6px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--mut-2);}
+.tc-objrow{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;
+  padding:8px 0;border-top:1px solid var(--surface-2);}
+.tc-objlabel{font-size:14px;line-height:1.45;color:var(--washi);}
+.tc-objitems{font-family:var(--mono);font-size:11px;color:var(--mut-2);white-space:nowrap;}
+.tc-objbar{grid-column:1;display:block;height:6px;border-radius:999px;
+  background:var(--surface-3);overflow:hidden;}
+.tc-objbar i{display:block;height:100%;border-radius:999px;}
+.tc-objbar i.is-good{background:var(--ok);}
+.tc-objbar i.is-mid{background:var(--due);}
+.tc-objbar i.is-low{background:var(--shu);}
+.tc-objpct{grid-column:2;font-family:var(--mono);font-size:12px;color:var(--mut);}
+/* Words, not a bar. An unmeasured objective drawn as an empty track says "you failed this"
+   when the truth is "nobody has asked you". */
+.tc-objnone{grid-column:1 / -1;font-size:12px;color:var(--mut-2);font-style:italic;}
+
 /* What the session's minutes are going on, per skill. Quiet by design: it is the coach
    showing its working, not a control. */
 .tc-planline{margin:8px 0 0;text-align:center;font-size:12px;line-height:1.6;color:var(--mut-2);}
