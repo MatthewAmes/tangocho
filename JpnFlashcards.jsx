@@ -1036,6 +1036,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* Catch-up is the same lever at zero: reviews only, for the days when the backlog IS the
      problem and taking on more is the last thing that would help. */
   const [catchUp, setCatchUp] = useState(false);
+  /* Closed every time, deliberately: this is a daily-use screen, and someone who opened
+     the panel once to change a setting should still get the one-button version tomorrow. */
+  const [showOpts, setShowOpts] = useState(false);
   const newLeft = catchUp ? 0 : Math.max(0, newQuota - newToday);
   const [voiceOn, setVoiceOn] = useState(true);
   const liveRef = useRef(null);
@@ -2312,74 +2315,23 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           </div>
         )}
 
-        {/* The learner picks the scope; the engine still picks every exercise inside it
-            (spec §14). Offered only once there IS an act to point at — before the first
-            session "This lesson" would be a button that does nothing, and the honest
-            answer at that point is the mix anyway. */}
-        {smartPool.length > 0 && actNow !== null && (
-          <div className="tc-modeseg" role="group" aria-label="Practice mode">
-            {PRACTICE_MODES.map(([key, label, note]) => (
-              <button key={key} className={"tc-segbtn" + (plan.practice === key ? " is-on" : "")}
-                      aria-pressed={plan.practice === key} title={note}
-                      onClick={() => setPractice(key)}>{label}</button>
-            ))}
-          </div>
-        )}
-        {/* How long today (spec §39). The same setting the Plan tab owns — same three
-            paces, same writer — offered here as well because this is the screen where the
-            answer is actually known. A pace chosen on a settings page three taps away is a
-            pace that gets set once and then silently misdescribes every session after it,
-            and the button underneath changes size as soon as this is tapped. */}
-        {smartPool.length > 0 && (
-          <div className="tc-modeseg" role="group" aria-label="Session length">
-            {PACES.map(([key, label, mins, note]) => (
-              <button key={key} className={"tc-segbtn" + (plan.pace === key ? " is-on" : "")}
-                      aria-pressed={plan.pace === key} title={note}
-                      onClick={() => setPace(key)}>{label} <i>≈{mins}m</i></button>
-            ))}
-          </div>
-        )}
-        {/* New words a day, and the catch-up escape hatch. Sits with the pace chips because
-            it is the same kind of decision — how much this session should cost — and it is
-            the one that moves the number most. */}
-        {smartPool.length > 0 && (
-          <>
-            <div className="tc-modeseg" role="group" aria-label="New words a day">
-              {NEW_QUOTAS.map((q) => (
-                <button key={q} className={"tc-segbtn" + (!catchUp && newQuota === q ? " is-on" : "")}
-                        aria-pressed={!catchUp && newQuota === q}
-                        title={`At most ${q} new words a day`}
-                        onClick={() => { setCatchUp(false); setNewQuota(q); sSet(NEW_QUOTA_KEY, String(q)); }}>
-                  {q} <i>new/day</i>
-                </button>
-              ))}
-              <button className={"tc-segbtn" + (catchUp ? " is-on" : "")} aria-pressed={catchUp}
-                      title="Reviews only — clear the backlog without taking on more"
-                      onClick={() => setCatchUp((v) => !v)}>Catch up</button>
-            </div>
-            <p className="tc-planhint">
-              {catchUp
-                ? "Reviews only — nothing new until you turn this off."
-                : newLeft > 0
-                  ? `${newLeft} new word${newLeft === 1 ? "" : "s"} left today (${newToday} of ${newQuota} taken).`
-                  : `Day's new words are used up (${newToday}). Reviews carry on as normal.`}
-            </p>
-          </>
-        )}
+
+        {/* One button first, every choice behind one disclosure.
+
+           This screen used to ask four segmented questions -- practice mode, session
+           length, new words a day, target retention -- fourteen chips in all, stacked
+           above the button you came to press. Each row was a reasonable local decision
+           and nobody had looked at the sum: the daily path is 'start today's session',
+           and every one of those rows is a thing you set once, if ever.
+
+           So the order is inverted. The session, then what is in it, then the options,
+           closed. Nothing was removed -- the summary line names the current values and
+           opens the same controls -- but the default path is now one tap. */}
         {smartPool.length > 0 && (
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
             {/* Say what is actually in the session. "16 cards" was true and told you
                 nothing; "3 new · 2 fading" is the reason to press the button. */}
             🧠 Smart Review · {smartPool.length} cards{smartInfo.fresh > 0 ? ` · ${smartInfo.fresh} new` : ""}{smartInfo.stale > 0 ? ` · ${smartInfo.stale} fading` : ""}
-          </button>
-        )}
-        {/* Stuck words get their own session instead of being sprinkled through every
-            other one. 歩いて sitting at 0% after eight attempts doesn't need more of the
-            same drill — it needs to be looked at deliberately, and it shouldn't be taxing
-            sessions that are otherwise going fine. */}
-        {leeches.length > 0 && (
-          <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12), false, { leechSession: true })}>
-            🩹 Trouble words · {leeches.length} stuck
           </button>
         )}
         {smartPool.length > 0 && (
@@ -2396,22 +2348,101 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                   : `Your weakest and most overdue, plus new words${newCount > 0 ? ` (${newCount} left)` : ""}.`
           }</p>
         )}
+        {/* Stuck words get their own session instead of being sprinkled through every
+            other one. 歩いて sitting at 0% after eight attempts doesn't need more of the
+            same drill — it needs to be looked at deliberately, and it shouldn't be taxing
+            sessions that are otherwise going fine. */}
+        {leeches.length > 0 && (
+          <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12), false, { leechSession: true })}>
+            🩹 Trouble words · {leeches.length} stuck
+          </button>
+        )}
 
-        {ranked.length > 0 && (
-          <div className="tc-retention">
-            <span className="tc-retlabel">Aim to remember</span>
-            <div className="tc-kanaseg">
-              {[[0.85, "85%"], [0.9, "90%"], [0.95, "95%"]].map(([v, label]) => (
-                <button key={v} className={"tc-fchip" + (Math.abs(retentionPref - v) < 0.001 ? " is-on" : "")}
-                  onClick={() => { setRetention(v); setRetentionState(v); }}>{label}</button>
+        {smartPool.length > 0 && (
+          <>
+            <button className={"tc-optsbtn" + (showOpts ? " is-open" : "")}
+                    aria-expanded={showOpts} onClick={() => setShowOpts((v) => !v)}>
+              {showOpts ? "Hide options" : [
+                actNow !== null ? (PRACTICE_MODES.find((m) => m[0] === plan.practice) || [])[1] : null,
+                (PACES.find((p) => p[0] === plan.pace) || [])[1],
+                catchUp ? "reviews only" : newQuota + " new/day",
+              ].filter(Boolean).join(" \u00b7 ")}
+            </button>
+            {showOpts && (
+              <div className="tc-optspanel">
+          {/* The learner picks the scope; the engine still picks every exercise inside it
+              (spec §14). Offered only once there IS an act to point at — before the first
+              session "This lesson" would be a button that does nothing, and the honest
+              answer at that point is the mix anyway. */}
+          {smartPool.length > 0 && actNow !== null && (
+            <div className="tc-modeseg" role="group" aria-label="Practice mode">
+              {PRACTICE_MODES.map(([key, label, note]) => (
+                <button key={key} className={"tc-segbtn" + (plan.practice === key ? " is-on" : "")}
+                        aria-pressed={plan.practice === key} title={note}
+                        onClick={() => setPractice(key)}>{label}</button>
               ))}
             </div>
-            <p className="tc-smarthint">
-              {retentionPref <= 0.85 ? "Fewer reviews, more forgetting. Good when you're buried."
-                : retentionPref >= 0.95 ? "Many more reviews for a little more recall. Use before an exam."
-                : "The researched default — reviews land just as a word starts to slip."}
-            </p>
-          </div>
+          )}
+          {/* How long today (spec §39). The same setting the Plan tab owns — same three
+              paces, same writer — offered here as well because this is the screen where the
+              answer is actually known. A pace chosen on a settings page three taps away is a
+              pace that gets set once and then silently misdescribes every session after it,
+              and the button underneath changes size as soon as this is tapped. */}
+          {smartPool.length > 0 && (
+            <div className="tc-modeseg" role="group" aria-label="Session length">
+              {PACES.map(([key, label, mins, note]) => (
+                <button key={key} className={"tc-segbtn" + (plan.pace === key ? " is-on" : "")}
+                        aria-pressed={plan.pace === key} title={note}
+                        onClick={() => setPace(key)}>{label} <i>≈{mins}m</i></button>
+              ))}
+            </div>
+          )}
+          {/* New words a day, and the catch-up escape hatch. Sits with the pace chips because
+              it is the same kind of decision — how much this session should cost — and it is
+              the one that moves the number most. */}
+          {smartPool.length > 0 && (
+            <>
+              <div className="tc-modeseg" role="group" aria-label="New words a day">
+                {NEW_QUOTAS.map((q) => (
+                  <button key={q} className={"tc-segbtn" + (!catchUp && newQuota === q ? " is-on" : "")}
+                          aria-pressed={!catchUp && newQuota === q}
+                          title={`At most ${q} new words a day`}
+                          onClick={() => { setCatchUp(false); setNewQuota(q); sSet(NEW_QUOTA_KEY, String(q)); }}>
+                    {q} <i>new/day</i>
+                  </button>
+                ))}
+                <button className={"tc-segbtn" + (catchUp ? " is-on" : "")} aria-pressed={catchUp}
+                        title="Reviews only — clear the backlog without taking on more"
+                        onClick={() => setCatchUp((v) => !v)}>Reviews only</button>
+              </div>
+              <p className="tc-planhint">
+                {catchUp
+                  ? "Reviews only — nothing new until you turn this off."
+                  : newLeft > 0
+                    ? `${newLeft} new word${newLeft === 1 ? "" : "s"} left today (${newToday} of ${newQuota} taken).`
+                    : `Day's new words are used up (${newToday}). Reviews carry on as normal.`}
+              </p>
+            </>
+          )}
+          {ranked.length > 0 && (
+            <div className="tc-retention">
+              <span className="tc-retlabel">Aim to remember</span>
+              <div className="tc-kanaseg">
+                {[[0.85, "85%"], [0.9, "90%"], [0.95, "95%"]].map(([v, label]) => (
+                  <button key={v} className={"tc-fchip" + (Math.abs(retentionPref - v) < 0.001 ? " is-on" : "")}
+                    onClick={() => { setRetention(v); setRetentionState(v); }}>{label}</button>
+                ))}
+              </div>
+              <p className="tc-smarthint">
+                {retentionPref <= 0.85 ? "Fewer reviews, more forgetting. Good when you're buried."
+                  : retentionPref >= 0.95 ? "Many more reviews for a little more recall. Use before an exam."
+                  : "The researched default — reviews land just as a word starts to slip."}
+              </p>
+            </div>
+          )}
+              </div>
+            )}
+          </>
         )}
         {ranked.length > 0 && (
           <div className="tc-insights">

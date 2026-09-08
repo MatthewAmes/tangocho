@@ -201,6 +201,22 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-rate-new{color:var(--mut-2);}
 .tc-setupfoot{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
 .tc-hintline{text-align:center;font-size:12px;color:var(--mut-2);margin:14px 0 0;}
+
+/* The session options, closed by default. Deliberately quiet: a text-weight control, not a
+   button that competes with Smart Review. When shut it names the current settings, so the
+   screen still answers "what am I about to do" without making you choose anything. */
+.tc-optsbtn{display:block;width:100%;margin:14px 0 0;padding:10px 12px;min-height:44px;
+  background:transparent;border:0;border-radius:10px;cursor:pointer;
+  font:inherit;font-size:12px;letter-spacing:.04em;color:var(--mut-2);text-align:center;}
+/* No content:"..." icon here. This whole file is one template literal, so a CSS unicode
+   escape (backslash followed by a hex codepoint) is read as a JS octal escape and hard-fails
+   the build -- and so does writing one inside a comment, because a comment in a template
+   literal is still just string content. Same trap as backticks. The label carries itself. */
+.tc-optsbtn.is-open{color:var(--washi);}
+@media (hover:hover){.tc-optsbtn:hover{background:rgba(255,255,255,.04);color:var(--washi);}}
+.tc-optsbtn:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
+.tc-optspanel{margin-top:8px;padding:12px;border:1px solid var(--surface-3);border-radius:12px;
+  background:var(--surface);display:flex;flex-direction:column;gap:10px;}
 /* The Space/arrow-key tip is useless on a phone, which has none of those keys (TODO-202).
    Hidden by default and shown only where a real pointer and hover exist, so a device that
    reports neither errs towards hiding advice it cannot act on. Only this one hint is
