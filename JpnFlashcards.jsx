@@ -5414,6 +5414,18 @@ async function callAI(task, input) {
       /* Congestion is not a fault and should not read like one. The Worker already waited
          and retried across every configured model before giving up, so by the time this
          reaches the learner the only useful thing to say is "later, not now". */
+      /* GOOGLE's quota, not this app's. The two are easy to confuse and the fixes are
+         opposite: the app's own limit (80 a day) resets tomorrow and means "you have used
+         your share", while this one is the Gemini key's free-tier ceiling and means
+         "the key needs billing, or a few minutes". Pasting Google's raw text — three URLs
+         and a metric name — told the learner neither. Matched before the congestion check
+         because an exhausted quota also returns 429 and would otherwise read as "busy". */
+      if (/quota|billing|rate.?limit|RESOURCE_EXHAUSTED/i.test(detail)) {
+        throw new AIError(res.status,
+          "Gemini's free tier is out of requests for now. It refills on its own — a minute for the "
+          + "per-minute cap, or tomorrow for the daily one. Adding billing to the Google AI Studio "
+          + "key raises it permanently; usage this size costs pennies.");
+      }
       if (/high demand|overloaded|unavailable|try again later/i.test(detail)) {
         throw new AIError(res.status, "Gemini is busy right now — the exercise below is built from your own deck instead.");
       }
