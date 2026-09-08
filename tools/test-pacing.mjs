@@ -142,18 +142,40 @@ t("copy exists for all of them and none of it scolds", () => {
 });
 
 console.log("\n=== the presets change the size of the session ===");
-t("three paces, ascending, and an unknown one falls back to the default", () => {
-  eq(PACES.length, 3);
-  eq(paceMinutes("short") < paceMinutes("normal") && paceMinutes("normal") < paceMinutes("deep"), true);
+t("durations ascend, and an unknown one falls back to the default", () => {
+  const mins = PACES.map(([, , m]) => m);
+  for (let i = 1; i < mins.length; i++) {
+    if (!(mins[i] > mins[i - 1])) throw new Error(`durations must ascend: ${mins.join(", ")}`);
+  }
   eq(paceMinutes(undefined), DEFAULTS.minutes, "an unset pace must build the session it always did");
   eq(paceMinutes("nonsense"), DEFAULTS.minutes);
 });
-t("each preset plans a strictly bigger session than the one below it", () => {
-  // one deck, no latency history, so the only thing moving is the requested minutes
-  const sources = [{ deck: "vocab", items: many(200, (i) => ({ id: "v" + i })), stats: {} }];
+t("the original three keys still resolve, so a stored preference survives", () => {
+  eq(paceMinutes("short"), 5);
+  eq(paceMinutes("normal"), 10);
+  eq(paceMinutes("deep"), 20);
+});
+t("EVERY duration plans a strictly bigger session than the one below it", () => {
+  /* This is the test the long durations needed. maxItems was 40 against itemsPerMinute 2,
+     so the real ceiling was min(40, minutes * 2) and every duration from 20 minutes up
+     built the SAME forty items — a 75-minute session was a 20-minute session with more
+     waiting. Adding durations without this assertion would have shipped four options that
+     did nothing. */
+  const sources = [{ deck: "vocab", items: many(400, (i) => ({ id: "v" + i })), stats: {} }];
   const size = (pace) => budgetFor(sources, { minutes: paceMinutes(pace) });
-  gt(size("normal"), size("short"));
-  gt(size("deep"), size("normal"));
+  for (let i = 1; i < PACES.length; i++) {
+    const lo = PACES[i - 1][0], hi = PACES[i][0];
+    gt(size(hi), size(lo), `${hi} (${paceMinutes(hi)}m) must be bigger than ${lo} (${paceMinutes(lo)}m)`);
+  }
+});
+t("the longest duration is not clipped by the safety ceiling", () => {
+  const sources = [{ deck: "vocab", items: many(400, (i) => ({ id: "v" + i })), stats: {} }];
+  const longest = PACES[PACES.length - 1];
+  const size = budgetFor(sources, { minutes: longest[2] });
+  if (size >= DEFAULTS.maxItems) {
+    throw new Error(`the longest duration hits the maxItems backstop (${size} >= ${DEFAULTS.maxItems}) — ` +
+      "the ceiling is capping study time rather than guarding against a bad latency estimate");
+  }
 });
 t("the preset is the only knob — new-item intake stays capped", () => {
   // encoding cost does not get cheaper because there is more time; see the note in pacing.mjs

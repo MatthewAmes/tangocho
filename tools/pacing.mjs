@@ -118,21 +118,37 @@ export function easedTarget(fatigue = 0, base = TARGET_SUCCESS, opts = {}) {
   return level >= o.easeAt ? Math.max(base, o.easedTarget) : base;
 }
 
-/* ── the pacing presets (spec §39) ──
-   Three honest paces, because some days are not study days. The professor's point about
-   "small and simple things" is the default: five focused minutes, three times a day, beats
-   one heroic session you will not repeat.
+/* ── the session durations (spec §39, and the learning-model spec) ──
+   Some days are not study days. The professor's point about "small and simple things" is
+   still the default: five focused minutes, three times a day, beats one heroic session you
+   will not repeat. The long end exists because the learning model asks for it, not because
+   anyone should feel obliged to reach it.
 
    They map to ONE number — session.mjs's `minutes` — and that is the whole mechanism. The
    item count follows from it (budgetFor scales the ceiling with the requested minutes) and
    so does the number of new words (newShare is a fraction of the session, not a count), so
    a preset does not need to set a second knob to be felt. `maxNew` is deliberately NOT
    scaled: encoding cost is the one thing that does not get cheaper because you have more
-   time, and six genuinely new words is already the most a sitting should introduce. */
+   time, and six genuinely new words is already the most a sitting should introduce.
+
+   The list is DURATIONS, labelled in minutes, because that is the question the learner can
+   actually answer: not "how deep do you feel" but "how long have you got". The learning-
+   model spec draws the line hard — the learner chooses duration, the coach chooses what
+   goes in it (see planner.mjs). Naming these Short/Normal/Deep asked the learner to judge
+   the session's ambition, which is the planner's job and not something anyone can answer
+   before starting.
+
+   The first three keys are unchanged so a stored preference still resolves; paceMinutes
+   falls back to 10 for anything it does not recognise, so an old or corrupted key degrades
+   to the daily default rather than breaking the session. */
 export const PACES = [
-  ["short", "Short", 5, "Tired, busy, or between things. Five minutes still counts."],
-  ["normal", "Normal", 10, "The daily default — enough to make real progress."],
-  ["deep", "Deep", 20, "Motivated and have the time. Bigger backlog, more new words."],
+  ["short", "5", 5, "Tired, busy, or between things. Five minutes still counts."],
+  ["normal", "10", 10, "The daily default — enough to make real progress."],
+  ["deep", "20", 20, "Motivated and have the time. Bigger backlog, more new words."],
+  ["m30", "30", 30, "A proper sitting: room for listening and production, not just review."],
+  ["m45", "45", 45, "Most of a study block. Every skill gets a real slice."],
+  ["m60", "60", 60, "The full session from the learning model."],
+  ["m75", "75", 75, "The upper end worth sustaining. Past here, returns fall off."],
 ];
 
 export function paceMinutes(pace) {

@@ -2364,7 +2364,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     aria-expanded={showOpts} onClick={() => setShowOpts((v) => !v)}>
               {showOpts ? "Hide options" : [
                 actNow !== null ? (PRACTICE_MODES.find((m) => m[0] === plan.practice) || [])[1] : null,
-                (PACES.find((p) => p[0] === plan.pace) || [])[1],
+                (() => { const p = PACES.find((x) => x[0] === plan.pace); return p ? p[1] + " min" : null; })(),
                 catchUp ? "reviews only" : newQuota + " new/day",
               ].filter(Boolean).join(" \u00b7 ")}
             </button>
@@ -2393,7 +2393,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               {PACES.map(([key, label, mins, note]) => (
                 <button key={key} className={"tc-segbtn" + (plan.pace === key ? " is-on" : "")}
                         aria-pressed={plan.pace === key} title={note}
-                        onClick={() => setPace(key)}>{label} <i>≈{mins}m</i></button>
+                        onClick={() => setPace(key)}>{label} <i>min</i></button>
               ))}
             </div>
           )}
@@ -3793,7 +3793,7 @@ function Plan({ cards = [] }) {
             <button key={k} className={"tc-pace" + (plan.pace === k ? " is-on" : "")}
               onClick={() => update({ pace: k })}>
               <span className="tc-pacelabel">{label}</span>
-              <span className="tc-pacemins">≈{mins} min</span>
+              <span className="tc-pacemins">min</span>
               <span className="tc-pacenote">{note}</span>
             </button>
           ))}

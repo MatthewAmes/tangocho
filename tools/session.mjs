@@ -74,7 +74,17 @@ export const DEFAULTS = {
   listenAtStability: 5, // audio recall a little earlier — it is easier than producing
   targetSuccess: TARGET_SUCCESS,   // aim for effortful-but-successful retrieval
   minItems: 8,
-  maxItems: 40,
+  /* The ceiling on a session, and it has to clear the longest duration on offer or the
+     duration silently stops meaning anything. At 40 the real ceiling was
+     min(40, minutes * itemsPerMinute), so everything from 20 minutes upward built the SAME
+     forty items: a 75-minute session and a 20-minute one were identical, and the extra
+     fifty-five minutes bought nothing. 75 minutes at itemsPerMinute is 150, so this sits
+     ABOVE that deliberately: minutes * itemsPerMinute governs across the whole range and
+     this stays what it was meant to be — a backstop against a pathological latency
+     estimate, not a cap on how long anyone may study. Setting it to exactly 150 put the
+     longest session back on the backstop, which the pacing test now checks for. The
+     shorter durations are unchanged: their ceilings were 10/20/40, all well under this. */
+  maxItems: 180,
   /* Two items a minute, which lands the normal pace on ~20. The first cut used four and
      produced a forty-item session for a ten-minute request — technically within budget at
      the measured answer speed, and far too long to actually sit through. Sessions you
