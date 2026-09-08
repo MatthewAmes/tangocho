@@ -8,9 +8,10 @@
  */
 import {
   planSession, apportion, practiceShares, blendWeights, describePlan,
+  abilitiesFromProfile, biasFor,
   STAGE_PRIORS, MAX_SHARE, DIAGNOSTIC_SHARE, MIN_SLICE_MIN,
 } from "./planner.mjs";
-import { SKILLS, STATE, posterior } from "./learner.mjs";
+import { SKILLS, STATE, posterior, stateOf, chooseIntervention } from "./learner.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => {
@@ -229,6 +230,78 @@ t("with pull at zero the plan is exactly the stage prior", () => {
   const shares = practiceShares({ recognition: strong(0.95), listening: strong(0.40) });
   const w = blendWeights(priors, shares, 0);
   for (const s of SKILLS) near(w[s], priors[s], 0.0001, `${s} at pull=0:`);
+});
+
+console.log("\n=== feeding the plan back into the session (Phase 4) ===");
+
+t("abilitiesFromProfile turns counts into posteriors, and silence into UNKNOWN", () => {
+  const abilities = abilitiesFromProfile({
+    listening: { n: 20, ok: 8 },
+    recognition: { n: 40, ok: 38 },
+  });
+  ok(abilities.listening.mean < abilities.recognition.mean, "the weaker skill has the lower estimate");
+  eq(stateOf(abilities.production), STATE.UNKNOWN, "a skill with no rows is unknown, not zero");
+  ok(abilities.production.mean > 0, "and its estimate is a prior, not a failure");
+});
+
+t("bias favours whichever skill is behind its share", () => {
+  const plan = planSession({ minutes: 60, abilities: { listening: strong(0.35) }, dueLoad: 0 });
+  const bias = biasFor(plan, {});
+  const want = Object.fromEntries(plan.slices.map((s) => [s.skill, s.minutes]));
+  const leader = plan.slices[0].skill;
+  for (const s of SKILLS) {
+    if (s === leader) continue;
+    if ((want[s] || 0) < want[leader]) ok(bias[leader] > bias[s], `${leader} should be pushed harder than ${s}`);
+  }
+});
+
+t("THE POINT: bias falls as a skill is served, so the session converges", () => {
+  const plan = planSession({ minutes: 60, abilities: { listening: strong(0.35) }, dueLoad: 0 });
+  const leader = plan.slices[0].skill;
+  const atStart = biasFor(plan, {})[leader];
+  const afterSome = biasFor(plan, { [leader]: 5, recognition: 1 })[leader];
+  const afterLots = biasFor(plan, { [leader]: 30, recognition: 1 })[leader];
+  ok(afterSome < atStart, `serving it should reduce the push (${atStart} -> ${afterSome})`);
+  ok(afterLots < 0, `over-serving it should push AWAY (${afterLots})`);
+});
+
+t("an empty or missing plan biases nothing", () => {
+  eq(Object.keys(biasFor(null, {})).length, 0);
+  eq(Object.keys(biasFor({ slices: [] }, {})).length, 0);
+});
+
+t("chooseIntervention honours the bias", () => {
+  const pick = {
+    fresh: false, step: 1,
+    caps: { type: true, listen: true, context: true, spell: true },
+    /* 'tried' matters: chooseIntervention returns early for a word whose recognition has
+       never been attempted, because there is nothing to retrieve yet. */
+    recognition: { seen: 40, acc: 0.92, tried: true },
+    production: { seen: 20, acc: 0.80, tried: true },
+    listening: { seen: 20, acc: 0.78, tried: true },
+    context: { seen: 20, acc: 0.79, tried: true },
+    orthography: { seen: 20, acc: 0.81, tried: true },
+  };
+  const baseline = chooseIntervention(pick).skill;
+  const zero = chooseIntervention(pick, { skillBias: {} }).skill;
+  eq(zero, baseline, "an empty bias must reproduce the untouched choice");
+  const pushed = chooseIntervention(pick, { skillBias: { orthography: 0.9 } }).skill;
+  eq(pushed, "orthography", "a strong bias should win the slot");
+});
+
+t("no bias can unlock an ability the learner is not ready for", () => {
+  /* The guard that makes this a budget and not an instruction: production stays shut until
+     recognition is demonstrated, however far behind its share production is. */
+  const notReady = {
+    fresh: false, step: 1,
+    caps: { type: false, listen: false, context: false, spell: false },
+    /* Recognition HAS been attempted, so the early return does not fire -- but it is not
+       holding up, so nothing else unlocks. */
+    recognition: { seen: 12, acc: 0.35, tried: true },
+    production: {}, listening: {}, context: {}, orthography: {},
+  };
+  const got = chooseIntervention(notReady, { skillBias: { production: 5, listening: 5 } });
+  eq(got.skill, "recognition", "an enormous bias must not unlock a locked ability");
 });
 
 console.log(fail ? `\n${fail} of ${run} FAILED` : `\nall ${run} planner tests passed`);

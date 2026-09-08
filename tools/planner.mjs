@@ -234,6 +234,70 @@ export function planSession(opts = {}) {
   return { minutes, stage, review: reviewMinutes, slices };
 }
 
+/* ── feeding the plan back into the session (Phase 4) ──
+
+   The plan allocates TIME across skills. The intervention engine chooses a skill per card,
+   by maximising practiceValue. Those two have to meet somewhere, and this is the seam:
+   the plan becomes a per-skill bias added to that score.
+
+   A bias rather than a filter, for the same reason the practice modes are a weight rather
+   than a filter: forcing the next eight cards to be listening would stop the memory model
+   having a say, and the card that has quietly decayed to 40% would be locked out of the
+   session that should have rescued it. Eligibility still wins — production stays locked
+   until a word can be recognised at all, and no bias unlocks it. */
+
+/* How hard the plan may push. practiceValue spans roughly [0, 1.15], so at 0.8 a skill a
+   third of the session behind its target can overtake one that is moderately ahead, but
+   cannot overtake a genuinely failing ability. That ordering is deliberate: the plan is a
+   budget, not an instruction. */
+export const BIAS_STRENGTH = 0.8;
+
+/* Convert profileFrom()'s per-skill counts into the posteriors planSession wants. The two
+   speak different dialects of the same evidence: profileFrom counts, planSession needs a
+   distribution. Skills with no evidence become posterior(0, 0), whose state is UNKNOWN —
+   which is exactly what should reach the planner, rather than a rate of zero that would
+   read as total failure. */
+export function abilitiesFromProfile(profile = {}) {
+  const out = {};
+  for (const s of SKILLS) {
+    const row = profile[s];
+    const n = (row && row.n) || 0;
+    const ok = (row && row.ok) || 0;
+    out[s] = posterior(ok, Math.max(0, n - ok));
+  }
+  return out;
+}
+
+/* The running deficit, as a bias map. `served` counts how many items each skill has already
+   taken this session; the bias is how far behind its share each one is.
+
+   Deficit rather than a fixed nudge, because a fixed nudge cannot converge: it pushes just
+   as hard on the tenth listening card as on the first, and a session that opens with three
+   listening items would keep being pushed toward listening. A deficit falls to zero as the
+   skill is served and goes negative once it is over-served, which is what makes the session
+   land on the allocation instead of leaning at it. */
+export function biasFor(plan, served = {}, opts = {}) {
+  const strength = opts.strength ?? BIAS_STRENGTH;
+  const out = {};
+  if (!plan || !plan.slices || !plan.slices.length) return out;
+  const target = {};
+  let planned = 0;
+  for (const s of plan.slices) { target[s.skill] = s.minutes; planned += s.minutes; }
+  if (!(planned > 0)) return out;
+
+  let done = 0;
+  for (const k of Object.keys(served)) done += served[k] || 0;
+
+  for (const s of SKILLS) {
+    const want = (target[s] || 0) / planned;
+    /* Before anything has been asked there is no served share to compare against, so the
+       first card is steered by the plan alone. */
+    const got = done > 0 ? (served[s] || 0) / done : 0;
+    out[s] = strength * (want - got);
+  }
+  return out;
+}
+
 /* A one-line summary for the UI: "18 listening · 15 production · 10 vocabulary". The plan
    should be legible to the learner — the spec's coach is one that can say what it is doing
    and why, not one that silently reallocates. */

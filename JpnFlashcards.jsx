@@ -40,6 +40,7 @@ import { pickDistractors } from "./tools/distractors.mjs";
 import { contrastSet, contrastDrill, hasContrast } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
 import { stopOffer, easedTarget, PACING, PACES, paceMinutes } from "./tools/pacing.mjs";
+import { planSession, biasFor, abilitiesFromProfile, describePlan as describeSkillPlan } from "./tools/planner.mjs";
 import { gainPerMinute, gainBy, fadePoint, bestUse, answerGain, MIN_ROWS } from "./tools/gain.mjs";
 import { masteryByLesson, describeScene } from "./tools/mastery.mjs";
 import { sessionSummary, pairsFromEvidence } from "./tools/summary.mjs";
@@ -968,6 +969,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [struggled, setStruggled] = useState(() => new Set()); // missed at least once
   const missRef = useRef({});                          // id -> miss count this session
   const sessionLog = useRef([]);                       // evidence gathered this session, for the debrief
+  /* How many questions each SKILL has actually taken this session. The session plan
+     allocates time across skills; this is what has been spent, and the difference
+     between the two is what biases the next question (tools/planner.mjs::biasFor).
+     A ref, not state: it changes on every answer and nothing renders from it directly,
+     so making it state would re-render the card for a number the card never shows. */
+  const servedRef = useRef({});
   /* The learning rate BEFORE this session, captured when it starts. A rate on its own is
      an uninterpretable number; the only thing that makes it mean anything on a results
      screen is the same learner's own recent rate to compare it against. Snapshotted at
@@ -1384,6 +1391,30 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     return Math.round(cards.filter((c) => (c.level || 0) >= 4).length / cards.length * 100);
   }, [cards]);
 
+  /* ── the session plan (tools/planner.mjs) ──
+     The learner picked a duration; this decides what goes in it. Abilities come from
+     the evidence log rather than from the deck, because the question is what the
+     LEARNER can do, not what any one card is worth -- and an ability with no rows
+     arrives as UNKNOWN, which the planner samples rather than treats as a crisis.
+
+     dueLoad is the backlog as a share of what has actually been started; the review
+     block scales with it, so a clear queue books no review time and a big one books a
+     capped share. */
+  const sessionPlan = useMemo(() => {
+    const started = ranked.length || 0;
+    const dueLoad = started > 0 ? Math.min(1, dueCount / started) : 0;
+    /* Stage from how much of the deck is actually solid. The planner only uses it as a
+       starting prior, and evidence overrides it, so a coarse mapping is honest here. */
+    const stage = masteredPct >= 60 ? "advanced"
+      : masteredPct >= 35 ? "intermediate"
+      : masteredPct >= 15 ? "advanced-beginner" : "beginner";
+    return planSession({
+      minutes: paceMinutes(plan.pace),
+      abilities: abilitiesFromProfile(profileFrom(evidence, { days: 60 })),
+      dueLoad, stage,
+    });
+  }, [plan.pace, evidence, dueCount, ranked.length, masteredPct]);
+
   /* ── buddy state ── */
   const [days, setDays] = useState(null);
   // Re-read after a pull too, not only when a session starts/ends — otherwise the streak and
@@ -1591,9 +1622,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       { ...base, st: live, step: card._step || 0,
         recognition: skillOf(live, "fsrs"), production: skillOf(live, "rfsrs"),
         lastFailure: (live && live.lastFailure) || null },
-      { allowListen, targetSuccess: easedTarget(fatigueNow) },
+      { allowListen, targetSuccess: easedTarget(fatigueNow),
+        /* The plan's say. A bias on the skill score, not a filter: eligibility still
+           governs, so this cannot ask for production before a word can be recognised,
+           and a genuinely failing ability still outranks one merely behind budget. */
+        skillBias: biasFor(sessionPlan, servedRef.current) },
     );
-  }, [card, live, allowListen, fatigueNow]);
+  }, [card, live, allowListen, fatigueNow, sessionPlan]);
 
   const rawFmt = card
     ? ((intervention && intervention.format) || (prodSet.has(card.id) ? "type" : "recall"))
@@ -2140,6 +2175,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         // ERROR_TEXT_CAP for the cap and what it costs the sync.
         got: gaveText, want: wantedText,
       });
+      /* Spend the plan against what was really asked, not what was intended: the
+         bias for the next question is the gap between the two. */
+      if (rec && rec.skill) servedRef.current[rec.skill] = (servedRef.current[rec.skill] || 0) + 1;
       logEvidence(rec);
       sessionLog.current.push(rec);
     }
@@ -2347,6 +2385,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                   ? `Mostly catch-up while ${dueCount} are due, plus a few new ones.`
                   : `Your weakest and most overdue, plus new words${newCount > 0 ? ` (${newCount} left)` : ""}.`
           }</p>
+        )}
+        {/* What the time is actually going on. The coach decides the composition, so it has
+            to be able to say what it decided — a system that silently reallocates your
+            evening is one you stop trusting. Only shown once there is evidence to plan
+            from; before that every slice would read "not measured yet", which is true and
+            not worth a line on the home screen. */}
+        {smartPool.length > 0 && sessionPlan.slices.length > 0
+          && sessionPlan.slices.some((s) => s.state !== "unknown") && (
+          <p className="tc-planline">{describeSkillPlan(sessionPlan)}</p>
         )}
         {/* Stuck words get their own session instead of being sprinkled through every
             other one. 歩いて sitting at 0% after eight attempts doesn't need more of the

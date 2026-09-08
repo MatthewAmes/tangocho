@@ -205,6 +205,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* The session options, closed by default. Deliberately quiet: a text-weight control, not a
    button that competes with Smart Review. When shut it names the current settings, so the
    screen still answers "what am I about to do" without making you choose anything. */
+/* What the session's minutes are going on, per skill. Quiet by design: it is the coach
+   showing its working, not a control. */
+.tc-planline{margin:8px 0 0;text-align:center;font-size:12px;line-height:1.6;color:var(--mut-2);}
 .tc-optsbtn{display:block;width:100%;margin:14px 0 0;padding:10px 12px;min-height:44px;
   background:transparent;border:0;border-radius:10px;cursor:pointer;
   font:inherit;font-size:12px;letter-spacing:.04em;color:var(--mut-2);text-align:center;}

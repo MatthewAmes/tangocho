@@ -43,6 +43,7 @@
 
 import { retrievability, seedFromHistory } from "./fsrs.mjs";
 import { chooseIntervention, modesForFormat, TARGET_SUCCESS } from "./learner.mjs";
+import { biasFor } from "./planner.mjs";
 import { actDistance, provenanceOf } from "./curriculum.mjs";
 
 const DAY = 86400000;
@@ -864,13 +865,27 @@ export function interventionFor(pick, opts = {}) {
     allowListen: o.allowListen,
     typeAtStability: o.typeAtStability,
     listenAtStability: o.listenAtStability,
+    skillBias: opts.skillBias,
   });
 }
 
 /* Attach a format to every pick. Kept separate from buildSession so the selection and the
-   presentation can be reasoned about — and tested — independently. */
+   presentation can be reasoned about — and tested — independently.
+
+   With `opts.plan` (a planner.mjs session plan) this also spends the plan's time budget.
+   The tally is kept HERE rather than inside interventionFor because the budget is a
+   property of the session, not of any card: the bias for card seven depends on what cards
+   one through six were actually given, and a per-card function cannot know that. .map runs
+   in order, so a closure over the running counts is enough — no second pass, and callers
+   without a plan get the untouched behaviour. */
 export function withFormats(picks, opts = {}) {
-  return picks.map((p) => ({ ...p, ...interventionFor(p, opts) }));
+  if (!opts.plan) return picks.map((p) => ({ ...p, ...interventionFor(p, opts) }));
+  const served = {};
+  return picks.map((p) => {
+    const iv = interventionFor(p, { ...opts, skillBias: biasFor(opts.plan, served) });
+    if (iv && iv.skill) served[iv.skill] = (served[iv.skill] || 0) + 1;
+    return { ...p, ...iv };
+  });
 }
 
 /* A short, honest description of why this session looks the way it does. The scheduler is

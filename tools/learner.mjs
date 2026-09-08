@@ -730,9 +730,19 @@ export function chooseIntervention(pick, opts = {}) {
   const ORDER = ["production", "context", "listening", "orthography", "recognition"];
   const ranked = ORDER.filter((s) => unlocked.includes(s));
   let skill = ranked[0] || unlocked[0];
-  let best = -1;
+  let best = -Infinity;
+  /* The session plan's say, as an ADDITIVE bias per skill (planner.mjs::biasFor). It is how
+     a time budget across skills reaches a decision that is otherwise made one card at a
+     time with no knowledge of the session around it.
+
+     Deliberately added to the score rather than replacing it, and deliberately applied here
+     rather than by filtering the candidates: eligibility still governs, so no bias can ask
+     for production before a word can be recognised, and a genuinely failing ability still
+     outranks a skill that is merely behind its budget. Absent (the default) this is zero
+     for every skill and the loop is exactly what it was. */
+  const bias = o.skillBias || {};
   for (const s of ranked) {
-    const v = practiceValue(abilityFrom(states[s] || {}), { curiosity: o.curiosity });
+    const v = practiceValue(abilityFrom(states[s] || {}), { curiosity: o.curiosity }) + (bias[s] || 0);
     if (v > best) { best = v; skill = s; }
   }
 
