@@ -266,6 +266,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
   border-radius:10px;}
 .tc-tutorin:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
 .tc-tutorfoot{display:flex;flex-wrap:wrap;gap:8px;}
+/* Push to talk. Square when live, because "press again to stop" has to be readable at a
+   glance while you are mid-sentence and not looking closely. */
+.tc-mic{flex:0 0 auto;min-width:var(--tap);min-height:var(--tap);padding:0 12px;
+  font-size:18px;line-height:1;color:var(--washi);background:var(--surface-2);
+  border:1px solid var(--surface-3);border-radius:10px;cursor:pointer;}
+.tc-mic.is-live{background:rgba(224,101,90,.18);border-color:var(--shu);color:var(--shu-soft);}
+.tc-mic:disabled{opacity:.5;cursor:default;}
+.tc-mic:focus-visible{outline:2px solid rgba(201,184,255,.85);outline-offset:2px;}
+@media (hover:hover){.tc-mic:hover:not(:disabled){background:rgba(255,255,255,.09);}}
 
 /* What the session's minutes are going on, per skill. Quiet by design: it is the coach
    showing its working, not a control. */

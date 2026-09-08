@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { buildBrief, serialiseBrief, MODES } from "../../tools/tutor.mjs";
+import { MIC_OK, listenJa } from "../lib/listen.js";
+import { speakJa, stopJa, ttsUnlock } from "../lib/tts.js";
 
 /* ── the conversational tutor ──
    The presentation layer for tools/tutor.mjs. Everything that decides WHAT the tutor knows
@@ -57,7 +59,18 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [showEn, setShowEn] = useState(true);
+  /* Voice is opt-in and remembered for the session only. Default ON for output, because a
+     spoken reply is the point of the feature; the toggle exists because studying next to
+     someone else is a normal thing to be doing. */
+  const [voiceOut, setVoiceOut] = useState(true);
+  const [hearing, setHearing] = useState(false);
+  const [micErr, setMicErr] = useState(null);
+  const recRef = useRef(null);
   const endRef = useRef(null);
+
+  /* Stop any audio and release the mic when the tab unmounts. Without this, switching tabs
+     mid-reply leaves the tutor talking to an empty room. */
+  useEffect(() => () => { stopJa(); if (recRef.current) recRef.current.stop(); }, []);
 
   /* The ground truth, rebuilt whenever the evidence moves. Cheap: it is a few passes over
      the log, and it is the whole reason the tutor is not guessing. */
@@ -78,19 +91,51 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
         brief: serialiseBrief(brief),
         history: trimHistory(next),
       });
+      /* callAI resolves to the ENVELOPE, { result, cached } — not the result. Reading
+         out.reply gave undefined on every turn, so each request succeeded, cost its quota,
+         and rendered an empty bubble. Nothing failed loudly enough to notice. */
+      const r = (out && out.result) || {};
+      const reply = String(r.reply || "").trim();
       setHistory((h) => [...(asOpening ? [] : h), {
         role: "tutor",
-        text: String((out && out.reply) || "").trim(),
-        en: String((out && out.en) || "").trim(),
-        correction: String((out && out.correction) || "").trim(),
-        targeted: String((out && out.targeted) || "").trim(),
+        text: reply,
+        en: String(r.en || "").trim(),
+        correction: String(r.correction || "").trim(),
+        targeted: String(r.targeted || "").trim(),
       }]);
+      /* Speak the Japanese only. The English gloss is scaffolding for the eye; reading it
+         aloud would hand the learner the answer before they had to parse anything. */
+      if (!reply) { setErr("The tutor sent an empty reply — try again."); return; }
+      if (voiceOut) speakJa(reply, 0.9);
     } catch (e) {
       setErr((e && e.message) || "Couldn't reach the tutor.");
     } finally {
       setBusy(false);
     }
-  }, [busy, history, brief, callAI]);
+  }, [busy, history, brief, callAI, voiceOut]);
+
+  /* Push to talk. One utterance per press: continuous recognition keeps the mic open while
+     the learner reads the reply, which means recording the room and eventually the tutor's
+     own voice. The transcript lands in the SAME text box rather than sending itself, so a
+     misheard word can be fixed before it becomes a turn — dictation is not reliable enough
+     to skip that step, especially for a beginner's Japanese. */
+  const toggleMic = useCallback(() => {
+    setMicErr(null);
+    if (hearing) { if (recRef.current) recRef.current.stop(); return; }
+    stopJa();                       // do not transcribe the tutor talking over you
+    ttsUnlock();                    // iOS wants the first audio touched inside a tap
+    setHearing(true);
+    recRef.current = listenJa({
+      onPartial: (t) => setDraft(t),
+      onFinal: (t) => setDraft(t),
+      onError: (kind) => setMicErr(
+        kind === "denied" ? "Microphone permission was refused — allow it in your browser settings."
+        : kind === "no-speech" ? "Didn't catch anything. Try again, a little closer."
+        : kind === "unsupported" ? "This browser can't do speech input. Typing still works."
+        : "The microphone stopped unexpectedly. Typing still works."),
+      onEnd: () => { setHearing(false); recRef.current = null; },
+    });
+  }, [hearing]);
 
   const restart = useCallback(() => { setHistory([]); setErr(null); send("", true); }, [send]);
 
@@ -148,9 +193,17 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
       </div>
 
       {err && <p className="tc-tutorerr">{err}</p>}
+      {micErr && <p className="tc-tutorerr">{micErr}</p>}
+      {hearing && <p className="tc-planhint">Listening… speak, then press ■.</p>}
 
       <form className="tc-tutorbar" onSubmit={(e) => { e.preventDefault(); if (draft.trim()) send(draft.trim(), false); }}>
         <label className="tc-sr" htmlFor="tc-tutorin">Your reply</label>
+        {MIC_OK && (
+          <button type="button" className={"tc-mic" + (hearing ? " is-live" : "")}
+                  aria-pressed={hearing} disabled={busy}
+                  aria-label={hearing ? "Stop listening" : "Speak your reply"}
+                  onClick={toggleMic}>{hearing ? "■" : "🎤"}</button>
+        )}
         <input id="tc-tutorin" className="tc-tutorin" value={draft} disabled={busy}
                lang="ja" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
                placeholder="日本語 or English…" onChange={(e) => setDraft(e.target.value)} />
@@ -164,6 +217,16 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
         <button className="tc-fchip" type="button" aria-pressed={showEn} onClick={() => setShowEn((v) => !v)}>
           {showEn ? "English on" : "English off"}
         </button>
+        <button className="tc-fchip" type="button" aria-pressed={voiceOut}
+                onClick={() => { const on = !voiceOut; setVoiceOut(on); if (!on) stopJa(); else ttsUnlock(); }}>
+          {voiceOut ? "Voice on" : "Voice off"}
+        </button>
+        {history.length > 0 && (
+          <button className="tc-fchip" type="button" disabled={busy}
+                  onClick={() => { ttsUnlock(); const last = [...history].reverse().find((m) => m.role === "tutor"); if (last) speakJa(last.text, 0.9); }}>
+            Replay
+          </button>
+        )}
       </div>
     </div>
   );

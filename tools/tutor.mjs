@@ -140,9 +140,26 @@ export function buildBrief(opts = {}) {
     if (errs.length >= MAX_ERRORS) break;
   }
 
-  const conf = confusionFrom(evidence);
-  const confusions = [...conf.entries()].slice(0, MAX_CONFUSIONS)
-    .map(([id, withWhat]) => ({ pair: String(id).slice(0, 16) + " / " + String(withWhat[0] || "").slice(0, 16) }));
+  /* Confusions are keyed by CARD ID, and an id is meaningless to the model and to the
+     learner alike — the brief was carrying "freq:人 / doijw37d", which reads as noise and
+     spends characters saying nothing. Resolved to terms through the deck, and a pair that
+     cannot be resolved on both sides is dropped rather than shown as an id. */
+  const termOf = new Map();
+  for (const c of cards) { if (c && c.id != null && c.term) termOf.set(c.id, c.term); }
+  const readable = (x) => {
+    const s = String(x == null ? "" : x);
+    if (termOf.has(s)) return termOf.get(s);
+    const bare = s.replace(/^[a-z]+:/, "");          // freq:人 and kana:a carry the term already
+    if (bare && bare !== s) return bare;
+    return /^[0-9a-z]{6,}$/i.test(s) ? null : s;      // a bare generated id is not a word
+  };
+  const confusions = [];
+  for (const [id, withWhat] of confusionFrom(evidence)) {
+    const a = readable(id), b = readable(withWhat && withWhat[0]);
+    if (!a || !b) continue;
+    confusions.push({ pair: a.slice(0, 16) + " / " + b.slice(0, 16) });
+    if (confusions.length >= MAX_CONFUSIONS) break;
+  }
 
   /* scaffoldFor reads `.mean`; a skill row carries `.mastery`. Passing the row straight in
      read undefined at every threshold and fell through to japanese_only — the most weakly
