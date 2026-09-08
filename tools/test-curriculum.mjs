@@ -13,6 +13,7 @@ import {
   coordsOf, curriculumIndex, sameScene, sceneDistance, actDistance, currentAct,
   mergeOccurrences, OCCURRENCE_SOURCES,
   deriveObjectives, objectiveMastery, objectiveSkills, OBJECTIVE_TYPES, OBJECTIVE_KINDS,
+  actProfiles, actSkills,
   TEXTBOOK_ID, SCENES_PER_ACT, VOLUME_ACTS,
 } from "./curriculum.mjs";
 import { SKILLS, skillForFormat } from "./learner.mjs";
@@ -579,6 +580,102 @@ t("an unmeasured skill is null, never a flattering zero", () => {
   eq(objectiveMastery(o, { production: { mean: 0.2, measured: false } }).mastered, null);
   eq(objectiveMastery(o, {}).mastered, null);
   eq(objectiveMastery(o, null).measured, false);
+});
+
+
+console.log("\n=== what you know, act by act (actProfiles) ===");
+
+/* The live deck: SEED rows plus the ids applySeed stamps on at install time. Evidence
+   refers to those ids, so a test that buckets against bare SEED would silently measure
+   nothing -- which is exactly what the first cut of this did. */
+const DECK = SEED.map((c, n) => ({ ...c, id: "card" + n }));
+const DECK_BY_ACT = (() => {
+  const out = {};
+  for (const c of DECK) { const a = provenanceOf(c).act; if (Number.isFinite(a)) (out[a] || (out[a] = [])).push(c); }
+  return out;
+})();
+const ACTS = Object.keys(DECK_BY_ACT).map(Number).sort((a, b) => a - b);
+const rows = (card, skill, correct, n, at) => {
+  const list = [];
+  for (let k = 0; k < n; k++) list.push({ id: card.id, skill, ok: correct, at: at == null ? Date.now() - k * 60000 : at });
+  return list;
+};
+
+t("THE POINT: the same skill reads differently in different acts", () => {
+  const A = ACTS[1], B = ACTS[6];
+  const ev = [
+    ...rows(DECK_BY_ACT[A][0], "production", true, 18),
+    ...rows(DECK_BY_ACT[A][1], "production", false, 2),
+    ...rows(DECK_BY_ACT[B][0], "production", true, 3),
+    ...rows(DECK_BY_ACT[B][1], "production", false, 17),
+  ];
+  const p = actProfiles(ev, DECK);
+  const a = actSkills(A, p).production, b = actSkills(B, p).production;
+  ok(a.measured && b.measured, "both acts have enough evidence to judge");
+  ok(a.mean > 0.7, "act " + A + " production is holding: " + a.mean.toFixed(2));
+  ok(b.mean < 0.4, "act " + B + " production is not: " + b.mean.toFixed(2));
+  ok(a.mean - b.mean > 0.4, "and the gap survives — a global profile could not show this");
+});
+
+t("an act nobody has studied is UNMEASURED, not zero", () => {
+  const A = ACTS[1];
+  const p = actProfiles(rows(DECK_BY_ACT[A][0], "production", true, 12), DECK);
+  const never = actSkills(ACTS[9], p).production;
+  eq(never.measured, false, "an unstudied act must not claim a measurement");
+  eq(never.n, 0);
+  ok(never.mean > 0, "and its estimate is a prior, not a failure");
+});
+
+t("an act with no rows falls back to unmeasured rather than to the global profile", () => {
+  /* The original bug wearing a different hat: reporting your overall production score as
+     though it belonged to an act you have never opened. */
+  const p = actProfiles([], DECK);
+  const s = actSkills(999, p);
+  for (const k of SKILLS) eq(s[k].measured, false, k + " on an unknown act:");
+});
+
+t("a skill never asked in an act says so, even when other skills were", () => {
+  const A = ACTS[2];
+  const p = actProfiles(rows(DECK_BY_ACT[A][0], "recognition", true, 15), DECK);
+  const s = actSkills(A, p);
+  eq(s.recognition.measured, true, "recognition was measured");
+  eq(s.listening.measured, false, "listening was not, and must not inherit recognition's number");
+  eq(s.listening.n, 0);
+});
+
+t("every skill gets a row, so absence is never read as 'fine'", () => {
+  const A = ACTS[1];
+  const p = actProfiles(rows(DECK_BY_ACT[A][0], "production", true, 10), DECK);
+  const s = actSkills(A, p);
+  for (const k of SKILLS) ok(s[k], "missing row for " + k);
+});
+
+t("evidence older than the window does not count toward ability now", () => {
+  const A = ACTS[1];
+  const old = Date.now() - 400 * 86400000;
+  const p = actProfiles(rows(DECK_BY_ACT[A][0], "production", true, 30, old), DECK);
+  eq(actSkills(A, p).production.n, 0, "a year-old run is not evidence of ability today");
+});
+
+t("evidence for a card the curriculum cannot place contributes nothing", () => {
+  const p = actProfiles([{ id: "not-a-card", skill: "production", ok: true, at: Date.now() }], DECK);
+  eq(Object.keys(p).length, 0, "an unplaceable card must not invent an act");
+});
+
+t("objectiveMastery scoped to an act reports that act, not the whole deck", () => {
+  const A = ACTS[1], B = ACTS[6];
+  const ev = [
+    ...rows(DECK_BY_ACT[A][0], "production", true, 20),
+    ...rows(DECK_BY_ACT[B][0], "production", false, 20),
+  ];
+  const p = actProfiles(ev, DECK);
+  const objA = deriveObjectives(A).find((o) => o.skill === "production");
+  const objB = deriveObjectives(B).find((o) => o.skill === "production");
+  if (!objA || !objB) return;                       // acts whose material supports no production ask
+  const mA = objectiveMastery(objA, actSkills(A, p));
+  const mB = objectiveMastery(objB, actSkills(B, p));
+  ok(mA.measured && mB.measured, "both measured");
+  ok(mA.mastered > mB.mastered, "the strong act must not report the weak act's number");
 });
 
 console.log(`\nall ${run} curriculum tests ${fail ? `— ${fail} FAILED` : "passed"}`);

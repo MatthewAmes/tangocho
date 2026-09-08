@@ -108,7 +108,7 @@ import { SEED } from "../src/data/seed.js";
 import { SECTION_MAP } from "../src/data/sections.js";
 import { SCRIPT_SEED } from "../src/data/scripts-seed.js";
 import { CONJ_BANK } from "../src/data/conj-bank.js";
-import { SKILLS, skillForFormat } from "./learner.mjs";
+import { SKILLS, skillForFormat, posterior, stateOf, STATE } from "./learner.mjs";
 import { buildClozeIndex } from "./cloze.mjs";
 
 export const TEXTBOOK_ID = "nihongo-now";
@@ -644,4 +644,94 @@ export function objectiveMastery(objective, skills) {
 export function objectiveSkills(objectives = []) {
   const hit = new Set(objectives.map((o) => o.skill).filter(Boolean));
   return SKILLS.filter((s) => hit.has(s));
+}
+
+
+/* ── what you know, act by act ──
+
+   objectiveMastery() takes a `skills` map and reads skills[objective.skill]. Handed the
+   GLOBAL profile it answers a different question from the one it looks like it answers:
+   every act reports the same production number, so "can I produce Act 2 vocabulary but not
+   Act 9's" — the actual question a textbook learner has — cannot be expressed at all.
+
+   This is the missing bucket. Evidence rows carry the card id; provenanceOf maps a card to
+   its act; so the evidence already knows which act it came from and nobody had grouped it.
+
+   Shape matches profileFrom()'s rows plus a posterior, so an act's profile can be passed
+   anywhere the global one is: { n, ok, rate, mean, state, measured }.
+
+   `measured` is the flag objectiveMastery gates on, and it is stateOf() !== UNKNOWN rather
+   than a raw count. Three answers at 100% is not a measurement, and the Beta posterior is
+   already the thing that knows the difference between "strong" and "we have barely looked".
+
+   Pure, and windowed the same way profileFrom is: ability now, not ability ever. */
+/* `cards` must be the LIVE deck, not SEED: applySeed stamps each card with a generated
+   id at install time, so SEED rows carry no id at all and would bucket nothing. The
+   deck carries both the id the evidence refers to and the term/lesson/sec provenanceOf
+   needs, which is why one argument can do both jobs. */
+export function actProfiles(evidence = [], cards = [], opts = {}) {
+  const windowMs = (opts.days || 60) * 86400000;
+  const now = opts.now || Date.now();
+
+  /* id -> act, built once. A card provenanceOf cannot place contributes nothing rather
+     than being filed under a guess: 94% of the deck resolves, and the rest are class-day
+     notes and manga pages that do not belong to an act at all. */
+  const actOf = new Map();
+  for (const c of cards || []) {
+    if (!c || c.id == null) continue;
+    const act = provenanceOf(c, opts).act;
+    if (Number.isFinite(act)) actOf.set(c.id, act);
+  }
+
+  const counts = {};
+  for (const e of evidence || []) {
+    if (!e || !e.skill) continue;
+    if (now - (e.at || 0) > windowMs) continue;
+    const act = actOf.get(e.id);
+    if (!Number.isFinite(act)) continue;
+    const byAct = counts[act] || (counts[act] = {});
+    const row = byAct[e.skill] || (byAct[e.skill] = { n: 0, ok: 0 });
+    row.n += 1;
+    if (e.ok) row.ok += 1;
+  }
+
+  const out = {};
+  for (const act of Object.keys(counts)) {
+    const rows = {};
+    /* Every skill gets a row, not just the ones with evidence. An act where listening has
+       never been asked must be able to say so — an absent key would read as "no opinion"
+       at every call site and quietly become "fine". */
+    for (const s of SKILLS) {
+      const c = counts[act][s] || { n: 0, ok: 0 };
+      const post = posterior(c.ok, Math.max(0, c.n - c.ok));
+      const state = stateOf(post);
+      rows[s] = {
+        n: c.n, ok: c.ok,
+        rate: c.n ? c.ok / c.n : null,
+        mean: post.mean, width: post.width,
+        state, measured: state !== STATE.UNKNOWN,
+      };
+    }
+    out[Number(act)] = rows;
+  }
+  return out;
+}
+
+/* The act profile to hand objectiveMastery, with the global profile as a fallback.
+
+   An act nobody has studied has no rows of its own, and falling back to the global profile
+   there would be the original bug wearing a different hat: it would report your overall
+   production score as though it were Act 9's. So the fallback is UNMEASURED rows — "we
+   have not looked at this act" — which is the truth, and which the planner and the UI both
+   already know how to render. */
+export function actSkills(act, profiles = {}, opts = {}) {
+  const hit = Number.isFinite(act) ? profiles[act] : null;
+  if (hit) return hit;
+  const blank = {};
+  const post = posterior(0, 0);
+  for (const s of SKILLS) {
+    blank[s] = { n: 0, ok: 0, rate: null, mean: post.mean, width: post.width,
+                 state: STATE.UNKNOWN, measured: false };
+  }
+  return blank;
 }
