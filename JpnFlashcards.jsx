@@ -21,6 +21,7 @@ import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
 import Quizzes from "./src/tabs/Quizzes.jsx";
 import Tutor from "./src/tabs/Tutor.jsx";
 import Placement from "./src/tabs/Placement.jsx";
+import Shadow from "./src/tabs/Shadow.jsx";
 import Kana from "./src/tabs/Kana.jsx";
 import Browse from "./src/tabs/Browse.jsx";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
@@ -487,6 +488,14 @@ async function logDay({ ok, ms, deck, fnew, dnew, area }) {
   sSet(DAYS_KEY, JSON.stringify(_days));
 }
 
+/* Shadowing's evidence. Self-rated, like every grade in this app, and written as the
+   `shadow` format so learner.mjs files it under listening with production in its modes.
+   No card id exists for a dialogue line, so the line's own key is used — the profiles
+   care about the skill, and only currentAct joins evidence back to cards. */
+function recordShadow({ id, ok, ms }) {
+  logEvidence(makeEvidence({ id: "shadow:" + id, deck: "scripts", format: "shadow", ok, ms, at: Date.now() }));
+}
+
 /* ── today's missions ──
    One record per day, held the way the day counters are: a module-level cache so the Study
    screen does not re-read storage on every render, dropped on a pull so a board rolled on
@@ -538,8 +547,8 @@ function isEmoji(s) {
    opens each section — a screen reader's rotor lists headings to navigate by, and before
    this the entire app offered exactly two: the brand, and "Conjugation". */
 const TABS = [
-  ["study", "Study"], ["tutor", "Tutor"], ["sentences", "Sentences"], ["write", "Write"], ["drill", "Drill"],
-  ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"], ["spell", "Spelling"],
+  ["study", "Study"], ["tutor", "Tutor"], ["shadow", "Shadow"], ["write", "Write"], ["drill", "Drill"],
+  ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"],
   ["scripts", "Scripts"], ["quizzes", "Quizzes"], ["browse", "Browse"], ["plan", "Plan"],
 ];
 const tabLabel = (id) => (TABS.find((t) => t[0] === id) || [, id])[1];
@@ -924,10 +933,11 @@ export default function JpnFlashcards() {
           <Characters cards={cards} />
         ) : tab === "dates" ? (
           <Dates logDay={logDay} />
-        ) : tab === "sentences" ? (
-          /* Fill-in-the-blank and translation, the only exercises that put a word in a
-             SENTENCE rather than in isolation. Fully built and previously unreachable. */
-          <Sentences cards={cards} onResult={recordResult} />
+        ) : tab === "shadow" ? (
+          /* Hear a line, say it back, check. The only place in the app that asks the
+             learner to make sound; deliberately self-rated, because scoring pronunciation
+             needs the audio analysed and a transcript cannot do it. */
+          <ShadowTab onResult={recordShadow} />
         ) : tab === "write" ? (
           /* Write keeps its render branch and its component. The tab chip is gone for now,
              not the feature — it is the only production-recall practice in the app and
@@ -939,8 +949,6 @@ export default function JpnFlashcards() {
           <TutorTab cards={cards} />
         ) : tab === "plan" ? (
           <Plan cards={cards} />
-        ) : tab === "spell" ? (
-          <Contrast cards={cards} onResult={recordResult} />
         ) : tab === "quizzes" ? (
           /* The activity books, marked against their own answer keys. Results write to
              jpn101:quiz, which the strand registry already reads. */
@@ -3710,6 +3718,33 @@ function TutorTab({ cards }) {
                 renderDialogue={(onExit) => (scripts.length
                   ? <ScriptDialogue scripts={scripts} exitLabel="Free talk" onExit={onExit} />
                   : <p className="tc-planhint">Loading the textbook scenes…</p>)} />;
+}
+
+/* Shadowing's data owner: the textbook scenes, and one place that writes its evidence.
+   Same merge the Scripts and Tutor tabs do, so all three play the same corpus. */
+function ShadowTab({ onResult }) {
+  const [scripts, setScripts] = useState([]);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      let list = [];
+      try { const r = await sGet("jpn101:scripts"); if (r) list = JSON.parse(r) || []; } catch (e) {}
+      const names = new Set(list.map((s) => s && s.name));
+      SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } });
+      try { (await loadBookScripts()).forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } }); } catch (e) {}
+      if (live) setScripts(list);
+    })();
+    return () => { live = false; };
+  }, []);
+  /* logDay counts REVIEWS with an area, not minutes — so shadowing reports itself the way
+     every other strand does, one row per line rated, filed under listening. The plan's
+     "which areas actually got worked" breakdown then includes it without being taught
+     anything new. */
+  const rated = useCallback((row) => {
+    if (onResult) onResult(row);
+    logDay({ ok: row.ok, ms: row.ms, deck: "scripts", area: "listening" });
+  }, [onResult]);
+  return <Shadow scripts={scripts} onResult={rated} />;
 }
 
 function Plan({ cards = [] }) {

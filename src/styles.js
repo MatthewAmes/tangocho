@@ -240,6 +240,30 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-objsub{grid-column:1 / -1;font-size:12px;line-height:1.5;color:var(--shu-soft);}
 .tc-objblocked{color:var(--mut-2);}
 
+/* ── shadowing ──
+   The card is mostly empty before the reveal, and that emptiness is the exercise: the line
+   is in your ears, not on the screen. Sized so the layout does not jump when the text
+   arrives — a card that grows on reveal pulls the buttons out from under your thumb. */
+.tc-shadow{display:flex;flex-direction:column;gap:12px;}
+.tc-shadowhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.tc-shadowcount{font-family:var(--mono);font-size:12px;color:var(--mut-2);}
+.tc-shadowsrc{margin-left:auto;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--mut-2);}
+.tc-shadowcard{display:flex;flex-direction:column;justify-content:center;gap:10px;
+  min-height:190px;padding:24px 16px;text-align:center;border:1px solid var(--surface-3);
+  border-radius:14px;background:var(--surface);}
+.tc-shadowcue{margin:0;font-size:18px;line-height:1.5;color:var(--washi);}
+.tc-shadowhint{margin:0;font-size:13px;line-height:1.5;color:var(--mut-2);}
+.tc-shadowline{margin:0;font-size:26px;line-height:1.75;color:var(--washi);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-shadowkana{margin:0;font-size:15px;line-height:1.6;color:var(--mut);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-shadowen{margin:0;font-size:14px;line-height:1.55;color:var(--mut-2);}
+.tc-shadowbar{display:flex;gap:8px;flex-wrap:wrap;}
+.tc-shadowbar .tc-btn{flex:1 1 auto;min-height:var(--tap);}
+.tc-shadowrate{display:flex;gap:8px;flex-wrap:wrap;}
+.tc-shadowrate .tc-btn{flex:1 1 46%;min-height:var(--tap);}
+
 /* ── placement ──
    A question at a time, then a map of the book with the probed acts marked. The result
    screen is the payoff, so it gets the space: one row per act, coloured by what was

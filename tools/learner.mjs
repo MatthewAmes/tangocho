@@ -42,6 +42,11 @@ export function skillForFormat(format) {
        conversation is using the language in context — not production, because nothing was
        generated, and not listening, because the options are on screen. */
     case "dialogue_turn": return "context";
+    /* Shadowing: hear a line, say it back. Filed under listening rather than production
+       because nothing is GENERATED — the learner is reproducing a model they just heard,
+       and calling that production would inflate the one ability this app most needs to
+       measure honestly. The saying-aloud part is carried in the modes below. */
+    case "shadow": return "listening";
     case "cloze": return "context";
     case "spell": return "orthography";
     default: return null;                  // "learn" is exposure, not evidence
@@ -140,6 +145,13 @@ export const FORMAT_MODES = {
      be answered from how it was said without understanding all of it, and claiming
      comprehension here would be exactly the overcounting this table exists to prevent. */
   listen_speaker: ["listening", "discrimination"],
+
+  /* Shadowing. Listening because it starts from sound with nothing on screen, production
+     because the learner physically says it — two demands, which is the whole reason the
+     mode table is separate from the skill. Comprehension is deliberately absent: you can
+     shadow a line accurately without understanding it, and that is a known property of
+     the technique rather than a flaw in it. Self-rated, like every grade in this app. */
+  shadow: ["listening", "production"],
 
   /* Dialogue mode (dialogue.mjs, MP-16): one turn of a conversation the learner is playing
      a side of. Its modes are DELIBERATELY the same two as script_response, because the
