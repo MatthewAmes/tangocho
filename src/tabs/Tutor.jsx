@@ -63,7 +63,12 @@ const MODE_NOTE = {
 };
 
 export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, signedIn, renderDialogue }) {
-  const [mode, setMode] = useState("free");
+  /* Open on something that WORKS. Free talk needs a signed-in session, so defaulting to it
+     meant a signed-out visitor landed on a gate with no input and nothing to press — which
+     reads as a broken tab, not as a prompt to sign in. Textbook needs no server at all, so
+     it is the honest default when there is no session: the tab is usable on arrival and
+     signing in upgrades it rather than unlocking it. */
+  const [mode, setMode] = useState(() => (signedIn ? "free" : OFFLINE));
   const [history, setHistory] = useState([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
