@@ -240,6 +240,40 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-objsub{grid-column:1 / -1;font-size:12px;line-height:1.5;color:var(--shu-soft);}
 .tc-objblocked{color:var(--mut-2);}
 
+/* ── placement ──
+   A question at a time, then a map of the book with the probed acts marked. The result
+   screen is the payoff, so it gets the space: one row per act, coloured by what was
+   actually asked, and honest grey for the acts the search never needed to touch. */
+.tc-place{display:flex;flex-direction:column;gap:12px;}
+.tc-placehead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.tc-placeprog{font-family:var(--mono);font-size:12px;color:var(--mut-2);}
+.tc-placewhere{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut-2);}
+.tc-placecard{padding:26px 16px;text-align:center;border:1px solid var(--surface-3);
+  border-radius:14px;background:var(--surface);}
+.tc-placeterm{margin:0;font-size:34px;line-height:1.3;color:var(--washi);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-placeread{margin:8px 0 0;font-size:16px;color:var(--mut-2);
+  font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
+.tc-placeopts{display:flex;flex-direction:column;gap:8px;}
+.tc-placeopts .tc-mcopt.is-right{background:rgba(16,185,129,.18);border-color:var(--ok);}
+.tc-placeopts .tc-mcopt.is-wrong{background:rgba(224,101,90,.18);border-color:var(--shu);}
+
+.tc-placesum{margin:0;font-size:16px;line-height:1.6;color:var(--washi);}
+.tc-placemap{display:flex;flex-direction:column;gap:4px;}
+.tc-placerow{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;
+  padding:6px 0;}
+.tc-placeact{font-family:var(--mono);font-size:12px;color:var(--mut);min-width:4.5em;}
+.tc-placebar{display:block;height:8px;border-radius:999px;background:var(--surface-3);
+  overflow:hidden;}
+.tc-placebar i{display:block;height:100%;width:100%;border-radius:999px;background:transparent;}
+.tc-placerow.is-solid .tc-placebar i{background:var(--ok);}
+.tc-placerow.is-mixed .tc-placebar i{background:var(--warn);}
+.tc-placerow.is-new .tc-placebar i{background:var(--shu);}
+/* An act the search never needed is not a gap in your Japanese, and must not be coloured
+   like one. */
+.tc-placerow.is-untested .tc-placebar i{background:var(--surface-4);}
+.tc-placeverdict{font-size:12px;color:var(--mut-2);white-space:nowrap;}
+
 /* ── the conversational tutor ──
    A transcript, not a chat app: the learner's turns sit right, the tutor's left, and the
    English gloss is subordinate to the Japanese rather than beside it — the Japanese is the

@@ -20,6 +20,7 @@ import Write from "./src/tabs/Write.jsx";
 import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
 import Quizzes from "./src/tabs/Quizzes.jsx";
 import Tutor from "./src/tabs/Tutor.jsx";
+import Placement from "./src/tabs/Placement.jsx";
 import Kana from "./src/tabs/Kana.jsx";
 import Browse from "./src/tabs/Browse.jsx";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
@@ -3752,6 +3753,33 @@ function Plan({ cards = [] }) {
      evenings. actProfiles buckets the evidence by act AND skill so the act's own
      objectives can each be scored against the ability they actually test. */
   const actProf = useMemo(() => actProfiles(evidence, cards, { days: 60 }), [evidence, cards]);
+
+  /* Placement. Sits at the top of Plan because this is the screen it fills in: every map
+     below reads "not measured yet" until there is evidence, and this is the fastest
+     honest way to produce some. */
+  const [placing, setPlacing] = useState(false);
+  const cardsByAct = useMemo(() => {
+    const out = {};
+    for (const c of cards || []) {
+      const a = provenanceOf(c).act;
+      if (Number.isFinite(a)) (out[a] || (out[a] = [])).push(c);
+    }
+    return out;
+  }, [cards]);
+  /* Ordinary evidence rows, the same shape a flashcard writes. Nothing downstream needs
+     to know placement exists — that is what makes the maps light up for free. */
+  /* The result has to MOVE something, or it is a quiz with a nice chart. The frontier
+     becomes the act override — the same control the learner can set by hand — so Smart
+     Review, "This lesson" and the knowledge map all point at where the placement actually
+     found them. Written as an override rather than as derived state because that is what
+     it is: a deliberate statement about position, which the learner can then change. */
+  const onPlaced = useCallback((result) => {
+    if (result && Number.isFinite(result.frontier)) update({ actOverride: result.frontier });
+  }, [update]);
+
+  const placementAnswer = useCallback(({ id, ok, ms, skill, format }) => {
+    logEvidence(makeEvidence({ id, deck: "vocab", format, skill, ok, ms, cue: CUE.CHOOSE, at: Date.now(), probe: true }));
+  }, []);
   const [mapAct, setMapAct] = useState(null);
   const shownAct = mapAct != null ? mapAct : derivedAct;
   const actObjectives = useMemo(() => {
@@ -3838,6 +3866,27 @@ function Plan({ cards = [] }) {
 
   return (
     <div className="tc-plan">
+      {/* First, because it is the thing that makes every section below say something. */}
+      <section className="tc-plansec">
+        {placing ? (
+          <Placement cardsByAct={cardsByAct} onAnswer={placementAnswer}
+                     onExit={() => setPlacing(false)} onDone={onPlaced} />
+        ) : (
+          <>
+            <h2 className="tc-planh">Find my level
+              <span className="tc-planh-sub">~25 questions</span></h2>
+            <p className="tc-planhint">
+              {evidence.length < 20
+                ? "The maps below have almost nothing to go on yet. This fills them in properly in a few minutes — it jumps around the book to find where you actually are, rather than starting at Act 1."
+                : "Re-check where you stand. It probes across the book and writes real evidence, so everything below updates from it."}
+            </p>
+            <button className="tc-btn tc-start tc-smart-btn" onClick={() => setPlacing(true)}>
+              {evidence.length < 20 ? "Find my level" : "Re-check my level"}
+            </button>
+          </>
+        )}
+      </section>
+
       <section className="tc-plansec">
         <h2 className="tc-planh">Why you're doing this</h2>
         <p className="tc-planhint">

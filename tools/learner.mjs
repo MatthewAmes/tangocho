@@ -321,9 +321,15 @@ export function parseRecovery(tag) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue, got, want }) {
+export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue, got, want, probe }) {
   return {
     id, deck, format,
+    /* An app-initiated probe rather than something the learner chose to study. Real
+       evidence of ability -- profileFrom and the posteriors count it like any other row
+       -- but NOT evidence of where they are in the book, which is the one reading that
+       would be wrong. Absent on every row written before placement existed, and absent
+       reads as "not a probe", which is correct for all of them. */
+    ...(probe ? { probe: true } : {}),
     skill: skill || skillForFormat(format),
     /* DERIVED from the format rather than demanded from the caller, so tagging every
        answer with what it actually asked for costs no change at the one place evidence is

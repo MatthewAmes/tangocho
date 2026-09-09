@@ -318,7 +318,15 @@ export function currentAct(evidence = [], cards = [], opts = {}) {
   const reached = (act) => { if (act !== null && (latest === null || act > latest)) latest = act; };
   // The deck's own history first: `seen` is lifetime and survives an evidence log that does not.
   for (const card of cards || []) if (card && (card.seen > 0 || card.rseen > 0)) reached(actOfId.get(card.id) ?? null);
-  for (const row of evidence || []) if (row && row.id != null) reached(actOfId.get(row.id) ?? null);
+  /* "Latest act with ANY evidence" is the rule, and a single card drilled out of
+     curiosity moving the position is the documented sharp edge of it — the plan's manual
+     override is the fix for that, not a threshold here.
+
+     PROBES ARE THE EXCEPTION, and a narrow one. Placement deliberately asks about acts
+     the learner has not met; failing every Act 10 question was reading as "working in
+     Act 10", which is the opposite of what happened. The distinction is who chose the
+     card: a learner drilling ahead is a signal, an app testing ahead is not. */
+  for (const row of evidence || []) if (row && row.id != null && !row.probe) reached(actOfId.get(row.id) ?? null);
   return latest;
 }
 
