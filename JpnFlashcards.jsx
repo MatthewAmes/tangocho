@@ -22,6 +22,8 @@ import Quizzes from "./src/tabs/Quizzes.jsx";
 import Tutor from "./src/tabs/Tutor.jsx";
 import Placement from "./src/tabs/Placement.jsx";
 import Shadow from "./src/tabs/Shadow.jsx";
+import NearMiss from "./src/tabs/NearMiss.jsx";
+import { followUpFor, liveReserve, markFixed } from "./tools/nearmiss.mjs";
 import Kana from "./src/tabs/Kana.jsx";
 import Browse from "./src/tabs/Browse.jsx";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
@@ -492,6 +494,23 @@ async function logDay({ ok, ms, deck, fnew, dnew, area }) {
    `shadow` format so learner.mjs files it under listening with production in its modes.
    No card id exists for a dialogue line, so the line's own key is used — the profiles
    care about the skill, and only currentAct joins evidence back to cards. */
+/* One writer for checkpoint follow-up answers, shared by the Study screen and the Checkpoint
+   result screen so the two entrances cannot record the same answer two different ways.
+   The card update goes through the normal answer path (production direction), which is
+   what puts the word into the ordinary review schedule; the evidence row carries what was
+   typed and what was wanted, and a confusion when the typed answer was another deck word. */
+function recordFollowUp(onResult, item, ok, ms, firstPass, kana) {
+  const id = item.card.id;
+  const failure = ok ? null : classifyFailure({ format: "type", expected: item.want, got: kana || "" });
+  if (onResult) onResult(id, ok, "prod", ms, areaForDeck("class"), { failure, skill: "production" }, firstPass);
+  logEvidence(makeEvidence({
+    id, deck: "vocab", format: "type", skill: "production", ok, ms, at: Date.now(), failure,
+    got: ok ? null : (kana || null), want: ok ? null : item.want,
+    confused: ok ? null : ((item.other && item.other.id) || null),
+    recovery: "checkpoint",
+  }));
+}
+
 function recordShadow({ id, ok, ms }) {
   logEvidence(makeEvidence({ id: "shadow:" + id, deck: "scripts", format: "shadow", ok, ms, at: Date.now() }));
 }
@@ -948,7 +967,7 @@ export default function JpnFlashcards() {
              cf/src/ai.js owns every instruction, same as every other AI call here. */
           <TutorTab cards={cards} />
         ) : tab === "plan" ? (
-          <Plan cards={cards} />
+          <Plan cards={cards} onResult={recordResult} />
         ) : tab === "quizzes" ? (
           /* The activity books, marked against their own answer keys. Results write to
              jpn101:quiz, which the strand registry already reads. */
@@ -974,6 +993,11 @@ export default function JpnFlashcards() {
 
 /* ───────────────────────────── STUDY ───────────────────────────── */
 function Study({ cards, onResult, goAdd, onMnemonic }) {
+  /* Checkpoint history: which test words are spent (and so back in study), and the latest
+     run's misses for the follow-up. Re-read whenever the follow-up closes. */
+  const [benchRuns, setBenchRuns] = useState([]);
+  const [fixing, setFixing] = useState(null);
+  useEffect(() => { if (!fixing) loadRuns().then(setBenchRuns); }, [fixing]);
   const [showRomaji, setShowRomaji] = useState(false); // front rōmaji on/off
   const [showPitch, setShowPitch] = useState(true);    // back pitch ⸢ ⸣ marks on/off
   const [queue, setQueue] = useState([]);              // working order; missed cards get re-inserted
@@ -1279,7 +1303,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   /* The words quarantined for the checkpoint this quarter. Derived from the deck and the
      calendar rather than stored, so every device agrees without syncing and a wiped setting
      cannot quietly let the test words back into study. */
-  const heldOut = useMemo(() => reserveFor(cards, cycleFor()), [cards]);
+  const heldOut = useMemo(() => liveReserve(reserveFor(cards, cycleFor()), benchRuns), [cards, benchRuns]);
+  const followUp = useMemo(() => followUpFor(benchRuns, cards), [benchRuns, cards]);
 
   const smartPicks = useMemo(() => {
     /* Parked words are out of circulation, not deleted. Every mined word displaced one, so
@@ -2298,6 +2323,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     );
   }
 
+  if (!running && fixing) {
+    return (
+      <div className="tc-study-setup">
+        <NearMiss items={fixing.items} cards={cards}
+                  onAnswer={(item, ok, ms, firstPass, kana) => recordFollowUp(onResult, item, ok, ms, firstPass, kana)}
+                  onFinish={async (ids) => {
+                    const saved = markFixed(await loadRuns(), fixing.run.at, ids);
+                    await saveRuns(saved);
+                    setFixing(null);
+                  }} />
+      </div>
+    );
+  }
+
   if (!running) {
     return (
       <div className="tc-study-setup">
@@ -2417,6 +2456,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         {leeches.length > 0 && (
           <button className="tc-btn tc-start tc-troublebtn" onClick={() => start(leeches.slice(0, 12), false, { leechSession: true })}>
             🩹 Trouble words · {leeches.length} stuck
+          </button>
+        )}
+        {/* The last checkpoint's misses, near misses first. Offered here because this is
+            the screen that is opened every day; the checkpoint itself is run a few times a
+            quarter, and a follow-up that only lived on its result screen would be seen once. */}
+        {followUp.items.length > 0 && (
+          <button className="tc-btn tc-start tc-troublebtn" onClick={() => setFixing(followUp)}>
+            🎯 Almost had them · {followUp.items.length} from your checkpoint
           </button>
         )}
 
@@ -3357,8 +3404,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
    never disagree about what an answer became. */
 const kanaOf = (v) => { try { return toKana(String(v || "").trim()); } catch (e) { return String(v || "").trim(); } };
 
-function Checkpoint({ cards = [], heldOut }) {
+function Checkpoint({ cards = [], heldOut, onResult }) {
   const [runs, setRuns] = useState(null);
+  const [fixing, setFixing] = useState(null);
   const [phase, setPhase] = useState("idle");     // idle | running | done
   const [seed, setSeed] = useState(0);
   const [at, setAt] = useState(0);
@@ -3368,10 +3416,13 @@ function Checkpoint({ cards = [], heldOut }) {
   const inputRef = useRef(null);
 
   useEffect(() => { loadRuns().then(setRuns); }, []);
+  /* Words already asked this cycle are spent: they have rejoined study, so a later run must
+     not ask them again. What is left is still a uniform draw from the deck. */
+  const reserve = useMemo(() => liveReserve(heldOut || new Set(), runs || []), [heldOut, runs]);
 
   const questions = useMemo(
-    () => (phase === "running" ? sampleFor(cards, heldOut, RUN_SIZE, seed) : []),
-    [phase, cards, heldOut, seed],
+    () => (phase === "running" ? sampleFor(cards, reserve, RUN_SIZE, seed) : []),
+    [phase, cards, reserve, seed],
   );
 
   useEffect(() => { if (phase === "running" && inputRef.current) inputRef.current.focus(); }, [phase, at]);
@@ -3405,6 +3456,18 @@ function Checkpoint({ cards = [], heldOut }) {
       setResult({ run: r, est, cmp, text: describeRun(r, est, cmp) });
       const saved = pushRun(runs || [], r);
       setRuns(saved); saveRuns(saved);
+      /* The run as evidence, flagged as a probe: thirty cold production answers are the
+         best measurement of that skill this app ever takes, and they should reach the
+         learner model — but they are not study, and must not read as the learner's
+         position in the book. */
+      const at = Date.now();
+      for (const d of r.detail) {
+        logEvidence(makeEvidence({
+          id: d.id, deck: "vocab", format: "type", skill: "production", ok: d.ok, at, probe: true,
+          failure: d.ok ? null : classifyFailure({ format: "type", expected: d.reading || d.term, got: d.got || "" }),
+          got: d.ok ? null : (d.got || null), want: d.ok ? null : (d.reading || d.term),
+        }));
+      }
       setPhase("done");
     } else setAt(at + 1);
   };
@@ -3451,15 +3514,31 @@ function Checkpoint({ cards = [], heldOut }) {
     );
   }
 
+  if (fixing) {
+    return (
+      <NearMiss items={fixing.items} cards={cards}
+                onAnswer={(item, ok, ms, firstPass, kana) => recordFollowUp(onResult, item, ok, ms, firstPass, kana)}
+                onFinish={(ids) => {
+                  const saved = markFixed(runs || [], fixing.run.at, ids);
+                  setRuns(saved); saveRuns(saved);
+                  setFixing(null); setPhase("idle");
+                }} />
+    );
+  }
+
   if (phase === "done" && result) {
     const missed = result.run.detail.filter((d) => !d.ok);
+    const follow = followUpFor(runs || [], cards);
     return (
       <section className="tc-plansec">
         <h2 className="tc-planh">Checkpoint <span className="tc-planh-sub">{result.run.ok} of {result.run.n} cold</span></h2>
         <p className="tc-planhint" style={{ marginTop: 0 }}>{result.text}</p>
         {missed.length > 0 && (
           <>
-            <p className="tc-planhint">These are the ones you did not have. They go back into normal study now:</p>
+            <p className="tc-planhint">
+              These are the ones you did not have. Every word this test asked is back in normal study
+              now{result.run.near > 0 ? ` — and the ${result.run.near} one character off are the cheapest words you have to finish learning` : ""}.
+            </p>
             <div className="tc-checkmiss">
               {missed.map((d) => (
                 <div key={d.id} className="tc-checkmissrow">
@@ -3474,12 +3553,19 @@ function Checkpoint({ cards = [], heldOut }) {
             </div>
           </>
         )}
-        <div className="tc-checkrow"><button className="tc-btn" onClick={() => setPhase("idle")}>Done</button></div>
+        <div className="tc-checkrow">
+          {follow.items.length > 0 && (
+            <button className="tc-btn tc-btn-primary" onClick={() => setFixing(follow)}>
+              Fix them now · {follow.items.length} words, about {Math.max(2, Math.round(follow.items.length / 3))} min
+            </button>
+          )}
+          <button className="tc-btn" onClick={() => setPhase("idle")}>Done</button>
+        </div>
       </section>
     );
   }
 
-  const available = cards.filter((c) => heldOut && heldOut.has(c.id) && askable(c)).length;
+  const available = cards.filter((c) => reserve.has(c.id) && askable(c)).length;
   return (
     <section className="tc-plansec">
       <h2 className="tc-planh">Where you actually are <span className="tc-planh-sub">a test this app cannot flatter</span></h2>
@@ -3749,7 +3835,7 @@ function ShadowTab({ onResult }) {
   return <Shadow scripts={scripts} onResult={rated} />;
 }
 
-function Plan({ cards = [] }) {
+function Plan({ cards = [], onResult }) {
   const [plan, setPlan] = useState(PLAN_DEFAULT);
   const [days, setDays] = useState(null);
   const [draft, setDraft] = useState("");
@@ -4463,7 +4549,7 @@ function Plan({ cards = [] }) {
         )}
       </section>
 
-      <Checkpoint cards={cards} heldOut={heldOut} />
+      <Checkpoint cards={cards} heldOut={heldOut} onResult={onResult} />
 
       <section className="tc-plansec">
         <h2 className="tc-planh">Is the app right about you? <span className="tc-planh-sub">its predictions vs what happened</span></h2>

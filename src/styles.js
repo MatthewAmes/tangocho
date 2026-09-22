@@ -635,6 +635,19 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-checkread{opacity:.75}
 .tc-checken{opacity:.6;flex:1 1 120px}
 .tc-checkgot{opacity:.5;font-size:13px}
+/* checkpoint follow-up (src/tabs/NearMiss.jsx): the answer with the slipped sounds marked */
+.tc-nmshow{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.tc-nmanswer{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.tc-nmword{font-size:24px;letter-spacing:.04em}
+.tc-nmword .is-miss{color:var(--warn);text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:2px}
+.tc-nmgot{margin:0;font-size:13px;color:var(--mut)}
+.tc-nmnote{margin:0;font-size:15px;line-height:1.45}
+.tc-nmright{margin:10px 0 0;font-size:18px;color:var(--ok);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.tc-nmpair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tc-nmpair>div{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.tc-nmpair>div>span:first-child{font-size:20px}
+.tc-nmpair>div>span:last-child{font-size:13px;color:var(--mut)}
+.tc-nmpair>div:first-child{border-color:var(--ok)}
 .tc-checkgot.is-near{opacity:.85}
 .tc-planfield{display:flex;flex-direction:column;gap:5px;}
 .tc-planfield span{font-size:13px;color:rgba(255,255,255,.75);}

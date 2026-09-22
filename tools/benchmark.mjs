@@ -231,6 +231,15 @@ export function describeRun(run, est, cmp) {
 export const HISTORY_CAP = 40;
 export function pushRun(history = [], run) {
   const list = Array.isArray(history) ? history.slice() : [];
-  list.push({ at: run.at, n: run.n, ok: run.ok, near: run.near, blank: run.blank, scope: run.scope || "vocab" });
+  /* `asked` and `missed` were not kept until 2026-09-22, and the result screen's list of
+     misses died with the screen. `asked` releases those words from the quarantine (see
+     tools/nearmiss.mjs); `missed` is the follow-up. Both are ids plus a short answer, so
+     forty runs of them stay a few kilobytes. */
+  const detail = Array.isArray(run.detail) ? run.detail : [];
+  list.push({
+    at: run.at, n: run.n, ok: run.ok, near: run.near, blank: run.blank, scope: run.scope || "vocab",
+    asked: detail.map((d) => d.id),
+    missed: detail.filter((d) => !d.ok).map((d) => ({ id: d.id, got: String(d.got || "").slice(0, 24), near: !!d.near })),
+  });
   return list.slice(-HISTORY_CAP);
 }
