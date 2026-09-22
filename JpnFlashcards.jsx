@@ -3521,7 +3521,6 @@ function Checkpoint({ cards = [], heldOut }) {
    it accepts the sentence that was written and shows the difference when they diverge. */
 // Tile keys are text + NUL + index: NUL because it cannot occur inside a tile, where a
 // space can — と か would split at the wrong place and grade a correct answer as wrong.
-const TILE_SEP = String.fromCharCode(0);
 
 /* The tile surface, on its own so the session and the post-session block are the same
    exercise rather than two that look alike. It owns what the learner has assembled and
@@ -3683,6 +3682,28 @@ const fmtLabel = (k) => FORMAT_LABEL[k] || (k ? k[0].toUpperCase() + k.slice(1) 
 /* The tutor tab's data owner. Evidence lives per-tab in this app rather than in the root,
    so this mirrors what Plan already does: load once, then follow the subscription. The
    component below is presentation; tools/tutor.mjs decides what the tutor is told. */
+/* The textbook scenes as every read-only consumer should see them: whatever the learner
+   has stored, plus the seeded scripts, plus the parsed book scenes, merged by NAME so a
+   scene already present is never replaced by a parsed copy. Tutor and Shadow each carried
+   this verbatim; two copies of a merge rule are two chances for them to disagree about
+   which scenes exist. The Scripts tab keeps its own version because it also WRITES the
+   merged list back to storage, which a reader must never do. */
+function useMergedScripts() {
+  const [scripts, setScripts] = useState([]);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      let list = [];
+      try { const r = await sGet("jpn101:scripts"); if (r) list = JSON.parse(r) || []; } catch (e) {}
+      const names = new Set(list.map((s) => s && s.name));
+      SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } });
+      try { (await loadBookScripts()).forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } }); } catch (e) {}
+      if (live) setScripts(list);
+    })();
+    return () => { live = false; };
+  }, []);
+  return scripts;
+}
 function TutorTab({ cards }) {
   const [evidence, setEvidence] = useState([]);
   useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
@@ -3701,19 +3722,7 @@ function TutorTab({ cards }) {
   /* The textbook scenes, for the mode that needs no server. Same merge the Scripts tab
      does — the seeded scripts plus the parsed book scenes — so both entrances play the
      same corpus rather than two drifting copies of it. */
-  const [scripts, setScripts] = useState([]);
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      let list = [];
-      try { const r = await sGet("jpn101:scripts"); if (r) list = JSON.parse(r) || []; } catch (e) {}
-      const names = new Set(list.map((s) => s && s.name));
-      SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } });
-      try { (await loadBookScripts()).forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } }); } catch (e) {}
-      if (live) setScripts(list);
-    })();
-    return () => { live = false; };
-  }, []);
+  const scripts = useMergedScripts();
   return <Tutor evidence={evidence} cards={cards} minutes={minutes} callAI={callAI} signedIn={signedIn}
                 renderDialogue={(onExit) => (scripts.length
                   ? <ScriptDialogue scripts={scripts} exitLabel="Free talk" onExit={onExit} />
@@ -3723,19 +3732,7 @@ function TutorTab({ cards }) {
 /* Shadowing's data owner: the textbook scenes, and one place that writes its evidence.
    Same merge the Scripts and Tutor tabs do, so all three play the same corpus. */
 function ShadowTab({ onResult }) {
-  const [scripts, setScripts] = useState([]);
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      let list = [];
-      try { const r = await sGet("jpn101:scripts"); if (r) list = JSON.parse(r) || []; } catch (e) {}
-      const names = new Set(list.map((s) => s && s.name));
-      SCRIPT_SEED.forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } });
-      try { (await loadBookScripts()).forEach((s) => { if (!names.has(s.name)) { list = [...list, s]; names.add(s.name); } }); } catch (e) {}
-      if (live) setScripts(list);
-    })();
-    return () => { live = false; };
-  }, []);
+  const scripts = useMergedScripts();
   /* logDay counts REVIEWS with an area, not minutes — so shadowing reports itself the way
      every other strand does, one row per line rated, filed under listening. The plan's
      "which areas actually got worked" breakdown then includes it without being taught
@@ -5042,7 +5039,6 @@ function kanjiUnlocked(all, stats) {
    kanji matching grid, the conjugation drill — stay where they are, because they are the
    whole point of those tabs. What Smart Review adds is the thing none of them can do:
    noticing that a kana you have not seen since June has quietly faded. */
-const DECK_SRC = ["kana", "kanji", "conj", "dates", "quiz", "freq"];
 
 function foreignKey(src) {
   if (src === "kana") return KANA_KEY;
@@ -5543,264 +5539,10 @@ async function callAI(task, input) {
     throw new AIError(0, aiMessage(0));
   } finally { clearTimeout(timer); }
 }
-/* The vocabulary the sentence tasks build from.
 
-   Sampled, not sent whole: the deck is 1,632 words and the old client-side prompt pasted
-   every one of them into the request. A sample also means each call hashes to a different
-   cache key, which is what you want here — a cached sentence exercise would hand back the
-   same sentence every time you pressed Generate.
-
-   Weighted toward words that are actually in play: anything seen at least once, so the
-   sentence is built from HIS vocabulary rather than whatever sorts first. */
-function vocabSample(cards, n = 40) {
-  /* Studied words ONLY — never padded out with unseen ones to reach n. A sentence built
-     from words you have not met is unanswerable however natural it reads, so a short
-     vocabulary of known words beats a full one that smuggles in strangers. */
-  const seen = cards.filter((c) => (c.seen || 0) > 0);
-  const pool = seen.length ? seen : cards;
-  const picked = pool.slice();
-  for (let i = picked.length - 1; i > 0; i--) {          // Fisher-Yates, fresh each press
-    const j = Math.floor(Math.random() * (i + 1));
-    [picked[i], picked[j]] = [picked[j], picked[i]];
-  }
-  return picked.slice(0, n).map((c) => ({ term: c.term, reading: c.reading, meaning: c.meaning }));
-}
-
-const NOUN_SET = new Set(["猫", "犬", "学校", "食べ物", "仕事", "写真", "子供", "睡眠", "健康"]);
 function shortMeaning(m) { return (m || "").split(/[;(（,]/)[0].trim(); }
-/* Pick a word to be asked to PRODUCE.
-
-   Only from words actually studied. This sorted the entire deck weakest-first and took from
-   the weakest half — and since an unseen card scores lower than any seen one, "weakest" meant
-   "never shown to you". With 1,590 unstudied words in the deck the tab was, essentially
-   always, asking for a word it had never taught. That is not a hard question, it is an
-   unanswerable one, and the honest complaint was "how would I know that".
-
-   Weak-first is still right, but only WITHIN what has been met at least once. */
-function pickTarget(cards) {
-  const studied = cards.filter((c) => (c.seen || 0) > 0);
-  if (!studied.length) return null;                    // caller shows the nudge instead
-  const sorted = studied.sort((a, b) => masteryScore(a) - masteryScore(b));
-  const pool = sorted.slice(0, Math.max(5, Math.ceil(sorted.length / 2)));
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-function localFill(cards) {
-  const c = pickTarget(cards);
-  if (!c) throw new Error("no studied words yet");
-  if (NOUN_SET.has(c.term)) {
-    return {
-      tokens: [{ t: "＿＿＿" }, { t: "がすきです。" }],
-      fullTokens: [{ t: c.term, r: c.reading }, { t: "がすきです。" }],
-      answer: c.term, reading: c.reading, romaji: c.romaji,
-      translation: "I like " + shortMeaning(c.meaning) + ".",
-      hint: c.romaji ? "starts with “" + c.romaji[0] + "”" : "", _local: true,
-    };
-  }
-  return {
-    tokens: [{ t: "＿＿＿" }],
-    fullTokens: [{ t: c.term, r: c.reading }],
-    answer: c.term, reading: c.reading, romaji: c.romaji,
-    translation: "Say in Japanese: " + shortMeaning(c.meaning),
-    hint: c.romaji ? "starts with “" + c.romaji[0] + "”" : "", _local: true,
-  };
-}
-function localTrans(cards) {
-  const c = pickTarget(cards);
-  if (!c) throw new Error("no studied words yet");
-  if (NOUN_SET.has(c.term)) {
-    return {
-      english: "I like " + shortMeaning(c.meaning) + ".",
-      model: c.term + "がすきです。",
-      modelTokens: [{ t: c.term, r: c.reading }, { t: "がすきです。" }],
-      reading: c.reading + "がすきです", romaji: (c.romaji || "") + " ga suki desu", notes: "", _local: true,
-    };
-  }
-  return {
-    english: "Say in Japanese: " + shortMeaning(c.meaning),
-    model: c.term, modelTokens: [{ t: c.term, r: c.reading }],
-    reading: c.reading, romaji: c.romaji, notes: "", _local: true,
-  };
-}
 
 
-function Sentences({ cards, onResult }) {
-  const [mode, setMode] = useState("fill");
-  const [loading, setLoading] = useState(false);
-  const [grading, setGrading] = useState(false);
-  const [ex, setEx] = useState(null);
-  const [answer, setAnswer] = useState("");
-  const [checked, setChecked] = useState(false);
-  const [result, setResult] = useState(null);
-  const [showHint, setShowHint] = useState(false);
-  const [error, setError] = useState("");
-  const [offline, setOffline] = useState(false);
-
-  /* One exercise of lookahead. A live generation costs seconds even on a good day, and the
-     student spends far longer answering than the model spends writing — so the next
-     exercise is requested the moment the current one is on screen, and "Next sentence"
-     usually finds it already waiting. One deep, per mode. A failed prefetch resolves to
-     null and simply means the button pays the old price; it never surfaces an error of its
-     own. Prefetching only follows a LIVE success, so a signed-out or offline session never
-     spawns a background call it knows will fail. */
-  const nextRef = useRef({});
-  const fetchExercise = useCallback(
-    (m) => callAI(m === "fill" ? "sentence_fill" : "sentence_trans", { vocab: vocabSample(cards) }),
-    [cards]);
-  const prefetch = useCallback((m) => {
-    if (!nextRef.current[m]) nextRef.current[m] = fetchExercise(m).catch(() => null);
-  }, [fetchExercise]);
-
-  const generate = useCallback(async () => {
-    setLoading(true); setError(""); setOffline(false); setEx(null); setChecked(false);
-    setAnswer(""); setResult(null); setShowHint(false);
-    const pending = nextRef.current[mode];
-    nextRef.current[mode] = null;
-    try {
-      const got = pending ? await pending : null;   // null when there was no prefetch, or it failed
-      const { result } = got || await fetchExercise(mode);
-      setEx(result);
-      prefetch(mode);                               // start writing the one after, while this one is answered
-    } catch (e) {
-      try {                                  // live generator unreachable → build one locally from the deck
-        setEx(mode === "fill" ? localFill(cards) : localTrans(cards));
-        /* Say WHY, not just that it fell back. "Isn't reachable right now" reads as a server
-           problem, so a signed-out session looked identical to an outage — and that ambiguity
-           hid a genuinely broken endpoint for as long as it took someone to notice the tab
-           had never once produced a live sentence. */
-        setOffline(e && e.message ? e.message : "");
-      } catch (e2) {
-        setError("Couldn't generate (" + (e.message || "error") + "). Tap “Generate” to retry.");
-      }
-    } finally { setLoading(false); }
-  }, [mode, cards, fetchExercise, prefetch]);
-
-  const switchMode = (m) => { setMode(m); setEx(null); setChecked(false); setAnswer(""); setResult(null); setError(""); setOffline(false); };
-
-  const checkFill = () => {
-    const ok = fillMatch(ex, answer);
-    setResult({ correct: ok });
-    setChecked(true);
-    const card = cards.find((c) => c.term === ex.answer);
-    if (card) onResult(card.id, ok);
-  };
-
-  const skipFill = () => {
-    setResult({ correct: false, idk: true });
-    setChecked(true);
-    const card = cards.find((c) => c.term === ex.answer);
-    if (card) onResult(card.id, false);   // "Idk" counts as a miss → flags the word as weak
-  };
-
-  const checkTranslate = async () => {
-    if (ex._local) { setResult({}); setChecked(true); return; }   // offline item: just reveal the model answer
-    setGrading(true); setError("");
-    try {
-      const { result } = await callAI("sentence_grade", { english: ex.english, model: ex.model, answer });
-      setResult(result);
-    } catch (e) {
-      setResult({ feedback: "(Couldn't reach the grader — compare with the model answer below.)" });
-    } finally { setGrading(false); setChecked(true); }
-  };
-
-  if (cards.length < 3) {
-    return <div className="tc-empty"><p>Add a few more words first — sentence practice needs some vocabulary to work with.</p></div>;
-  }
-  /* Sentence practice asks you to PRODUCE Japanese, which only works for words you have
-     actually met. Saying so beats generating an exercise from words the app has never
-     shown you and letting you conclude you should have known them. */
-  if (cards.filter((c) => (c.seen || 0) > 0).length < 5) {
-    return (
-      <div className="tc-empty">
-        <p>Study a few words first — sentence practice only uses vocabulary you've already seen,
-        so it needs a handful under your belt before it can ask you to write anything.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="tc-sent">
-      <div className="tc-sentmodes">
-        <button className={"tc-segbtn" + (mode === "fill" ? " is-on" : "")} onClick={() => switchMode("fill")}>Fill in the blank</button>
-        <button className={"tc-segbtn" + (mode === "translate" ? " is-on" : "")} onClick={() => switchMode("translate")}>Translate</button>
-      </div>
-
-      {error && <div className="tc-senterr">{error}</div>}
-      {offline && ex && (
-        <p className="tc-offnote">
-          Offline practice — built from your deck.{typeof offline === "string" && offline ? " " + offline : ""}
-        </p>
-      )}
-
-      {!ex && !loading && (
-        <div className="tc-sentempty">
-          <p>Claude builds a sentence from your own vocabulary, then quizzes you on it.</p>
-          <button className="tc-btn tc-btn-primary" onClick={generate}>Generate a sentence</button>
-        </div>
-      )}
-
-      {loading && <div className="tc-sentloading">✦ Claude is writing a sentence from your words…</div>}
-
-      {ex && mode === "fill" && (
-        <div className="tc-card2">
-          <p className="tc-sentgoal">{ex.translation}</p>
-          <p className="tc-sentjp"><Furigana tokens={ex.tokens || ex.sentence} /></p>
-          {!checked ? (
-            <>
-              <input aria-label="Your answer" className="tc-sentinput" value={answer} autoFocus
-                placeholder="the missing word — kana, kanji, or rōmaji"
-                onChange={(e) => setAnswer(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && answer.trim()) checkFill(); }} />
-              <div className="tc-sentbtns">
-                {ex.hint && <button className="tc-btn tc-btn-sm" onClick={() => setShowHint(true)}>Hint</button>}
-                <button className="tc-btn tc-btn-sm tc-idk" onClick={skipFill}>I don't know</button>
-                <button className="tc-btn tc-btn-primary" onClick={checkFill} disabled={!answer.trim()}>Check</button>
-              </div>
-              {showHint && <p className="tc-senthint">💡 {ex.hint}</p>}
-            </>
-          ) : (
-            <>
-              <p className={"tc-sentresult " + (result.correct ? "ok" : result.idk ? "mid" : "no")}>
-                {result.correct ? "✓ Correct!" : result.idk ? "○ Marked for review" : "✕ Not quite"}
-              </p>
-              <p className="tc-sentjp tc-sentfull"><Furigana tokens={ex.fullTokens || ex.full} /></p>
-              <p className="tc-sentans">{ex.answer}（{ex.reading}）· {ex.romaji}</p>
-              <button className="tc-btn tc-btn-primary" onClick={generate}>Next sentence</button>
-            </>
-          )}
-        </div>
-      )}
-
-      {ex && mode === "translate" && (
-        <div className="tc-card2">
-          <p className="tc-eyebrow">Translate into Japanese</p>
-          <p className="tc-sentgoal tc-sentbig">{ex.english}</p>
-          {!checked ? (
-            <>
-              <textarea aria-label="Your answer" className="tc-sentinput" rows={2} value={answer} autoFocus
-                placeholder="write it in Japanese…" onChange={(e) => setAnswer(e.target.value)} />
-              <div className="tc-sentbtns">
-                <button className="tc-btn tc-btn-sm" onClick={() => { setResult({}); setChecked(true); }}>Show answer</button>
-                <button className="tc-btn tc-btn-primary" onClick={checkTranslate} disabled={!answer.trim() || grading}>{grading ? "Checking…" : "Check"}</button>
-              </div>
-            </>
-          ) : (
-            <>
-              {result && result.rating && (
-                <p className={"tc-sentresult " + (result.rating === "correct" ? "ok" : result.rating === "close" ? "mid" : "no")}>
-                  {result.rating === "correct" ? "✓ Correct" : result.rating === "close" ? "≈ Close" : "✕ Off"}
-                </p>
-              )}
-              {result && result.feedback && <p className="tc-sentfeedback">{result.feedback}</p>}
-              <p className="tc-sentans">Model: <Furigana tokens={ex.modelTokens || ex.model} />（{ex.reading}）</p>
-              {ex.notes && <p className="tc-senthint">💡 {ex.notes}</p>}
-              <button className="tc-btn tc-btn-primary" onClick={generate}>Next sentence</button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 
 
@@ -5819,112 +5561,6 @@ const fmtSecs = (ms) => {
   return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
 };
 
-/* ── spelling contrast ──
-   The one drill in the app that tests orthography directly. A learner can know 学校 as
-   meaning-plus-sound and still write がこう every time, and nothing else here would ever
-   notice: recognition cards keep coming back correct. Options differ from the right answer
-   by exactly one feature, so the contrast itself is the question. */
-function Contrast({ cards, onResult }) {
-  const [round, setRound] = useState(0);
-  const [pos, setPos] = useState(0);
-  const [picked, setPicked] = useState(null);
-  const [right, setRight] = useState(0);
-  const shownRef = useRef(0);
-
-  /* Weakest first, same ordering rule the rest of the app uses, filtered to cards that
-     actually have something to contrast (about 86% of the deck).
-
-     Built ONCE per round, not as a memo over `cards`. Answering calls recordResult, which
-     replaces the deck array, which would recompute the memo and reshuffle the list under
-     the learner mid-answer — the result panel ended up rendering against a different word
-     than the one just answered. */
-  const buildDrills = useCallback(() => {
-    const pool = cards
-      .filter((c) => (c.seen || 0) > 0 || (c.level || 0) > 0)
-      .slice()
-      .sort((a, b) => masteryScore(a) - masteryScore(b));
-    const src = pool.length >= 8 ? pool : cards.slice();
-    return contrastSet(src, 12, { seed: round * 31 });
-  }, [cards, round]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const [drills, setDrills] = useState(buildDrills);
-  const nextRound = () => {
-    const r = round + 1;
-    setRound(r);
-    const pool = cards.filter((c) => (c.seen || 0) > 0 || (c.level || 0) > 0)
-      .slice().sort((a, b) => masteryScore(a) - masteryScore(b));
-    setDrills(contrastSet(pool.length >= 8 ? pool : cards.slice(), 12, { seed: r * 31 }));
-    setPos(0); setRight(0);
-  };
-
-  const d = pos < drills.length ? drills[pos] : null;
-  useEffect(() => { shownRef.current = Date.now(); setPicked(null); }, [pos, round]);
-
-  const choose = (opt) => {
-    if (picked || !d) return;
-    const ok = opt === d.answer;
-    setPicked(opt);
-    if (ok) setRight((n) => n + 1);
-    const ms = Date.now() - shownRef.current;
-    onResult(d.id, ok, undefined, ms, "writing",
-             { failure: ok ? null : "orthography", skill: "production" });
-  };
-
-  if (!drills.length) {
-    return <div className="tc-empty"><p>Nothing to contrast yet — study a few words first and they will show up here.</p></div>;
-  }
-  if (!d) {
-    const pct = drills.length ? Math.round((right / drills.length) * 100) : 0;
-    return (
-      <div className="tc-done">
-        <p className="tc-eyebrow">Spelling round complete</p>
-        <div className="tc-bignum">{pct}<span>%</span></div>
-        <p className="tc-donesub">{right}/{drills.length} spelled right</p>
-        <div className="tc-donebtns">
-          <button className="tc-btn tc-btn-primary" onClick={nextRound}>Another round</button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="tc-study">
-      <div className="tc-progress">
-        <div className="tc-segrail" role="progressbar" aria-valuemin={0} aria-valuemax={drills.length} aria-valuenow={pos}>
-          {drills.map((_, i) => (
-            <span key={i} className={"tc-seg2" + (i === pos ? " is-now" : i < pos ? " is-ok" : "")} />
-          ))}
-        </div>
-        <span className="tc-progtext">{pos + 1} / {drills.length}</span>
-      </div>
-
-      <div className="tc-mcwrap" style={masteryStyle(d)}>
-        <span className="tc-kindchip tc-clozechip">{d.label}</span>
-        {d.emoji && <div className="tc-emoji tc-emoji-lg">{d.emoji}</div>}
-        <div className={"tc-term" + (d.term.length <= 5 ? " tc-term-" + d.term.length : "")}>{d.term}</div>
-        {d.meaning && <p className="tc-clozeen">{d.meaning}</p>}
-        <p className="tc-conjnote" style={{ marginTop: 0 }}>Which spelling is right?</p>
-        <div className="tc-mcopts">
-          {d.options.map((o) => {
-            const isAnswer = o === d.answer;
-            const cls = !picked ? "" : isAnswer ? " is-answer" : o === picked ? " is-wrongpick" : "";
-            return (
-              <button key={o} type="button" className={"tc-mcopt tc-mcopt-kana" + cls}
-                      disabled={!!picked} onClick={() => choose(o)}>{o}</button>
-            );
-          })}
-        </div>
-        {picked && (
-          <>
-            {/* The rule, not a scolding. With a minimal pair the contrast IS the lesson, so
-                the note is shown whether they got it right or wrong. */}
-            <p className="tc-conjnote">{d.note}</p>
-            <button className="tc-btn tc-btn-primary tc-btn-sm" onClick={() => setPos((p) => p + 1)}>Next →</button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 
 
@@ -6843,48 +6479,6 @@ const SYNC_UI = {
 
 
 
-/* ───────────────────────────── ADD ───────────────────────────── */
-function Add({ onAdd, count }) {
-  const [text, setText] = useState("");
-  const [msg, setMsg] = useState("");
-
-  const parse = useCallback(() => {
-    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-    const out = [];
-    for (const line of lines) {
-      const parts = (line.includes("\t") ? line.split("\t") : line.split(",")).map((p) => p.trim()).filter(Boolean);
-      if (parts.length < 2) continue;
-      const term = parts[0], reading = parts[1] || parts[0], romaji = parts[2] || "";
-      const rest = parts.slice(3);
-      let emoji = "";
-      if (rest.length && isEmoji(rest[rest.length - 1])) emoji = rest.pop();
-      const meaning = rest.join(", ");
-      out.push({ term, reading, romaji, meaning, emoji, kind: detectKind(term) });
-    }
-    if (out.length === 0) { setMsg("Couldn't read any rows — check the format below."); return; }
-    onAdd(out);
-    setMsg(`Added ${out.length} word${out.length > 1 ? "s" : ""}. Deck now has ${count + out.length}.`);
-    setText("");
-  }, [text, onAdd, count]);
-
-  return (
-    <div className="tc-add">
-      <p className="tc-eyebrow">Add words</p>
-      <p className="tc-addhelp">
-        One word per line, fields split by comma or tab:
-        <code>term, reading, rōmaji, meaning, 📷</code>
-        The picture emoji at the end is optional.
-      </p>
-      <textarea aria-label="Words to add, one per line" className="tc-textarea" rows={8} value={text} onChange={(e) => setText(e.target.value)}
-        placeholder={"先生, せんせい, sensei, teacher, 👩‍🏫\n犬, いぬ, inu, dog, 🐶"} />
-      <div className="tc-addrow">
-        <button className="tc-btn tc-btn-primary" onClick={parse} disabled={!text.trim()}>Add to deck</button>
-        {msg && <span className="tc-addmsg">{msg}</span>}
-      </div>
-      <p className="tc-addnote">Easiest path: paste your class notes to Claude and I'll clean them up and load them for you. This box is here for quick one-offs.</p>
-    </div>
-  );
-}
 
 /* ───────────────────────────── STYLES ───────────────────────────── */
 /* ─────────────────────────── CONJ DRILL ───────────────────────────
@@ -8008,13 +7602,6 @@ function buildLesson(pool, statsOf, hasWord) {
   return out;
 }
 
-function kanjiExercise(st) {
-  const lvl = st.level || 0;
-  if ((st.seen || 0) === 0) return "learn";           // first meeting: show everything
-  if (lvl <= 1) return "meaning";                     // kanji -> meaning
-  if (lvl <= 2) return "reading";                     // kanji -> reading
-  return Math.random() < 0.5 ? "build" : "reading";   // meaning -> kanji, from tiles
-}
 
 /* Which kanji actually appear in the deck, and in which words.
    Frequency order is right for a general learner and wrong for this one: 412 jōyō kanji
@@ -8622,34 +8209,10 @@ function loadFreqWords() {
   return _freqPromise;
 }
 
-/* Progress used to live inline on each card. Anything already recorded is folded into the
-   new keyed-by-term shape so no study history is lost. */
-function migrateFreqStats(raw) {
-  if (!raw) return {};
-  if (!Array.isArray(raw)) return raw;
-  const out = {};
-  for (const c of raw) {
-    if (!c || !c.term || !((c.seen || 0) > 0)) continue;
-    out[c.term] = {
-      seen: c.seen || 0, correct: c.correct || 0, level: c.level || 0, streak: c.streak || 0,
-      last: c.last || 0, ease: c.ease || 1, fsrs: c.fsrs || null, ms: c.ms || 0, msN: c.msN || 0,
-    };
-  }
-  return out;
-}
-
-const FREQ_KEY = "jpn101:freq", FREQ_VER_KEY = "jpn101:freqVersion", FREQ_QUOTA_KEY = "jpn101:freqQuota";
 
 
 
-function fmtIn(ms) {
-  if (ms <= 0) return "now";
-  const m = Math.round(ms / 60000);
-  if (m < 60) return "in ~" + Math.max(1, m) + "m";
-  const h = Math.round(m / 60);
-  if (h < 48) return "in ~" + h + "h";
-  return "in ~" + Math.round(h / 24) + "d";
-}
+
 
 
 

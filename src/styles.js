@@ -81,7 +81,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-t-body-lg{font:var(--t-body-lg);color:var(--washi-2);margin:0;}
 .tc-t-body{font:var(--t-body);color:var(--washi-2);margin:0;}
 .tc-t-sm{font:var(--t-body-sm);color:var(--washi-2);margin:0;}
-.tc-caps{font:var(--t-caps);letter-spacing:.05em;text-transform:uppercase;color:var(--mut-2);}
 .tc-shell{max-width:660px;margin:0 auto;}
 
 .tc-head{display:flex;flex-direction:column;gap:18px;margin-bottom:22px;}
@@ -139,9 +138,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-heronum{font-size:96px;font-weight:200;letter-spacing:-.03em;line-height:1;color:#fff;font-family:-apple-system,"SF Pro Display",BlinkMacSystemFont,sans-serif;text-shadow:0 0 44px rgba(124,92,255,.4);}
 .tc-herolabel{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--mut-2);margin:8px 0 0;}
 .tc-herosub{font-size:13px;color:rgba(255,255,255,.55);margin:6px 0 0;}
-.tc-controls{display:flex;flex-direction:column;gap:20px;margin-bottom:24px;}
-.tc-field{border:0;margin:0;padding:0;}
-.tc-field legend{font-size:13px;color:var(--mut-2);margin-bottom:9px;padding:0;}
 .tc-segbtn{appearance:none;border:0;background:rgba(255,255,255,.07);color:var(--washi);
   font:inherit;font-size:14px;font-weight:500;min-height:var(--tap);padding:9px 16px;border-radius:var(--r-s);cursor:pointer;transition:border-color .15s,background .15s,transform .1s;}
 .tc-segbtn:active{transform:scale(.96);}
@@ -149,15 +145,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
    down to a background that reads DARKER than the translucent unarmed one. The token it
    wanted is drawn as an inset ring instead — no layout box, no new colour. */
 .tc-segbtn.is-on{background:var(--surface-3);box-shadow:inset 0 0 0 1px var(--info);color:var(--washi);font-weight:600;}
-.tc-toggle{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--washi);cursor:pointer;}
-.tc-toggle input{width:17px;height:17px;accent-color:var(--shu);}
 .tc-start{width:100%;}
-.tc-review-btn{margin-top:10px;}
 .tc-batchhead{display:flex;align-items:center;justify-content:space-between;margin:20px 0 10px;}
 .tc-batchhead>span{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--mut-2);}
-.tc-sizesel{display:flex;gap:4px;background:rgba(255,255,255,.06);padding:3px;border-radius:8px;}
-.tc-szbtn{appearance:none;border:0;background:transparent;color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:4px 11px;border-radius:8px;cursor:pointer;}
-.tc-szbtn.is-on{background:var(--washi);color:var(--ai);}
 /* ── mission chips ──
    A stack, not a grid: each row is one sentence plus its count, and two of them side by
    side on a 375px screen would truncate the label — which is the only part that says what
@@ -490,7 +480,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
   padding:4px 11px;border-radius:99px;background:rgba(255,255,255,.12);}
 .tc-term{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:54px;line-height:1.15;font-weight:600;text-align:center;color:#fff;}
-.tc-term-sm{font-size:46px;}
 /* Size by length instead of one size for everything. A lone kanji at the shared 54px read
    as small and cramped — and the strokes separating it from a near neighbour are exactly
    what you are being asked to see — while a ten-character phrase needs to stay on the
@@ -501,7 +490,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-term-4{font-size:72px;line-height:1.08;}
 .tc-term-5{font-size:62px;line-height:1.1;}
 .tc-frontromaji{font-family:var(--mono);font-size:13px;letter-spacing:.14em;color:rgba(255,255,255,.55);font-style:normal;}
-.tc-prompt-en{font-size:26px;font-weight:600;text-align:center;color:#fff;line-height:1.3;}
 .tc-flipcue{position:absolute;bottom:14px;font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.4);}
 .tc-reading{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
   font-size:34px;font-weight:600;color:#fff;}
@@ -624,7 +612,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kctx{display:flex;gap:10px;align-items:baseline;justify-content:center;margin-bottom:6px;opacity:.8}
 .tc-kctxk{font-size:26px;font-weight:700}
 .tc-kctxm{font-size:13px;opacity:.75}
-.tc-kchit{color:#8fd0ff}
 .tc-mine{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)}
 .tc-minelist{display:flex;flex-direction:column;gap:5px;margin:10px 0}
 .tc-minerow{display:grid;grid-template-columns:auto auto auto 1fr auto;gap:8px;align-items:baseline;
@@ -724,7 +711,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-planlist b{color:#fff;font-weight:600;}
 @media(max-width:560px){.tc-coverrow{grid-template-columns:110px 1fr 32px;}
   .tc-scenerow{grid-template-columns:84px 1fr 32px;gap:8px;}}
-.tc-setupline{font-size:14px;color:var(--mut-2);line-height:1.6;margin:0 0 22px;max-width:48ch;}
 .tc-rpill{appearance:none;border:1px solid var(--outline-2);background:var(--surface-2);
   color:var(--mut-2);font:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;
   cursor:pointer;transition:all .15s;white-space:nowrap;flex:none;}
@@ -780,31 +766,18 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
 .tc-row{display:grid;grid-template-columns:auto 1.3fr 1.3fr 1.4fr auto auto;gap:12px;align-items:center;
   padding:11px 8px;border-bottom:1px solid rgba(255,255,255,.07);font-size:14px;}
-.tc-rowkind{font-family:"Yu Gothic","Noto Sans JP",sans-serif;font-size:11px;color:var(--ai);
-  background:var(--washi-2);border-radius:4px;padding:3px 6px;text-align:center;white-space:nowrap;}
 .tc-rowterm{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:19px;color:#fff;}
 .tc-rowread{display:flex;flex-direction:column;color:var(--washi);}
 .tc-rowread em{font-style:italic;color:var(--shu-soft);font-size:12px;letter-spacing:.08em;}
-.tc-rowmean{color:var(--mut-2);}
-.tc-rowstat{font-size:12px;color:var(--mut-2);font-variant-numeric:tabular-nums;text-align:right;}
 .tc-del{appearance:none;border:0;background:transparent;color:var(--mut-2);cursor:pointer;font-size:14px;min-width:32px;min-height:32px;border-radius:8px;
   padding:4px 6px;border-radius:8px;transition:all .15s;}
 
 /* add */
-.tc-addhelp{font-size:14px;color:var(--mut-2);line-height:1.6;margin:0 0 14px;}
-.tc-addhelp code{display:inline-block;margin-top:6px;background:rgba(0,0,0,.25);color:var(--washi);
-  padding:4px 10px;border-radius:8px;font-size:13px;}
-.tc-textarea{width:100%;box-sizing:border-box;background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.14);
-  border-radius:8px;padding:14px;color:#fff;font:inherit;font-size:15px;line-height:1.7;resize:vertical;}
-.tc-textarea::placeholder{color:var(--mut-2);}
-.tc-addrow{display:flex;align-items:center;gap:14px;margin-top:14px;}
-.tc-addmsg{font-size:14px;color:var(--shu-soft);}
 .tc-addnote{font-size:12px;color:var(--mut-2);margin:18px 0 0;line-height:1.6;border-top:1px solid rgba(255,255,255,.08);padding-top:14px;}
 
 .tc-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
 
-.tc-btn:focus-visible,.tc-tab:focus-visible,.tc-segbtn:focus-visible,.tc-card:focus-visible,
-.tc-search:focus-visible,.tc-textarea:focus-visible,.tc-del:focus-visible{
+.tc-btn:focus-visible,.tc-tab:focus-visible,.tc-segbtn:focus-visible,.tc-card:focus-visible,.tc-search:focus-visible,.tc-del:focus-visible{
   outline:2px solid var(--shu-soft);outline-offset:2px;}
 
 @media (max-width:560px){
@@ -864,7 +837,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 
 /* focus + insights */
-.tc-focus-btn{margin-top:10px;border-color:var(--shu);color:var(--shu-soft);}
 .tc-smart-btn{background:linear-gradient(130deg,#4054a8 0%,#7c5cff 55%,#b0543f 125%);color:#fff;border:none;font-weight:600;box-shadow:0 10px 26px -12px rgba(124,92,255,.65);}
 /* The practice-mode picker that sits above Smart Review. It borrows every colour from
    .tc-segbtn so the three modes read as the same control as the pickers on Sentences and
@@ -888,7 +860,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
    with a thumb aimed at it. */
 .tc-actsel{font-size:14px;padding:9px 11px;min-height:40px;}
 .tc-smarthint{margin:8px 0 0;font-size:12px;color:var(--mut-2);line-height:1.5;text-align:center;}
-.tc-kind-prod{background:rgba(216,72,47,.16);border-color:rgba(216,72,47,.4);color:var(--shu-soft);}
 /* Production cards read as a different exercise on purpose — the visual break is part of
    what stops the session settling into one mode. */
 .tc-prodchip{background:rgba(124,92,255,.2);border-color:rgba(124,92,255,.45);color:#c9b8ff;}
@@ -914,16 +885,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mnshow{margin:8px 0 0;font-size:13px;line-height:1.5;color:#ffd9a0;background:rgba(255,190,90,.1);border-radius:8px;padding:6px 11px;max-width:300px;}
 .tc-leechtag{margin-top:10px;font-size:12px;color:#e6a23c;background:rgba(230,162,60,.12);border:1px solid rgba(230,162,60,.35);padding:3px 10px;border-radius:99px;}
 .tc-leechpill{font-size:11px;font-weight:600;color:#e6a23c;background:rgba(230,162,60,.13);border:1px solid rgba(230,162,60,.35);padding:2px 8px;border-radius:99px;}
-.tc-coachcard{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:14px 16px;margin-bottom:10px;}
-.tc-coachhead{margin:0 0 8px;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut-2);}
-.tc-coachplan{margin:0;padding-left:20px;color:var(--washi);font-size:14px;line-height:1.65;}
-.tc-coachplan li{margin-bottom:6px;}
-.tc-coachline{margin:0;color:var(--washi);font-size:15px;line-height:1.6;}
-.tc-coachbtns{display:flex;gap:8px;margin:14px 0 6px;}
-.tc-coachbtns .tc-btn-primary{flex:1;}
-.tc-coacherr{font-size:13px;color:#e6a23c;line-height:1.5;}
-.tc-coachai{border-color:rgba(216,72,47,.35);}
-.tc-pre{white-space:pre-wrap;}
 .tc-kanabar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
 .tc-kanaseg{display:flex;gap:6px;flex-wrap:wrap;}   /* must wrap: the set row is 6 chips and overflowed the screen on phones */
 .tc-kanaprog{margin:0 0 12px;font-size:12px;color:var(--mut-2);}
@@ -960,7 +921,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-debrief-busy{border-color:rgba(255,255,255,.15);color:var(--mut-2);}
 .tc-wscols-solo{grid-template-columns:1fr;}
 .tc-wsromaji{font-family:var(--mono);font-style:normal;font-size:12px;letter-spacing:.03em;color:rgba(255,255,255,.5);}
-.tc-bkpnudge{margin:10px 0 0;font-size:12px;color:#e6a23c;line-height:1.5;}
 .tc-restore{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px;margin-bottom:12px;}
 .tc-restorehint{margin:0 0 8px;font-size:12px;color:var(--mut-2);line-height:1.5;}
 .tc-restorebox{width:100%;box-sizing:border-box;min-height:88px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;font-family:ui-monospace,monospace;font-size:12px;padding:8px;}
@@ -1032,15 +992,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sentmodes{display:flex;gap:8px;}
 .tc-senterr{background:rgba(216,72,47,.14);border:1px solid rgba(216,72,47,.4);color:var(--shu-soft);padding:12px 14px;border-radius:8px;font-size:14px;}
 .tc-sentempty{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:16px;padding:30px;text-align:center;display:flex;flex-direction:column;gap:16px;align-items:center;color:var(--mut-2);}
-.tc-sentloading{text-align:center;color:var(--shu-soft);padding:40px 20px;font-size:15px;}
 
 .tc-sentgoal{margin:0;font-size:15px;color:rgba(255,255,255,.6);font-style:italic;}
-.tc-sentbig{font-size:20px;font-style:normal;font-weight:600;color:var(--sumi);}
 .tc-sentjp{margin:0;font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:26px;line-height:2.1;color:#fff;font-weight:500;}
 .tc-sentjp ruby rt{font-size:.42em;color:var(--shu);font-weight:600;letter-spacing:.02em;}
 .tc-sentans ruby rt{font-size:.5em;color:var(--shu);font-weight:600;}
 .tc-blank{display:inline-block;min-width:3.2em;border-bottom:2px solid var(--shu);text-align:center;color:var(--shu);}
-.tc-sentfull{font-size:24px;}
 /* A white box with near-black text — the one rule the dark retheme missed, because it
    hardcoded #fff instead of going through a token. It is on nine inputs across Sentences,
    Scripts and Input, so all of them were glowing white slabs in a dark app. */
@@ -1050,14 +1007,11 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-sentinput::placeholder{color:var(--mut-2);}
 .tc-sentinput:focus-visible{outline:2px solid var(--info);outline-offset:1px;border-color:var(--info);}
 .tc-sentbtns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
-.tc-idk{border-color:rgba(216,72,47,.45);color:var(--shu-soft);}
-.tc-senthint{margin:0;font-size:14px;color:var(--mut);background:var(--washi-2);padding:10px 12px;border-radius:8px;}
 .tc-sentresult{margin:0;font-size:18px;font-weight:700;}
 .tc-sentresult.ok{color:#2e7d32;}
 .tc-sentresult.no{color:var(--shu);}
 .tc-sentresult.mid{color:#c77b1e;}
 .tc-sentans{margin:0;font-family:var(--mono);font-size:14px;letter-spacing:.06em;color:rgba(255,255,255,.65);font-weight:500;}
-.tc-sentfeedback{margin:0;font-size:15px;line-height:1.55;color:var(--sumi);background:var(--washi-2);padding:12px 14px;border-radius:8px;}
 .tc-rehhead{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .tc-rehname{font-size:15px;font-weight:600;color:#fff;}
 .tc-scriptlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
@@ -1185,24 +1139,13 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-conjchip{appearance:none;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:var(--washi,#efeae2);
   padding:9px 15px;border-radius:99px;font-size:14px;cursor:pointer;transition:background .15s,color .15s;}
 .tc-conjchip.is-on{background:rgba(255,255,255,.94);color:#141a33;font-weight:600;border-color:transparent;}
-.tc-conjmode{align-self:flex-start;}
 .tc-speakbtn{appearance:none;border:0;background:var(--surface-3);border-radius:99px;font-size:14px;line-height:1;padding:5px 9px;cursor:pointer;vertical-align:middle;margin-left:6px;}
 .tc-speakbtn:active{background:rgba(255,255,255,.25);}
 .tc-timetag{display:inline-block;margin-top:8px;font-size:12px;color:var(--mut-2);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);padding:4px 10px;border-radius:99px;font-variant-numeric:tabular-nums;}
 .tc-btn[disabled]{opacity:.5;cursor:default;}
 .tc-oral{display:flex;flex-direction:column;gap:12px;}
-.tc-oralchat{display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto;padding:4px 2px;}
-.tc-bubble{max-width:85%;padding:10px 14px;border-radius:16px;font-size:15px;line-height:1.55;white-space:pre-wrap;}
-.tc-bubble-you{align-self:flex-end;background:rgba(230,90,70,.22);border:1px solid rgba(230,90,70,.35);color:#fff;border-bottom-right-radius:4px;}
-.tc-bubble-kanda{align-self:flex-start;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);color:var(--washi,#efeae2);border-bottom-left-radius:4px;}
-.tc-bubblewho{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.55;margin-bottom:3px;}
-.tc-oralbar{display:flex;gap:8px;align-items:stretch;}
 .tc-input{appearance:none;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:8px;color:#fff;padding:10px 12px;font-size:15px;}
 .tc-input:focus{outline:2px solid rgba(230,90,70,.5);}
-.tc-oralinput{flex:1;min-width:0;}
-.tc-oraldebrief{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px;}
-.tc-oraldebrief h3{margin:0;font-size:16px;color:#fff;}
-.tc-debrieftext{margin:0;font-size:14px;line-height:1.6;color:var(--washi,#efeae2);white-space:pre-wrap;}
 .tc-conjask{margin-top:10px;font-size:15px;color:rgba(255,255,255,.65);font-style:italic;}
 .tc-conjanswer{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:32px;font-weight:600;color:#fff;text-align:center;line-height:1.3;}
 .tc-conjhow{font-size:15px;color:var(--shu-soft,#ff8a7a);font-variant-numeric:tabular-nums;}
@@ -1470,25 +1413,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
    pointer-events:none matters — the overlay covers the whole control, and without it the
    rim would eat every click. */
-.tc-glass{
-  position:relative;
-  background:var(--glass);
-  backdrop-filter:var(--glass-blur);
-  -webkit-backdrop-filter:var(--glass-blur);
-  box-shadow:var(--gloss), 0 18px 40px -24px rgba(0,0,0,.9);
-  border:0;
-}
-.tc-glass::before{
-  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
-  background:var(--foil);
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;
-          mask-composite:exclude;
-  opacity:.55;                       /* foil, not neon: the rim should read as a sheen */
-  pointer-events:none;
-  transition:opacity .18s ease;
-}
 
 /* Buttons: glass by default, foil rim on every one. */
 .tc-btn{
@@ -1537,12 +1461,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
   opacity:.38;pointer-events:none;}
 
 @media (prefers-reduced-motion:reduce){
-  .tc-glass::before,.tc-btn,.tc-btn::before{transition:none;}
+  .tc-btn,.tc-btn::before{transition:none;}
 }
 /* backdrop-filter is well supported now, but where it is not the glass would render as a
    nearly invisible 3% white film over the page. Fall back to an opaque surface. */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
-  .tc-glass,.tc-btn,.tc-card2{background:var(--surface);}
+  .tc-btn,.tc-card2{background:var(--surface);}
   .tc-btn-primary{background:linear-gradient(135deg,#1f4f9c 0%,#2f6bd0 100%);}
 }
 /* Section chips: bring them into the foil language. The rim goes on an ::after of the
@@ -1615,7 +1539,6 @@ body{min-height:100%;overscroll-behavior-y:none;}
 
 .tc-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--gutter);margin:12px 0 4px;}
 .tc-gridcol{display:flex;flex-direction:column;gap:10px;}
-.tc-wordbank{display:flex;flex-wrap:wrap;gap:9px;justify-content:center;margin:10px 0;}
 
 /* ── the combo accelerator ──
    --combo is set on the session root as a 0..1 ramp. It only ever raises the opacity of a
@@ -1647,7 +1570,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
    matching grid is eight tiles. Letting each size itself made the page jump every time the
    activity changed, which moves the buttons out from under a finger already on its way down.
    A floor plus space-between holds the controls in one place whatever is above them. */
-.tc-mcwrap,.tc-clozewrap,.tc-prod{
+.tc-mcwrap,.tc-prod{
   min-height:340px;display:flex;flex-direction:column;justify-content:space-between;}
 .tc-grade{min-height:var(--tap);display:flex;gap:10px;align-items:center;justify-content:center;}
 
@@ -1703,7 +1626,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* iOS zooms the whole page when a focused input's text is under 16px, and then leaves it
    zoomed. Coarse pointers only: 16px is a floor for thumbs, not a design choice for mice. */
 @media (pointer:coarse){
-  .tc-search,.tc-mnin,.tc-restorebox,.tc-sentinput,.tc-textarea,.tc-input,.tc-dinput,.tc-spellinput,.tc-checkin{font-size:16px;}
+  .tc-search,.tc-mnin,.tc-restorebox,.tc-sentinput,.tc-input,.tc-dinput,.tc-spellinput,.tc-checkin{font-size:16px;}
 }
 
 /* The on-screen keyboard covers the bottom of the viewport, so an input near the fold ends
@@ -1728,16 +1651,13 @@ html{scroll-padding-bottom:40vh;}
   .tc-whybtn:hover{color:#fff;}
   .tc-rpill:hover{color:#fff;}
   .tc-del:hover{color:var(--shu-soft);background:rgba(216,72,47,.12);}
-  .tc-focus-btn:hover{background:rgba(216,72,47,.12);}
   .tc-smart-btn:hover{filter:brightness(1.12);}
   .tc-hookbtn:hover{background:rgba(43,38,32,.06);}
-  .tc-idk:hover{background:rgba(216,72,47,.12);}
   .tc-scriptopen:hover{border-color:var(--shu);background:rgba(216,72,47,.1);}
   .tc-listenstart:hover{border-color:var(--info);}
   .tc-replay:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.35);}
   .tc-listenstart.is-dialogue:hover{border-color:var(--ok);}
   .tc-conjchip:hover{color:#fff;background:rgba(255,255,255,.12);}
-  .tc-glass:hover::before{opacity:.9;}
   .tc-btn:hover{background:var(--glass-hi);}
   .tc-btn:hover::before{opacity:.95;}
   .tc-btn-primary:hover{background:linear-gradient(135deg,rgba(59,130,246,.44) 0%,rgba(59,130,246,.24) 100%),var(--glass-hi);}
