@@ -47,6 +47,10 @@ export function skillForFormat(format) {
        and calling that production would inflate the one ability this app most needs to
        measure honestly. The saying-aloud part is carried in the modes below. */
     case "shadow": return "listening";
+    /* A conversation turn. Deliberately null: one turn can show several abilities at once
+       (used a verb form, understood the question, got a particle wrong), so the skill is
+       set per observation by whoever judged it, never inferred from the format. */
+    case "converse": return null;
     case "cloze": return "context";
     case "spell": return "orthography";
     default: return null;                  // "learn" is exposure, not evidence
@@ -152,6 +156,11 @@ export const FORMAT_MODES = {
      shadow a line accurately without understanding it, and that is a known property of
      the technique rather than a flaw in it. Self-rated, like every grade in this app. */
   shadow: ["listening", "production"],
+
+  /* A free conversational turn: understand what was said, produce a reply nobody wrote for
+     you, in a situation the exercise did not rehearse. All three, which is the argument for
+     conversation in the first place. */
+  converse: ["comprehension", "production", "transfer"],
 
   /* Dialogue mode (dialogue.mjs, MP-16): one turn of a conversation the learner is playing
      a side of. Its modes are DELIBERATELY the same two as script_response, because the
@@ -333,7 +342,7 @@ export function parseRecovery(tag) {
    One record per answered exercise. Deliberately small and flat: this is the log the
    reviews want the eventual calibration and expected-gain work to learn from, and a log
    nobody can afford to keep is a log that does not exist. */
-export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue, got, want, probe }) {
+export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failure, predicted, pRecall, at, confused, s0, s1, recovery, fatigue, got, want, probe, via }) {
   return {
     id, deck, format,
     /* An app-initiated probe rather than something the learner chose to study. Real
@@ -342,6 +351,12 @@ export function makeEvidence({ id, deck, format, skill, mode, cue, ok, ms, failu
        would be wrong. Absent on every row written before placement existed, and absent
        reads as "not a probe", which is correct for all of them. */
     ...(probe ? { probe: true } : {}),
+    /* Who JUDGED this answer, when it was not the app's own deterministic grader. "tutor"
+       means the conversational model read a free-form turn and decided. That is real
+       evidence and it counts, but it is a different instrument from exact-match grading,
+       and keeping it labelled is what lets calibration ask later whether the model's
+       judgements agree with the rest of the log. Absent on every row graded by the app. */
+    ...(via ? { via: String(via).slice(0, 16) } : {}),
     skill: skill || skillForFormat(format),
     /* DERIVED from the format rather than demanded from the caller, so tagging every
        answer with what it actually asked for costs no change at the one place evidence is

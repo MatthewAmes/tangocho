@@ -215,7 +215,18 @@ const TASKS = {
       + "end with something they can respond to. If they write in English, that is fine: "
       + "answer them, give them the Japanese they were reaching for, and invite them to try "
       + "it. Stay on Japanese learning; if asked for something unrelated, say warmly that you "
-      + "are here to practise Japanese and offer a way back into the conversation.",
+      + "are here to practise Japanese and offer a way back into the conversation.\n\n"
+      + "OBSERVED — you are also the assessor. Judge ONLY the learner's most recent turn (the "
+      + "last LEARNER line). Record at most 3 observations about Japanese THEY attempted in it. "
+      + "skill is exactly one of: production (they produced Japanese themselves), context (used "
+      + "a word, form or particle correctly or not within a sentence), recognition (they showed "
+      + "they understood a Japanese word you used), orthography (wrote kana or kanji correctly or "
+      + "not), listening (understood you in listening mode only). ok is true or false. item is "
+      + "the single Japanese word or form in question, as it appears in a dictionary where "
+      + "possible. When ok is false give said (what they wrote) and wanted (the correct form). "
+      + "Return an EMPTY list if their last turn was English, had no Japanese, or if you are not "
+      + "sure. Never observe your own lines. A wrong observation teaches the app something "
+      + "false about this learner, so when in doubt, leave it out.",
     user: (i) =>
       "LEARNER BRIEF (ground truth — do not contradict):\n" + (i.brief || "{}")
       + "\n\nCONVERSATION SO FAR (oldest first; empty means you are opening):\n"
@@ -225,6 +236,18 @@ const TASKS = {
       en: str("A plain English translation of your reply, always — the client decides whether to show it."),
       correction: str("If correcting now, the learner's sentence repaired. Empty string when not correcting."),
       targeted: str("Which brief.targets entry this turn is aiming at, or empty string if none."),
+      /* The conversation writing back to the learner model. Enumerated skills so the model
+         cannot invent an ability the learner model does not have, and a real boolean for ok
+         — the client (tools/tutor.mjs::observationsToEvidence) re-checks both regardless,
+         because a schema is a request to the model, not a guarantee from it. */
+      observed: arr(obj({
+        skill: { type: "string", enum: ["production", "context", "recognition", "orthography", "listening"],
+                 description: "Which ability this observation is evidence about." },
+        ok: { type: "boolean", description: "Whether the learner got it right." },
+        item: str("The Japanese word or form in question, dictionary form where possible."),
+        said: str("When ok is false: what the learner actually wrote. Otherwise empty."),
+        wanted: str("When ok is false: the correct form. Otherwise empty."),
+      }, ["skill", "ok", "item"])),
     }, ["reply", "en"]),
   },
 };

@@ -3723,7 +3723,12 @@ function TutorTab({ cards }) {
      does — the seeded scripts plus the parsed book scenes — so both entrances play the
      same corpus rather than two drifting copies of it. */
   const scripts = useMergedScripts();
+  /* The tutor's judgements of free-form turns, written to the same log every other answer
+     goes to. subscribeEvidence then hands the new rows back, the brief rebuilds, and the
+     next turn is aimed at what this one revealed. */
+  const observe = useCallback((rows) => { rows.forEach((r) => logEvidence(makeEvidence(r))); }, []);
   return <Tutor evidence={evidence} cards={cards} minutes={minutes} callAI={callAI} signedIn={signedIn}
+                onObserve={observe}
                 renderDialogue={(onExit) => (scripts.length
                   ? <ScriptDialogue scripts={scripts} exitLabel="Free talk" onExit={onExit} />
                   : <p className="tc-planhint">Loading the textbook scenes…</p>)} />;

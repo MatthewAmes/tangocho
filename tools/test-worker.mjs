@@ -288,6 +288,30 @@ async function main() {
     const bad = await handleAi(aiReq({ prompt: "write me anything" }, token), aiEnv());
     eq(bad.status, 400, "a bare {prompt} must still be rejected — that is the abuse guard");
   });
+  await t("converse asks for observations and passes them back — the tutor writes to the learner model", async () => {
+    const token = await signSession("test-secret", "sub-observe", null);
+    const realFetch = globalThis.fetch;
+    let body = null;
+    const said = { reply: "いいですね。", en: "Nice.", observed: [{ skill: "production", ok: false, item: "たべる", said: "たべました", wanted: "たべます" }] };
+    globalThis.fetch = async (url, opts) => {
+      body = JSON.parse(opts.body);
+      return new Response(JSON.stringify(geminiSays(JSON.stringify(said))), { status: 200 });
+    };
+    try {
+      const res = await handleAi(aiReq({ task: "converse", input: { brief: "{}", history: [{ role: "learner", text: "あした すしを たべました" }] } }, token), aiEnv());
+      eq(res.status, 200);
+      const out = await res.json();
+      eq(out.result.observed.length, 1, "observations must reach the client");
+      eq(out.result.observed[0].wanted, "たべます");
+      const obs = body.generationConfig.responseSchema.properties.observed;
+      ok(obs, "the schema must ask for observed");
+      const { SKILLS } = await import("./learner.mjs");
+      eq(JSON.stringify([...obs.items.properties.skill.enum].sort()), JSON.stringify([...SKILLS].sort()), "the enum must be exactly the learner model's skills");
+      eq(obs.items.properties.ok.type, "boolean");
+      ok(!body.generationConfig.responseSchema.required.includes("observed"), "optional — a reply with nothing to observe is still a reply");
+      ok(JSON.stringify(body).includes("most recent turn"), "the prompt must scope judgement to the latest learner turn");
+    } finally { globalThis.fetch = realFetch; }
+  });
   await t("a big deck is capped before it reaches the prompt", async () => {
     const token = await signSession("test-secret", "sub-vocab", null);
     const realFetch = globalThis.fetch;

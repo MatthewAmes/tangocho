@@ -9,6 +9,7 @@
  */
 import {
   buildBrief, serialiseBrief, scaffoldFor, correctionFor, pickTargets,
+  observationsToEvidence, MAX_OBSERVATIONS,
   SCAFFOLD, CORRECTION, MODES, BRIEF_MAX, MAX_ERRORS,
 } from "./tutor.mjs";
 import { SKILLS } from "./learner.mjs";
@@ -206,6 +207,78 @@ t("the session plan is carried when a duration is asked for", () => {
 t("no duration, no plan — the tutor does not invent a session length", () => {
   const b = buildBrief({ evidence: rows("recognition", true, 20) });
   eq(b.session_plan, undefined);
+});
+
+console.log("\n=== the conversation writes back ===");
+
+const DECK = [{ id: "c1", term: "行く", reading: "いく" }, { id: "c2", term: "食べる", reading: "たべる" }];
+
+t("a valid observation becomes a labelled evidence row", () => {
+  const rows = observationsToEvidence([{ skill: "production", ok: true, item: "行く" }], DECK, { now: 5 });
+  eq(rows.length, 1);
+  eq(rows[0].skill, "production");
+  eq(rows[0].ok, true);
+  eq(rows[0].via, "tutor", "every row says who judged it");
+  eq(rows[0].format, "converse");
+});
+
+t("a word in the deck is joined to its card, so it can move the act profiles", () => {
+  eq(observationsToEvidence([{ skill: "production", ok: true, item: "行く" }], DECK)[0].id, "c1");
+  eq(observationsToEvidence([{ skill: "production", ok: true, item: "たべる" }], DECK)[0].id, "c2", "by reading too");
+});
+
+t("a word NOT in the deck still counts toward the skill, but claims no card", () => {
+  const r = observationsToEvidence([{ skill: "listening", ok: true, item: "新幹線" }], DECK)[0];
+  ok(r.id.startsWith("tutor:"), "no invented card id: " + r.id);
+});
+
+t("an ability the learner model does not have is dropped, not coerced", () => {
+  eq(observationsToEvidence([{ skill: "vibes", ok: true, item: "行く" }], DECK).length, 0);
+  eq(observationsToEvidence([{ skill: "Production", ok: true }], DECK).length, 0, "case matters: it is a key, not a label");
+});
+
+t("ok must be a real boolean — no scores, no strings, no 'partially'", () => {
+  for (const bad of ["true", 1, 0.7, "partially", null, undefined]) {
+    eq(observationsToEvidence([{ skill: "production", ok: bad }], DECK).length, 0, "ok=" + JSON.stringify(bad));
+  }
+});
+
+t("THE CAP: one chatty turn cannot outvote a week of flashcards", () => {
+  const many = Array.from({ length: 12 }, () => ({ skill: "production", ok: false, item: "行く" }));
+  eq(observationsToEvidence(many, DECK).length, MAX_OBSERVATIONS);
+});
+
+t("a miss carries what was said and what was wanted, so it reaches the next brief", () => {
+  const r = observationsToEvidence([{ skill: "production", ok: false, item: "行く", said: "行きます", wanted: "行きました" }], DECK)[0];
+  eq(r.got, "行きます");
+  eq(r.want, "行きました");
+  const b = buildBrief({ evidence: [r, r, r], cards: DECK });
+  ok(b.recent_errors.some((e) => e.said === "行きます" && e.wanted === "行きました"),
+    "the conversational slip should surface in the brief: " + JSON.stringify(b.recent_errors));
+});
+
+t("a hit carries no got/want — a correct answer is not an error record", () => {
+  const r = observationsToEvidence([{ skill: "production", ok: true, item: "行く", said: "x", wanted: "y" }], DECK)[0];
+  eq(r.got, null);
+  eq(r.want, null);
+});
+
+t("garbage in is nothing out, never an exception", () => {
+  for (const bad of [null, undefined, "text", 42, {}, [null], [42], [{}]]) {
+    const r = observationsToEvidence(bad, DECK);
+    ok(Array.isArray(r), "always an array for " + JSON.stringify(bad));
+  }
+});
+
+t("THE LOOP: observed rows change the next brief within the same conversation", () => {
+  /* The point of writing back. A learner who has been fine suddenly fails production three
+     times in conversation; the very next turn's brief should know. */
+  const before = buildBrief({ evidence: rows("production", true, 10), cards: DECK });
+  const slips = observationsToEvidence(
+    Array.from({ length: 3 }, () => ({ skill: "production", ok: false, item: "行く", said: "行きます", wanted: "行きました" })), DECK);
+  const after = buildBrief({ evidence: [...rows("production", true, 10), ...slips, ...slips, ...slips, ...slips], cards: DECK });
+  ok(after.speaking_level < before.speaking_level,
+    `speaking should fall after conversational slips: ${before.speaking_level} -> ${after.speaking_level}`);
 });
 
 console.log(fail ? `\n${fail} of ${run} FAILED` : `\nall ${run} tutor tests passed`);

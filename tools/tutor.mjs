@@ -194,6 +194,59 @@ export function buildBrief(opts = {}) {
   return ctx;
 }
 
+/* ── the conversation writes back ──
+   Until this existed the tutor READ the learner model and never wrote to it, so a
+   fifteen-minute conversation taught the app nothing about the learner. The model now
+   returns structured observations about the learner's latest turn alongside its reply —
+   same call, no extra quota — and this function decides what those claims are allowed to
+   become.
+
+   It is deliberately strict, because the source is a language model judging free text:
+
+   - ONLY THE SKILLS THAT EXIST. An observation naming an ability the learner model does
+     not have is dropped, not coerced.
+   - A HARD CAP PER TURN. One chatty reply must not be able to outvote a week of
+     flashcards; three observations is enough to capture a turn that used a form, got a
+     particle wrong and understood the question.
+   - BOOLEAN ok ONLY. A score, a "partially", a string "true" — dropped. The Beta model
+     counts successes and failures; anything else is a guess about what the model meant.
+   - LABELLED. Every row carries via:"tutor", so it can be calibrated against the rest of
+     the log rather than silently blended into it.
+
+   Items are joined to real cards where the word matches the deck, which is what lets a
+   conversation move the per-act profiles and the grammar nodes. Where it does not match,
+   the row still counts toward the SKILL but belongs to no card, and so to no act. */
+export const MAX_OBSERVATIONS = 3;
+
+export function observationsToEvidence(observed, cards = [], opts = {}) {
+  if (!Array.isArray(observed)) return [];
+  const now = opts.now || Date.now();
+  const byForm = new Map();
+  for (const c of cards || []) {
+    if (!c || c.id == null) continue;
+    if (c.term) byForm.set(String(c.term).trim(), c.id);
+    if (c.reading && !byForm.has(String(c.reading).trim())) byForm.set(String(c.reading).trim(), c.id);
+  }
+  const out = [];
+  for (const o of observed) {
+    if (out.length >= MAX_OBSERVATIONS) break;
+    if (!o || typeof o !== "object") continue;
+    if (!SKILLS.includes(o.skill)) continue;
+    if (typeof o.ok !== "boolean") continue;
+    const item = String(o.item || "").trim().slice(0, 24);
+    const id = (item && byForm.get(item)) || ("tutor:" + (item || o.skill));
+    out.push({
+      id, deck: "tutor", format: "converse", skill: o.skill, ok: o.ok, at: now, via: "tutor",
+      /* What they produced and what was wanted, when the model named both — the same
+         got/want pair the error record keeps for typed answers, so a conversational slip
+         reaches recentErrors and, through it, the next brief. */
+      got: o.ok ? null : (String(o.said || "").trim().slice(0, 24) || null),
+      want: o.ok ? null : (String(o.wanted || "").trim().slice(0, 24) || null),
+    });
+  }
+  return out;
+}
+
 /* Serialise, and refuse to exceed the budget rather than discovering it at the API. Trims
    the least load-bearing lists first: a brief without its confusion list still teaches; a
    brief the endpoint rejects teaches nothing. */

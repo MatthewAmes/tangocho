@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { buildBrief, serialiseBrief, MODES } from "../../tools/tutor.mjs";
+import { buildBrief, serialiseBrief, observationsToEvidence, MODES } from "../../tools/tutor.mjs";
 import { MIC_OK, listenJa } from "../lib/listen.js";
 import { speakJa, stopJa, ttsUnlock } from "../lib/tts.js";
 
@@ -62,7 +62,16 @@ const MODE_NOTE = {
   repair: "Practice getting unstuck: asking again, more slowly, in other words.",
 };
 
-export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, signedIn, renderDialogue }) {
+/* The word an observation is about, for display: the card's own term when it matched the
+   deck, else the item the tutor named (kept on the id after "tutor:"). */
+function cardLabel(o, cards) {
+  const id = String(o.id);
+  if (id.startsWith("tutor:")) return id.slice(6);
+  const c = (cards || []).find((x) => x && String(x.id) === id);
+  return (c && c.term) || id;
+}
+
+export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, signedIn, renderDialogue, onObserve }) {
   /* Open on something that WORKS. Free talk needs a signed-in session, so defaulting to it
      meant a signed-out visitor landed on a gate with no input and nothing to press — which
      reads as a broken tab, not as a prompt to sign in. Textbook needs no server at all, so
@@ -80,6 +89,10 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
   const [voiceOut, setVoiceOut] = useState(true);
   const [hearing, setHearing] = useState(false);
   const [micErr, setMicErr] = useState(null);
+  /* How many of the learner's turns the tutor has written back to the learner model this
+     conversation. Shown, because evidence recorded silently from a chat is exactly the kind
+     of thing a learner should be able to see happening. */
+  const [noted, setNoted] = useState(0);
   const recRef = useRef(null);
   const endRef = useRef(null);
 
@@ -111,12 +124,20 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
          and rendered an empty bubble. Nothing failed loudly enough to notice. */
       const r = (out && out.result) || {};
       const reply = String(r.reply || "").trim();
+      /* The conversation writing back. The model's observations are about the learner's
+         LAST turn, so there are none on the opening — and validated here, not trusted:
+         observationsToEvidence drops unknown skills, non-boolean verdicts and anything
+         past the cap. The evidence change rebuilds the brief, so the next turn is already
+         aimed at what this one revealed. */
+      const obs = asOpening ? [] : observationsToEvidence(r.observed, cards);
+      if (obs.length && onObserve) { onObserve(obs); setNoted((n) => n + obs.length); }
       setHistory((h) => [...(asOpening ? [] : h), {
         role: "tutor",
         text: reply,
         en: String(r.en || "").trim(),
         correction: String(r.correction || "").trim(),
         targeted: String(r.targeted || "").trim(),
+        observed: obs,
       }]);
       /* Speak the Japanese only. The English gloss is scaffolding for the eye; reading it
          aloud would hand the learner the answer before they had to parse anything. */
@@ -127,7 +148,7 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
     } finally {
       setBusy(false);
     }
-  }, [busy, history, brief, callAI, voiceOut]);
+  }, [busy, history, brief, callAI, voiceOut, cards, onObserve]);
 
   /* Push to talk. One utterance per press: continuous recognition keeps the mic open while
      the learner reads the reply, which means recording the room and eventually the tutor's
@@ -210,6 +231,11 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
           Working on: {brief.targets.map((t) => t.label).join(" · ")}
         </p>
       )}
+      {noted > 0 && (
+        <p className="tc-planhint">
+          {noted} {noted === 1 ? "thing" : "things"} noted from this chat — they count toward your study plan.
+        </p>
+      )}
 
       <div className="tc-tutorlog" role="log" aria-live="polite" aria-label="Conversation">
         {history.length === 0 && !busy && (
@@ -225,6 +251,16 @@ export default function Tutor({ evidence = [], cards = [], minutes = 0, callAI, 
             {m.role === "tutor" && showEn && m.en && <p className="tc-turnen">{m.en}</p>}
             {m.role === "tutor" && m.correction && (
               <p className="tc-turnfix"><span lang="ja">{m.correction}</span></p>
+            )}
+            {m.role === "tutor" && m.observed && m.observed.length > 0 && (
+              <p className="tc-turnnoted" aria-label="What the tutor noted about your last reply">
+                {m.observed.map((o, j) => (
+                  <span key={j} className={o.ok ? "is-ok" : "is-miss"}>
+                    {o.ok ? "✓ " : "✗ "}
+                    <span lang="ja">{!o.ok && o.got && o.want ? o.got + " → " + o.want : cardLabel(o, cards)}</span>
+                  </span>
+                ))}
+              </p>
             )}
           </div>
         ))}

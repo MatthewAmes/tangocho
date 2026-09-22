@@ -305,6 +305,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-turn.is-tutor .tc-turntext{font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;}
 .tc-turnen{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--mut-2);}
 /* A correction is the one thing that must not look like conversation. */
+.tc-turnnoted { margin: 4px 0 0; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--mut); }
+.tc-turnnoted .is-ok { color: var(--ok); }
+.tc-turnnoted .is-miss { color: var(--warn); }
 .tc-turnfix{margin:8px 0 0;padding-top:8px;border-top:1px solid var(--surface-4);
   font-size:14px;line-height:1.6;color:var(--ok);}
 .tc-tutorerr{margin:0;font-size:13px;color:var(--shu-soft);}
