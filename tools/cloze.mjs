@@ -117,6 +117,20 @@ export function clozeFor(index, card, opts = {}) {
   };
 }
 
+/* An example sentence to show AFTER a card is answered — the word met in use, which is
+   what makes it stick past the flashcard. A textbook sentence first (it was really said),
+   else a generated one already in hand. Never fetches: a card back is not the place to
+   spend an AI call. Returns the sentence split around the word so it can be highlighted. */
+export function exampleOf(index, card, generated = null) {
+  if (!card || !card.term) return null;
+  const cz = clozeFor(index, card);
+  if (cz) return { before: cz.before, word: card.term, after: cz.after, en: cz.en || "", source: "book" };
+  const g = generated && generated.sentence ? String(generated.sentence) : "";
+  const at = g.indexOf(card.term);
+  if (at < 0) return null;
+  return { before: g.slice(0, at), word: card.term, after: g.slice(at + card.term.length), en: generated.en || "", source: "generated" };
+}
+
 /* Options for a contextual multiple choice, answer included and deterministically shuffled.
    The wrong ones come from pickDistractors, so they are drawn by curriculum priority —
    confusion history, then the same act-scene, then nearby scenes, then words that sound

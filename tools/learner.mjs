@@ -738,8 +738,15 @@ export function chooseIntervention(pick, opts = {}) {
      STABLE state made this far too strict: twenty answers at 95% still reads as EMERGING
      once older evidence is discounted, and refusing to ever ask for production of a word
      answered correctly twenty times is not caution, it is a broken gate. */
-  const recDemonstrated = recAbility.state !== STATE.UNKNOWN
-    && recAbility.mean >= (o.produceAtAccuracy ?? 0.75);
+  /* ...and it was still too strict. Leaving UNKNOWN takes six straight correct answers
+     (the interval has to narrow), so a new word was recognised six times before it was
+     ever asked the other way — and producing a word is the skill that actually has to
+     be built, not a reward for having recognised it enough. Production arrives with a
+     cue (か＿＿び, or a choice between Japanese options), so asking early is effortful
+     rather than hopeless. Three answers at a posterior mean of 0.7 is three straight
+     correct: the word can be read, which is all this gate exists to establish. */
+  const recDemonstrated = (recAbility.observations || 0) >= (o.produceAfter ?? 3)
+    && recAbility.mean >= (o.produceAtAccuracy ?? 0.7);
   if (caps.type && recDemonstrated) unlocked.push("production");
   /* Listening is a REPEAT-only format. Audio depends on where you are, so a session full
      of it is unusable half the time — and because an unmeasured ability ranks as weak, an

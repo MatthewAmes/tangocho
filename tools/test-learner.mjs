@@ -807,5 +807,16 @@ t("rows written before got/want existed still make usable error records", () => 
   eq(out[0].failure, "meaning");
 });
 
+console.log("=== producing a word starts early ===");
+t("three straight correct recognitions open production", () => {
+  const pick = (n) => ({ caps: { type: true }, recognition: { seen: n, acc: 1, tried: true }, production: {} });
+  eq(chooseIntervention(pick(2)).skill, "recognition", "two answers is not yet evidence the word can be read");
+  eq(chooseIntervention(pick(3)).skill, "production", "three is — and producing is the skill that needs building");
+});
+t("a word being missed does not get pushed into production", () => {
+  const pick = { caps: { type: true }, recognition: { seen: 4, acc: 0.5, tried: true }, production: {} };
+  eq(chooseIntervention(pick).skill, "recognition");
+});
+
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} learner tests passed`);
 process.exit(fail ? 1 : 0);

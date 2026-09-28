@@ -5,7 +5,7 @@
 // stability fell 20 -> 3.60 -> 1.33 -> 0.65 and difficulty climbed 5 -> 6.70 -> 8.39 -> 10
 // and stayed there. Difficulty is clamped at 10 and stability growth carries an (11 - D)
 // factor, so one bad session permanently flattened that card's ability to gain stability.
-import { relearnStep, reviewOutcome, retention } from "../src/lib/schedule.js";
+import { relearnStep, reviewOutcome, retention, wantsHook, totalMisses } from "../src/lib/schedule.js";
 import { intervalFor } from "./fsrs.mjs";
 
 let fail = 0, run = 0;
@@ -84,6 +84,15 @@ t("firstPass defaults to true, so nothing that omits it changes behaviour", () =
 t("an interval never runs away", () => {
   const huge = relearnStep(state({ S: 100000 }), true, NOW);
   ok(huge.ivl <= 3650, "capped at ten years, got " + huge.ivl);
+});
+
+console.log("=== memory hooks arrive before a word becomes a leech ===");
+t("two misses and no run of correct answers wants a hook", () => {
+  eq(wantsHook({ seen: 3, correct: 1, streak: 0, lapses: 2 }), totalMisses({ seen: 3, correct: 1, streak: 0, lapses: 2 }) >= 2);
+  const slipping = { seen: 4, correct: 2, rseen: 0, rcorrect: 0, streak: 0 };
+  eq(wantsHook(slipping), true, "missed twice, not holding");
+  eq(wantsHook({ ...slipping, streak: 2 }), false, "two right in a row since: it is being learned");
+  eq(wantsHook({ seen: 3, correct: 2, streak: 0 }), false, "one miss is normal");
 });
 
 console.log(`\nall ${run} relearning tests ${fail ? `— ${fail} FAILED` : "passed"}`);

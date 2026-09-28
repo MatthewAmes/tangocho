@@ -23,7 +23,7 @@ import Tutor from "./src/tabs/Tutor.jsx";
 import Placement from "./src/tabs/Placement.jsx";
 import Shadow from "./src/tabs/Shadow.jsx";
 import NearMiss from "./src/tabs/NearMiss.jsx";
-import { followUpFor, liveReserve, markFixed } from "./tools/nearmiss.mjs";
+import { followUpFor, liveReserve, markFixed, confusedWith } from "./tools/nearmiss.mjs";
 import Kana from "./src/tabs/Kana.jsx";
 import Browse from "./src/tabs/Browse.jsx";
 import { SITUATIONS, makeProps, TALK, CHECKLIST } from "./tools/oral-data.mjs";
@@ -39,8 +39,9 @@ import { ACTIVITY, activityFor, arrange, describeComposition } from "./tools/com
 import { matchBoard, canMatch as canMatchBoard, tapResult, GRID } from "./tools/matchgrid.mjs";
 import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
-         describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE } from "./tools/benchmark.mjs";
-import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources } from "./tools/cloze.mjs";
+         describeRun, pushRun, poolRuns, glossOf, askable, RUN_SIZE, acceptedForms, normalise } from "./tools/benchmark.mjs";
+import { buildClozeIndex, hasContext, clozeFor, clozeChoices, addMinedSources, exampleOf } from "./tools/cloze.mjs";
+import { MIC_OK, listenJa } from "./src/lib/listen.js";
 import { pickDistractors } from "./tools/distractors.mjs";
 import { contrastSet, contrastDrill, hasContrast } from "./tools/contrast.mjs";
 import { posOf, shortGloss } from "./tools/pos.mjs";
@@ -85,7 +86,7 @@ import { GODAN_ROWS, conjugate, CONJ_FORMS } from "./src/lib/conjugate.js";
 import { unpackVideos, evidenceWeight, learningRate, applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, recommend, COVERAGE_LEADING_PARTICLES, COVERAGE_SAFE_SUFFIXES, COVERAGE_SAFE_SET, coverageAgainstDeck, band, bandName, relDots, agoLabel, blankInput } from "./src/lib/input-engine.js";
 import { SESSION_KEY, USER_EMAIL_KEY, loadSession, saveSession } from "./src/lib/session.js";
 import { TTS_OK, pickJpVoice, ttsUnlock, prefetchJa, speakJa, stopJa } from "./src/lib/tts.js";
-import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, dueness, statReview, boundMs, reviewOutcome, relearnStep, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
+import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, wantsHook, dueness, statReview, boundMs, reviewOutcome, relearnStep, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -509,6 +510,39 @@ function recordFollowUp(onResult, item, ok, ms, firstPass, kana) {
     confused: ok ? null : ((item.other && item.other.id) || null),
     recovery: "checkpoint",
   }));
+}
+
+/* The word in a sentence, shown once the card is answered. A flashcard teaches the
+   pairing; a sentence teaches the word — and a word met in use is the one that is still
+   there next month. Only what is already in hand (tools/cloze.mjs::exampleOf). */
+function ExampleLine({ index, card }) {
+  const ex = exampleOf(index, card, contextFor(card.id));
+  if (!ex) return null;
+  const whole = ex.before + ex.word + ex.after;
+  return (
+    <div className="tc-example" onClick={(e) => e.stopPropagation()}>
+      <p lang="ja" className="tc-exja">{ex.before}<b>{ex.word}</b>{ex.after} <SpeakBtn text={whole} /></p>
+      {ex.en && <p className="tc-exen">{ex.en}</p>}
+    </div>
+  );
+}
+
+/* Two words that were just confused, side by side. Drilling either one harder does not
+   separate them; seeing the difference at the moment it mattered does. */
+function ConfusionPair({ want, got }) {
+  if (!want || !got) return null;
+  const side = (c) => (
+    <div>
+      <span lang="ja">{c.term}</span>
+      {c.reading && c.reading !== c.term && <span lang="ja">{c.reading}</span>}
+      <span>{glossOf(c)}</span>
+    </div>
+  );
+  return (
+    <div className="tc-nmpair" aria-label="The word, and the one you mixed it up with" onClick={(e) => e.stopPropagation()}>
+      {side(want)}{side(got)}
+    </div>
+  );
 }
 
 function recordShadow({ id, ok, ms }) {
@@ -1056,6 +1090,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [flipped, setFlipped] = useState(false);
   const [typed, setTyped] = useState("");        // rōmaji the learner types on a production card
   const [verdict, setVerdict] = useState(null);  // {ok, got, want} once that answer is checked
+  /* Saying the answer instead of typing it. Speaking a word is its own retrieval route —
+     the one conversation actually uses — and it needs no Japanese keyboard. */
+  const [hearing, setHearing] = useState(false);
+  const recRef = useRef(null);
+  useEffect(() => () => { if (recRef.current) recRef.current.stop(); }, []);
   const [showWhy, setShowWhy] = useState(false);  // per-card "why am I seeing this?"
   const [running, setRunning] = useState(false);
   /* ── how many NEW words a day ──
@@ -1426,6 +1465,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const now = Date.now();
     return cards.filter((c) => (c.seen || 0) > 0 && dueness(c, now) >= 1).length;
   }, [cards, retention.target]);
+  /* What comes due by this time tomorrow — the reason to stop tonight. Sleep is when a
+     day's reviews consolidate, and another round on words just answered buys almost
+     nothing (FSRS grants little stability to a card recalled minutes ago). */
+  const tomorrowDue = useMemo(() => {
+    const now = Date.now();
+    return cards.filter((c) => (c.seen || 0) > 0 && dueness(c, now) < 1 && dueness(c, now + DAY) >= 1).length;
+  }, [cards, retention.target]);
   const masteredPct = useMemo(() => {
     if (!cards.length) return 0;
     return Math.round(cards.filter((c) => (c.level || 0) >= 4).length / cards.length * 100);
@@ -1611,11 +1657,14 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const warmContext = useCallback(async (pool) => {
     if (!AI_ENABLED || !loadSession()) return;
     try { await loadContext(); } catch (e) { return; }
+    /* Any word already met, not only the strong ones: the sentence is also the example
+       shown on the card back once a word is answered, and a word is best met in use while
+       it is still being learned. Words that have earned the context rung go first. */
     const need = (pool || [])
-      .filter((c) => c && c.term && c.reading
-        && !hasContext(clozeIndex, c.id) && !contextFor(c.id)
-        && recallUnlocked(c))                        // has earned production; the rung is in reach
-      .slice(0, 3);
+      .filter((c) => c && c.term && c.reading && (c.seen || 0) > 0
+        && !hasContext(clozeIndex, c.id) && !contextFor(c.id))
+      .sort((x, y) => (recallUnlocked(y) ? 1 : 0) - (recallUnlocked(x) ? 1 : 0))
+      .slice(0, 5);
     for (const c of need) {
       try {
         const { result } = await callAI("context_sentence", {
@@ -2177,6 +2226,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       const wantedText = (verdict && verdict.want) || c.reading || c.term || null;
       const rec = makeEvidence({
         id: c.id, deck: c.src || "vocab", format: fmt, skill: evSkill,
+        via: verdict && verdict.spoken ? "voice" : undefined,
         /* The cue the learner actually saw. This read c._cue, a field the just-in-time
            intervention rewrite renamed out of existence — so every record written since
            then carries cue: null and no cue calibration was possible. */
@@ -2284,9 +2334,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
      Rōmaji in, kana out, via the converter the Dates tab already uses: no IME needed, and
      "si"/"shi", "tu"/"tsu", "zyuppun"/"jyuppun" all land on the same kana. */
-  const checkSpelling = useCallback(() => {
+  const checkSpelling = useCallback((said) => {
     const c = queue[pos];
-    if (!c || !typed.trim()) return;
+    const spoken = typeof said === "string";
+    const text = spoken ? said : typed;
+    if (!c || !text.trim()) return;
     const want = c.reading || c.term;
     /* Same fix the choice formats already got, and the same bug: nothing was setting
        thinkRef here, so every TYPED answer went into the log as ms: 0 — untimed. That
@@ -2296,10 +2348,28 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        times when one of them is zero. Submitting IS the answer here, so the think time is
        how long the card was on screen. */
     if (thinkRef.current == null) thinkRef.current = Date.now() - shownRef.current;
-    const ok = kanaEqual(toKana(typed.trim()), want);
-    setVerdict({ ok, got: toKana(typed.trim()), want });
+    const gotText = toKana(text.trim());
+    /* Speech comes back as whatever the recogniser prefers — 学校 as often as がっこう — so
+       a spoken answer also counts when it is the written word itself. Typed answers keep
+       the reading check they always had. */
+    const ok = kanaEqual(gotText, want) || (spoken && acceptedForms(c).has(normalise(gotText)));
+    /* A wrong answer that is ANOTHER word in the deck is a confusion, not a misspelling —
+       recorded as one (chosenId feeds the evidence row's `confused`) and shown as a pair. */
+    const other = ok ? null : confusedWith(gotText, c, cards);
+    setVerdict({ ok, got: gotText, want, spoken, chosenId: other ? other.id : undefined });
     setFlipped(true);
-  }, [queue, pos, typed]);
+  }, [queue, pos, typed, cards]);
+
+  const toggleMic = useCallback(() => {
+    if (hearing) { if (recRef.current) recRef.current.stop(); return; }
+    ttsUnlock(); stopJa();
+    setHearing(true);
+    recRef.current = listenJa({
+      onPartial: (t) => setTyped(t),
+      onFinal: (t) => { setTyped(t); if (t.trim()) checkSpelling(t); },
+      onEnd: () => { setHearing(false); recRef.current = null; },
+    });
+  }, [hearing, checkSpelling]);
 
   // keyboard: space/enter flips; when flipped → →/Enter = got it, ←/Backspace = review
   useEffect(() => {
@@ -2374,7 +2444,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             <>
               <div className="tc-heronum">✓</div>
               <p className="tc-herolabel">all caught up</p>
-              <p className="tc-herosub">{cards.length} words · check back later for reviews</p>
+              <p className="tc-herosub">
+                {tomorrowDue > 0 ? `${tomorrowDue} come due tomorrow` : "nothing due tomorrow"} · sleep sets today's words, so stopping here is the right call
+              </p>
             </>
           )}
         </div>
@@ -2697,6 +2769,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         )}
         {/* One sentence, and only when the session actually measured enough to say it. */}
         {summary.weakest && <p className="tc-doneweak">{summary.weakest.note}</p>}
+        <p className="tc-donenext">
+          {tomorrowDue > 0 ? `${tomorrowDue} words come due tomorrow.` : "Nothing new comes due tomorrow."} Coming back
+          tomorrow does more than another round tonight — sleep is when today's words set.
+        </p>
         {/* The north-star metric, closed at the moment it was earned. Shown only against
             the learner's own recent rate — "0.42 per minute" is not a fact anyone can act
             on, and inventing a target to compare it against would be worse than silence. */}
@@ -3030,7 +3106,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               const cls = !verdict ? "" : isAnswer ? " is-answer" : chosen ? " is-wrongpick" : "";
               return (
                 <button key={c.id} type="button" className={"tc-mcopt" + cls} disabled={!!verdict}
-                        onClick={() => { if (!verdict) { setVerdict({ ok: c.id === card.id, chose: c.term }); setFlipped(true); } }}>
+                        onClick={() => { if (!verdict) { setVerdict({ ok: c.id === card.id, chose: c.term, chosenId: c.id === card.id ? undefined : c.id }); setFlipped(true); } }}>
                   {c.term}{c.reading && c.reading !== c.term ? ` · ${c.reading}` : ""}
                 </button>
               );
@@ -3207,6 +3283,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               {card.term} · {card.reading}
             </div>
           )}
+          {verdict && !verdict.ok && verdict.chosenId && (
+            <ConfusionPair want={card} got={choices.find((x) => x.id === verdict.chosenId)} />
+          )}
+          {verdict && <ExampleLine index={clozeIndex} card={card} />}
         </div>
       )}
 
@@ -3246,9 +3326,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     <div className="tc-cuehint" aria-label="hint">{cueHint(card.reading, cueLevel)}</div>
                   )}
                   <div className="tc-spellkana">{typed.trim() ? toKana(typed.trim()) : " "}</div>
-                  <button type="button" className="tc-btn tc-btn-wide" onClick={checkSpelling} disabled={!typed.trim()}>Check</button>
+                  <div className="tc-spellrow">
+                    {MIC_OK && (
+                      <button type="button" className={"tc-mic" + (hearing ? " is-live" : "")} aria-pressed={hearing}
+                              aria-label={hearing ? "Stop listening" : "Say it instead"} onClick={toggleMic}>{hearing ? "■" : "🎤"}</button>
+                    )}
+                    <button type="button" className="tc-btn tc-btn-wide" onClick={() => checkSpelling()} disabled={!typed.trim()}>Check</button>
+                  </div>
                 </div>
-                <span className="tc-flipcue">or tap to just say it aloud</span>
+                <span className="tc-flipcue">{MIC_OK ? "type it, or press 🎤 and say it" : "or tap to just say it aloud"}</span>
               </>
             ) : (
               <>
@@ -3282,8 +3368,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                     two side by side is where a spelling slip becomes learnable. */}
                 {verdict && (
                   <div className={"tc-spellverdict" + (verdict.ok ? " is-right" : " is-wrong")}>
-                    {verdict.ok ? "✓ spelled it" : <>✗ you wrote <b>{verdict.got}</b></>}
+                    {verdict.ok ? (verdict.spoken ? "✓ said it" : "✓ spelled it") : <>✗ you {verdict.spoken ? "said" : "wrote"} <b>{verdict.got}</b></>}
                   </div>
+                )}
+                {verdict && !verdict.ok && verdict.chosenId && (
+                  <ConfusionPair want={card} got={cards.find((x) => x.id === verdict.chosenId)} />
                 )}
                 <div lang="ja" className="tc-term tc-prodanswer">{card.term}</div>
               </>
@@ -3293,25 +3382,26 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             {!isProd && <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>}
             {isProd && <div lang="ja" className="tc-reading-front">{card.reading}</div>}
             <div className="tc-romaji">{showPitch && card.pitch ? card.pitch : card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
+            <ExampleLine index={clozeIndex} card={card} />
             {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen || 0}× · {card.seen ? Math.round(((card.correct || 0) / card.seen) * 100) : 0}%</span>}
-            {isLeech(card) && (
+            {wantsHook(card) && (
               /* The keyword mnemonic: link the Japanese sound to an English word you
                  already know, plus a vivid image. Pairing it with retrieval practice
                  beats either alone for foreign-language vocabulary, and it is the one
                  technique aimed squarely at words that repetition alone has failed to
                  shift — which is what a leech is. Typed once, shown on every review. */
               <div className="tc-mnbox" onClick={(e) => e.stopPropagation()}>
-                <span className="tc-leechtag"><span aria-hidden="true">🩹</span> stuck — give it a hook</span>
+                <span className="tc-leechtag"><span aria-hidden="true">🩹</span> {isLeech(card) ? "stuck" : "keeps slipping"} — give it a hook</span>
                 <input aria-label="Memory hook for this word" className="tc-mnin" value={card.mn || ""} placeholder="sounds like… / picture…"
                   onChange={(e) => onMnemonic(card.id, e.target.value)} />
               </div>
             )}
-            {!isLeech(card) && card.mn ? <p className="tc-mnshow"><span aria-hidden="true">🔗</span> {card.mn}</p> : null}
+            {!wantsHook(card) && card.mn ? <p className="tc-mnshow"><span aria-hidden="true">🔗</span> {card.mn}</p> : null}
             {/* The AI hook button used to sit on every card and went unused for months,
                 while adding a row of clutter to the one screen that should be quiet. It
                 still exists for stuck words, where a keyword mnemonic genuinely is the
                 technique that shifts them — but it is not on the face of every review. */}
-            {AI_ENABLED && isLeech(card) && (hook && hook.term === card.term ? (
+            {AI_ENABLED && wantsHook(card) && (hook && hook.term === card.term ? (
               <p className="tc-hooktext" onClick={(e) => e.stopPropagation()}>
                 {hook.busy ? "✨ thinking…" : hook.err ? hook.err : "✨ " + hook.text}
               </p>

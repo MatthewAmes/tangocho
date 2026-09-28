@@ -52,6 +52,16 @@ export function isLeech(c) {                 // stuck word: keeps failing despit
   return totalMisses(c) >= 6 && acc < 0.6;
 }
 
+/* A word that wants a memory hook. Waiting for leech status (eight tries, six misses)
+   means the hook arrives after the word has already cost a dozen reviews; a keyword image
+   is cheapest to make while the word is still new and slipping. Two misses without a run
+   of two correct since is the signal — ordinary words that are being learned normally
+   rarely miss twice. */
+export function wantsHook(c) {
+  if (isLeech(c)) return true;
+  return totalMisses(c) >= 2 && (c.streak || 0) < 2;
+}
+
 export function dueness(c, now) {
   const seen = c.seen || 0;
   if (seen === 0) return 0;

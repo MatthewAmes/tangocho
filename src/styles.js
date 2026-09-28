@@ -765,6 +765,7 @@ body{min-height:100%;overscroll-behavior-y:none;}
    margin (it was written to sit tight under the rate line) and would otherwise crowd this
    sentence against the XP figure. */
 .tc-doneweak{margin:0 auto 22px;max-width:40ch;font-size:14px;line-height:1.5;color:var(--mut);}
+.tc-donenext{margin:0 auto 22px;max-width:40ch;font-size:14px;line-height:1.5;color:var(--mut);}
 .tc-donerate{margin:6px 0 0;font-size:14px;color:var(--mut);}
 .tc-donerate b{color:var(--ok);}
 /* Last and smallest, on purpose. See the comment beside it in the JSX. */
@@ -889,6 +890,13 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-spellinput:focus{outline:2px solid rgba(201,184,255,.8);outline-offset:1px;}
 .tc-spellkana{min-height:22px;font-size:19px;letter-spacing:.04em;color:#c9b8ff;}
 .tc-spellbox .tc-btn{width:min(100%,300px);}
+.tc-spellrow{display:flex;gap:8px;align-items:stretch;justify-content:center;width:min(100%,300px);}
+.tc-spellbox .tc-spellrow .tc-btn{width:auto;flex:1 1 auto;}
+/* the word in a sentence, on the back of every answered card */
+.tc-example{margin:10px auto 0;max-width:34ch;text-align:center;}
+.tc-exja{margin:0;font-size:16px;line-height:1.6;}
+.tc-exja b{color:var(--ok);font-weight:700;}
+.tc-exen{margin:2px 0 0;font-size:13px;color:var(--mut);}
 .tc-spellverdict{font-family:var(--mono);font-size:12px;letter-spacing:.06em;padding:5px 11px;border-radius:8px;margin-bottom:8px;}
 .tc-spellverdict.is-right{color:#b8f0d0;background:rgba(90,220,150,.13);}
 .tc-spellverdict.is-wrong{color:#ffc2bb;background:rgba(255,120,100,.13);}

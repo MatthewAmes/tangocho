@@ -1,7 +1,7 @@
 // Tests for contextual exercises mined from the app's own scripted dialogue.
 //
 //   node tools/test-cloze.mjs
-import { lineText, buildClozeIndex, hasContext, clozeFor, clozeChoices } from "./cloze.mjs";
+import { lineText, buildClozeIndex, hasContext, clozeFor, clozeChoices, exampleOf } from "./cloze.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => { run++; try { fn(); console.log("  PASS  " + name); } catch (e) { fail++; console.log("  FAIL  " + name + "\n        " + e.message); } };
@@ -110,6 +110,29 @@ t("a line WITH English is unchanged", () => {
   const scripts = [{ name: "x", lines: [{ tokens: [{ t: "ねこがいます" }], en: "There is a cat." }] }];
   const idx = buildClozeIndex(scripts, [{ id: "c1", term: "ねこ", reading: "ねこ" }]);
   eq(idx.get("c1")[0].en, "There is a cat.");
+});
+
+console.log("=== example sentence on the card back ===");
+t("a textbook sentence comes first, split around the word", () => {
+  const idx = buildClozeIndex(SCRIPTS, CARDS);
+  const ex = exampleOf(idx, CARDS[0], { sentence: "食べ物が好きです。", en: "I like food." });
+  eq(ex.source, "book");
+  eq(ex.before + ex.word + ex.after, "毎日食べ物を買います。");
+  eq(ex.word, "食べ物");
+});
+t("with no textbook sentence, a generated one already in hand is used", () => {
+  const idx = buildClozeIndex(SCRIPTS, CARDS);
+  const ex = exampleOf(idx, CARDS[2], { sentence: "私は学生です。", en: "I am a student." });
+  eq(ex.source, "generated");
+  eq(ex.before, "私は");
+  eq(ex.after, "です。");
+});
+t("a generated sentence that lost the word is not shown", () => {
+  const idx = buildClozeIndex(SCRIPTS, CARDS);
+  eq(exampleOf(idx, CARDS[2], { sentence: "私はがくせいです。", en: "x" }), null);
+});
+t("nothing in hand means nothing shown — never a fetch", () => {
+  eq(exampleOf(buildClozeIndex(SCRIPTS, CARDS), CARDS[3], null), null);
 });
 
 console.log(fail ? `\n${fail}/${run} FAILED` : `\nall ${run} cloze tests passed`);
