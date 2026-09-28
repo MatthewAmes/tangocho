@@ -1597,6 +1597,30 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-mcwrap,.tc-prod{
   min-height:340px;display:flex;flex-direction:column;justify-content:space-between;}
 .tc-grade{min-height:var(--tap);display:flex;gap:10px;align-items:center;justify-content:center;}
+/* the feedback sheet (src/components/FeedbackSheet.jsx): pinned to the bottom of the view once an answer is judged */
+.tc-grade.has-sheet{position:sticky;bottom:0;z-index:6;display:block;margin:12px -4px 0;}
+.tc-fb{border-radius:16px;padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));border:1px solid var(--line);
+  background:var(--sumi);box-shadow:0 -8px 28px rgba(0,0,0,.45);text-align:left;}
+.tc-fb.is-ok{border-color:var(--ok);background:linear-gradient(rgba(16,185,129,.16),rgba(16,185,129,.16)),var(--sumi);}
+.tc-fb.is-bad{border-color:var(--shu);background:linear-gradient(rgba(224,101,90,.16),rgba(224,101,90,.16)),var(--sumi);}
+.tc-fbhead{display:flex;align-items:center;gap:8px;font:var(--t-caps);letter-spacing:.06em;text-transform:uppercase;}
+.tc-fb.is-ok .tc-fbhead{color:var(--ok);}
+.tc-fb.is-bad .tc-fbhead{color:var(--shu-soft);}
+.tc-fbmark{font-size:18px;line-height:1;}
+.tc-fbtitle{font-size:13px;}
+.tc-fbanswer{margin:8px 0 0;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;}
+.tc-fblabel{font-size:13px;color:var(--mut);}
+.tc-fbterm{font-size:20px;font-weight:700;}
+.tc-fbread{font-size:15px;color:var(--mut);}
+.tc-fbmean{font-size:14px;color:var(--washi);}
+.tc-fbexplain{margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.12);max-height:40vh;overflow-y:auto;}
+.tc-fbexplain p{margin:0 0 6px;font-size:14px;line-height:1.5;}
+.tc-fbexplain .tc-example{margin:8px 0 0;text-align:left;max-width:none;}
+.tc-fbmarked{display:block;font-size:22px;letter-spacing:.04em;margin-bottom:6px;}
+.tc-fbmarked .is-miss{color:var(--warn);text-decoration:underline;text-underline-offset:5px;text-decoration-thickness:2px;}
+.tc-fbbtns{display:flex;gap:8px;margin-top:12px;}
+.tc-fbbtns .tc-btn-wide{flex:1 1 auto;}
+.tc-fbexplainbtn{flex:0 0 auto;}
 
 /* ── course progress ──
    Two stacked fills in one track: the pale one is everything met, the bright one is what is

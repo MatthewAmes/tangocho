@@ -13,6 +13,9 @@ const BUILD = typeof __BUILD__ === "undefined" ? "dev" : __BUILD__;
 import { MASCOT_GIFS } from "./data/mascot.js";
 import Mascot, { mascotState } from "./src/components/Mascot.jsx";
 import SpeakBtn from "./src/components/SpeakBtn.jsx";
+import FeedbackSheet from "./src/components/FeedbackSheet.jsx";
+import { playFeedback } from "./src/lib/sfx.js";
+import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
 import Furigana from "./src/components/Furigana.jsx";
 import Bi from "./src/components/Bi.jsx";
 import ConjDrill from "./src/tabs/ConjDrill.jsx";
@@ -1094,6 +1097,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      the one conversation actually uses — and it needs no Japanese keyboard. */
   const [hearing, setHearing] = useState(false);
   const recRef = useRef(null);
+  /* The kanji dictionary, for taking a word apart in an explanation. Fetched the first time
+     Explain is pressed, not on mount: most sessions never open one, and kanji.json is the
+     largest file the app loads. */
+  const [kanjiIdx, setKanjiIdx] = useState(null);
+  const wantKanji = useCallback(() => {
+    if (!kanjiIdx) loadKanji().then((d) => { if (d) setKanjiIdx(kanjiIndex(d)); }).catch(() => {});
+  }, [kanjiIdx]);
   useEffect(() => () => { if (recRef.current) recRef.current.stop(); }, []);
   const [showWhy, setShowWhy] = useState(false);  // per-card "why am I seeing this?"
   const [running, setRunning] = useState(false);
@@ -1126,6 +1136,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [showOpts, setShowOpts] = useState(false);
   const newLeft = catchUp ? 0 : Math.max(0, newQuota - newToday);
   const [voiceOn, setVoiceOn] = useState(true);
+  /* Right or wrong is heard as well as seen — on the same switch as the spoken Japanese,
+     so "sound off" means sound off. Only when an answer is first judged, never on
+     re-render. */
+  const judgedRef = useRef(null);
+  useEffect(() => {
+    if (!verdict) { judgedRef.current = null; return; }
+    if (judgedRef.current === verdict) return;
+    judgedRef.current = verdict;
+    if (voiceOn) playFeedback(verdict.ok);
+  }, [verdict, voiceOn]);
   const liveRef = useRef(null);
   const [prodSet, setProdSet] = useState(() => new Set());
   /* One mark per QUEUE POSITION, not per card: an item can legitimately appear several
@@ -1679,6 +1699,16 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   }, [clozeIndex]);
 
   const card = queue[pos];
+  /* The answer as the sheet states it. For a spelling drill the "answer" is a spelling,
+     not the card's own word, so it says that instead. */
+  const sheetAnswer = (c, v) => {
+    if (!c || !v) return null;
+    if (v.note !== undefined && v.chose !== undefined && !v.mc) return { term: String(v.want || ""), reading: "", meaning: c.meaning };
+    if (Array.isArray(v.want) || (v.want && !v.mc && v.got !== undefined && String(v.want).length > (c.term || "").length + 3)) {
+      return { term: Array.isArray(v.want) ? v.want.join("") : String(v.want), reading: "", meaning: "" };
+    }
+    return { term: c.term, reading: c.reading, meaning: c.meaning };
+  };
   /* The scheduler picks the exercise; prodSet is the older mechanism and still stands in
      when a card arrived from somewhere other than Smart Review (a section drill, Trouble
      words) and so carries no format of its own. */
@@ -2376,13 +2406,20 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     if (!running || done) return;
     const onKey = (e) => {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+      /* An answer the app already checked is not the learner's to regrade. Enter used to
+         mean "got it" here whatever the verdict said, so a wrong typed answer followed by
+         Enter was recorded as correct. With a verdict, the keys only move on. */
+      if (verdict) {
+        if (e.code === "Enter" || e.code === "ArrowRight") { e.preventDefault(); grade(verdict.ok); }
+        return;
+      }
       if (e.code === "Space" || (e.code === "Enter" && !flipped)) { e.preventDefault(); flip(); }
       else if (flipped && (e.code === "ArrowRight" || e.code === "Enter")) { e.preventDefault(); grade(true); }
       else if (flipped && (e.code === "ArrowLeft" || e.code === "Backspace")) { e.preventDefault(); grade(false); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [running, done, flipped, grade, flip]);
+  }, [running, done, flipped, grade, flip, verdict]);
 
   if (cards.length === 0) {
     return (
@@ -2901,6 +2938,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       </div>
     );
   }
+
+  /* The feedback sheet, once an answer has been judged. keyed by position so a new card
+     never inherits the previous card's open explanation. */
+  const feedbackSheet = verdict ? (
+    <FeedbackSheet key={pos} ok={!!verdict.ok} answer={sheetAnswer(card, verdict)}
+      nextLabel={verdict.ok ? "Next →" : "Got it — next →"}
+      onNext={() => grade(verdict.ok)}
+      onExplain={wantKanji}
+      explain={explainAnswer({ card, verdict, activity: verdict.mc && renderActivity !== ACTIVITY.LISTEN ? ACTIVITY.MC : renderActivity, cards, kanji: kanjiIdx,
+        drill: sessionDrill ? { en: sessionDrill.en || sessionDrill.prompt || "" } : null })}
+      extra={sessionDrill || renderActivity === ACTIVITY.CLOZE ? null : <ExampleLine index={clozeIndex} card={card} />} />
+  ) : null;
 
   return (
     <div className={"tc-study" + (heat > 0 ? " tc-hot" : "")} style={{ "--combo": heat }}>
@@ -3424,7 +3473,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           The rule now: an activity that can be answered by tapping its own content shows no
           bottom control until it has been answered. Reveal / Missed / Got it belong to the
           flip card alone, because it is the only format where the learner grades themselves. */}
-      <div className="tc-grade">
+      <div className={"tc-grade" + (verdict ? " has-sheet" : "")}>
         {renderActivity === ACTIVITY.MATCH && grid ? (
           // The grid answers itself and auto-advances; a button here would be a second way
           // to leave, competing with the one the learner is already using.
@@ -3433,12 +3482,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           <button type="button" className="tc-btn tc-btn-wide tc-btn-got"
                   onClick={(e) => { e.stopPropagation(); grade(true); }}>Got it — next →</button>
         ) : ANSWERED_BY_TAPPING.includes(renderActivity) ? (
-          verdict ? (
-            <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
-                    onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
-              {verdict.ok ? "Next →" : "Noted — next →"}
-            </button>
-          ) : (
+          verdict ? feedbackSheet : (
             <p className="tc-mchint">{PROMPT_FOR[renderActivity] || "Pick the answer"}</p>
           )
         ) : !flipped ? (
@@ -3446,10 +3490,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         ) : verdict ? (
           /* The typed answer already settled this one. Offering "Got it" here would just
              invite overruling the check, which is the self-grading this replaces. */
-          <button type="button" className={"tc-btn tc-btn-wide " + (verdict.ok ? "tc-btn-got" : "tc-btn-miss")}
-                  onClick={(e) => { e.stopPropagation(); grade(verdict.ok); }}>
-            {verdict.ok ? "Next →" : "Noted — next →"}
-          </button>
+          feedbackSheet
         ) : (
           <>
             <button type="button" className="tc-btn tc-btn-miss" onClick={(e) => { e.stopPropagation(); grade(false); }}>Missed it</button>
