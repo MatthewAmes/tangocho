@@ -220,6 +220,22 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-objbar i{display:block;height:100%;border-radius:999px;}
 .tc-objbar i.is-good{background:var(--ok);}
 .tc-objbar i.is-mid{background:var(--warn);}   /* --due does not exist; the amber token is --warn, and var() on a missing token silently renders transparent */
+/* Volume 2, proven (Plan tab): word-by-word levels from tools/proven.mjs */
+.tc-provensum{margin:6px 0 10px;font-size:14px;line-height:1.5;}
+.tc-proven{display:flex;flex-direction:column;gap:8px;}
+.tc-provenrow{display:grid;grid-template-columns:56px 1fr 64px;gap:10px;align-items:center;}
+.tc-provenact{font-size:13px;color:var(--mut);}
+.tc-provenbar{display:flex;height:10px;border-radius:999px;overflow:hidden;background:var(--surface-3);}
+.tc-provenbar i,.tc-provenkey i{display:block;height:100%;}
+.tc-provenn{font-size:13px;text-align:right;font-variant-numeric:tabular-nums;}
+.tc-provenkey{display:flex;flex-wrap:wrap;gap:4px 14px;margin:10px 0 0;font-size:12px;color:var(--mut);}
+.tc-provenkey span{display:inline-flex;align-items:center;gap:5px;}
+.tc-provenkey i{width:10px;height:10px;border-radius:3px;}
+.tc-provenbar .is-mastered,.tc-provenkey .is-mastered{background:var(--ok);}
+.tc-provenbar .is-recalls,.tc-provenkey .is-recalls{background:var(--info);}
+.tc-provenbar .is-recognises,.tc-provenkey .is-recognises{background:var(--warn);}
+.tc-provenbar .is-learning,.tc-provenkey .is-learning{background:var(--shu-soft);}
+.tc-provenbar .is-new,.tc-provenkey .is-new{background:var(--outline-2);}
 .tc-objbar i.is-low{background:var(--shu);}
 .tc-objpct{grid-column:2;font-family:var(--mono);font-size:12px;color:var(--mut);}
 /* Words, not a bar. An unmeasured objective drawn as an empty track says "you failed this"

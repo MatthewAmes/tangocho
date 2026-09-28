@@ -16,6 +16,13 @@ import SpeakBtn from "./src/components/SpeakBtn.jsx";
 import FeedbackSheet from "./src/components/FeedbackSheet.jsx";
 import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
+import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
+
+/* The textbook words of an act: tagged with a real scene (7-1, 12-9R), not the
+   supplemental lists (class notes, dates) that share the act number. */
+const isBookWord = (c) => /^\d+-/.test(String((c && c.sec) || ""));
+const actOfCard = (c) => { const n = parseInt(String((c && c.sec) || ""), 10); return Number.isFinite(n) ? n : null; };
+const LEVEL_LABEL = { mastered: "mastered", recalls: "can recall", recognises: "recognise only", learning: "learning", new: "not started" };
 import Furigana from "./src/components/Furigana.jsx";
 import Bi from "./src/components/Bi.jsx";
 import ConjDrill from "./src/tabs/ConjDrill.jsx";
@@ -1534,7 +1541,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const streak = useMemo(() => streakFrom(days), [days]);
   const todayKey = localDayKey();
   const todayRev = (days && days[todayKey] && days[todayKey].rev) || 0;
-  const knownCount = useMemo(() => cards.filter((c) => (c.level || 0) >= 4).length, [cards]);
+  /* What is PROVEN (tools/proven.mjs), not what a counter reached: produced without help
+     on three separate days across a week. Small and slow to move, which is the point. */
+  const proven = useMemo(() => tally(levelsFor(evidence, cards.map((c) => c.id))), [evidence, cards]);
   const [retentionPref, setRetentionState] = useState(retention.target);
   // module-level retention.target is refreshed by its own onAfterPull above, which is
   // registered first (at module load) and so has already run when this callback fires
@@ -1564,10 +1573,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       state === "sleeping" ? (streak > 0 ? `${streak}-day streak — keep it alive?` : "Ready when you are.")
       : state === "worried" ? `${dueCount} reviews have piled up. Little and often beats a big catch-up.`
       : state === "proud" ? `${streak} days straight. This is the part that actually works.`
-      : knownCount > 0 ? `${knownCount} words are properly solid now.`
+      : proven.mastered > 0 ? `${proven.mastered} words are properly mastered now.`
       : "Nice — that's a start.";
     return { state, line };
-  }, [todayRev, dueCount, streak, knownCount]);
+  }, [todayRev, dueCount, streak, proven.mastered]);
   const batches = useMemo(() => {
     const map = new Map();
     cards.forEach((c) => { const sec = sectionOf(c); if (!map.has(sec)) map.set(sec, []); map.get(sec).push(c); });
@@ -2461,7 +2470,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               {/* Deliberately counts only level 4+. "Never missed" was flattering and
                   meaningless — most of those had been seen once. This number is small and
                   moves slowly, which is the point: it can be trusted. */}
-              <span className="tc-stat"><b>{knownCount}</b> words solid</span>
+              <span className="tc-stat" title={`Mastered = produced without help on ${PROVEN.days} different days across at least a week`}>
+                <b>{proven.mastered}</b> mastered
+              </span>
+              {proven.recalls > 0 && <span className="tc-stat"><b>{proven.recalls}</b> can recall</span>}
               {todayRev > 0 && <span className="tc-stat"><b>{todayRev}</b> today</span>}
               {forecast.fading > 0 && <span className="tc-stat"><b>{forecast.fading}</b> fading</span>}
             </div>
@@ -3999,6 +4011,14 @@ function Plan({ cards = [], onResult }) {
      do in general. Same 60-day window as the profile above, and the same posteriors — the
      only thing that changes is that the evidence is split by act-scene first. */
   const mastery = useMemo(() => masteryByLesson(evidence, cards, { days: 60 }), [evidence, cards]);
+  /* Volume 2 word by word (tools/proven.mjs) — whole volume, then act by act. */
+  const vol2Words = useMemo(() => cards.filter((c) => isBookWord(c) && actOfCard(c) >= 7 && actOfCard(c) <= 12), [cards]);
+  const vol2Levels = useMemo(() => levelsFor(evidence, vol2Words.map((c) => c.id)), [evidence, vol2Words]);
+  const vol2 = useMemo(() => tally(vol2Levels), [vol2Levels]);
+  const vol2Acts = useMemo(() => [7, 8, 9, 10, 11, 12].map((act) => {
+    const ids = vol2Words.filter((c) => actOfCard(c) === act).map((c) => c.id);
+    return { act, t: tally(new Map(ids.map((id) => [id, vol2Levels.get(id)]))) };
+  }).filter((a) => a.t.total > 0), [vol2Words, vol2Levels]);
   /* What the app worked out on its own, shown next to the override so the setting is a
      correction rather than a guess. Same call the Study tab makes. */
   const derivedAct = useMemo(() => currentAct(evidence, cards), [evidence, cards]);
@@ -4272,6 +4292,41 @@ function Plan({ cards = [], onResult }) {
           <option value="auto">Work it out for me{derivedAct === null ? " — nothing studied yet" : ` — Act ${derivedAct}`}</option>
           {ACT_CHOICES.map((a) => <option key={a} value={String(a)}>Act {a} · Volume {volumeOfAct(a)}</option>)}
         </select>
+      </section>
+
+      {/* ── Volume 2, proven ──
+          Word by word, what the evidence shows — not lessons completed, not an estimate.
+          The population is every textbook word in the act, so an untouched word counts as
+          "not started" and the fraction is honest. */}
+      <section className="tc-plansec">
+        <h2 className="tc-planh">Volume 2 — what you've proven <span className="tc-planh-sub">Acts 7–12</span></h2>
+        <p className="tc-planhint" style={{ marginTop: 0 }}>
+          A word is <b>mastered</b> once you've produced it without help on {PROVEN.days} different days
+          across at least a week, and got it right last time. Hints, multiple choice and the tutor's
+          judgement don't count toward that — they show you <i>recognise</i> it.
+        </p>
+        {vol2.total > 0 && (
+          <p className="tc-provensum">
+            <b>{vol2.mastered}</b> of {vol2.total} mastered · <b>{vol2.recalls}</b> can recall ·
+            <b> {vol2.recognises}</b> recognise only · <b>{vol2.new}</b> not started
+          </p>
+        )}
+        <div className="tc-proven">
+          {vol2Acts.map(({ act, t }) => (
+            <div key={act} className="tc-provenrow">
+              <span className="tc-provenact">Act {act}</span>
+              <span className="tc-provenbar" aria-label={`Act ${act}: ${t.mastered} mastered, ${t.recalls} can recall, ${t.recognises} recognise only, ${t.learning} learning, ${t.new} not started, of ${t.total}`}>
+                {[...LEVEL_ORDER].reverse().map((l) => t[l] > 0 && (
+                  <i key={l} className={"is-" + l} style={{ width: (t[l] / t.total * 100) + "%" }} />
+                ))}
+              </span>
+              <span className="tc-provenn">{t.mastered}/{t.total}</span>
+            </div>
+          ))}
+        </div>
+        <p className="tc-provenkey" aria-hidden="true">
+          {[...LEVEL_ORDER].reverse().map((l) => <span key={l}><i className={"is-" + l} />{LEVEL_LABEL[l]}</span>)}
+        </p>
       </section>
 
       {/* ── the learner profile ──
