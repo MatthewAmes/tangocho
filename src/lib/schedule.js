@@ -2,7 +2,7 @@
 
 import { review as fsrsReview, retrievability, seedFromHistory, intervalFor,
          gradeFromLatency, AGAIN, HARD, GOOD, EASY } from "../../tools/fsrs.mjs";
-import { latencyNorms, latencyVerdict } from "../../tools/learner.mjs";
+import { latencyNorms, latencyVerdict, CUE } from "../../tools/learner.mjs";
 
 /* The desired probability of recall at review time. A holder rather than a bare export:
    setRetention writes it when the learner moves the slider, and a pull from another
@@ -76,9 +76,11 @@ export function dueness(c, now) {
   return (now - (c.last || 0)) / interval;
 }
 
-export function statReview(st, ok, ms, now = Date.now()) {
+export function statReview(st, ok, ms, now = Date.now(), cue = null) {
   const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
-  return fsrsReview(prior, gradeFromLatency(ok, ms, { streak: st && st.streak }), now, retention.target);
+  // Same support cap as the vocabulary path (capForSupport, below): a kana or kanji picked
+  // from options has not been recalled, whichever deck it lives in.
+  return fsrsReview(prior, capForSupport(gradeFromLatency(ok, ms, { streak: st && st.streak }), cue), now, retention.target);
 }
 
 export function boundMs(ms) { return ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0; }
@@ -108,7 +110,41 @@ export function relearnStep(st, got, now = Date.now(), target = retention.target
   return { ...st, last: now, due: now + 10 * 60000, ivl: 10 / 1440, relearning: true };
 }
 
-export function reviewOutcome(card, { got, ms, dir, area, foreign, firstPass = true, now = Date.now() }) {
+/* ── support caps the credit ──
+   A right answer is only as strong as the retrieval behind it. Picking the word out of
+   four, finishing か＿＿び, or pressing "got it" on a card that showed the answer are all
+   successes, and they all move the memory — but none of them is independent recall, and
+   grading them like one grew intervals the learner had never earned. The first free recall
+   after that would then arrive weeks late and fail.
+
+     answer shown, a choice, a strong hint   -> at most HARD
+     a partial mask (かよう＿＿)              -> at most GOOD
+     free recall, or use in a sentence       -> uncapped
+
+   A miss is a miss at any support level. An unknown cue (a card served from outside the
+   intervention model) is not capped — no evidence of support is not evidence of it. */
+export function capForSupport(grade, cue) {
+  if (grade === AGAIN || typeof cue !== "number") return grade;
+  if (cue <= CUE.STRONG) return Math.min(grade, HARD);
+  if (cue === CUE.PARTIAL) return Math.min(grade, GOOD);
+  return grade;
+}
+
+/* The support an answer ACTUALLY had, from the activity on screen — which is not always
+   the cue the intervention model asked for: the composer can turn a production ask into a
+   word bank, or a failed build into multiple choice. Activity names are the strings from
+   tools/compose.mjs::ACTIVITY (not imported, to keep this module's graph small; the test
+   pins them). */
+const CHOICE_ACTIVITIES = new Set(["mc", "match", "listen", "cloze", "tapfill", "spell", "emoji"]);
+export function supportCue(activity, intended = null) {
+  if (activity === "learn") return CUE.SHOWN;
+  if (CHOICE_ACTIVITIES.has(activity)) return CUE.CHOOSE;
+  if (activity === "build" || activity === "order") return CUE.STRONG;   // the pieces are given
+  if (activity === "type" || activity === "recall") return typeof intended === "number" ? intended : CUE.FREE;
+  return typeof intended === "number" ? intended : null;
+}
+
+export function reviewOutcome(card, { got, ms, dir, area, foreign, firstPass = true, now = Date.now(), cue = null }) {
   /* Requeue passes keep every legacy counter moving — accuracy and the done screen stay
      honest — and leave the memory state to the one lapse that already happened. */
   if (!firstPass) {
@@ -121,13 +157,13 @@ export function reviewOutcome(card, { got, ms, dir, area, foreign, firstPass = t
   }
   if (foreign) {                       // kana / kanji / 10k decks go through statReview
     const prior = card && card.fsrs ? card.fsrs : (card && (card.seen || 0) > 0 ? seedFromHistory(card) : null);
-    const next = statReview(card, got, ms, now);
+    const next = statReview(card, got, ms, now, cue);
     return { prior, next, t: ms, isProd: false, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
   }
   const t = boundMs(ms);
   const isProd = dir === "prod";
-  const grade = gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
-    isProd ? "type" : "recall", latencyNormsRef.current, (card && card.streak) || 0);
+  const grade = capForSupport(gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
+    isProd ? "type" : "recall", latencyNormsRef.current, (card && card.streak) || 0), cue);
   const prior = isProd ? ((card && card.rfsrs) || null) : ((card && card.fsrs) || seedFromHistory(card || {}));
   const next = fsrsReview(prior, grade, now, retention.target);
   return { grade, prior, next, t, isProd, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };

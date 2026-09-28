@@ -5,7 +5,10 @@
 // stability fell 20 -> 3.60 -> 1.33 -> 0.65 and difficulty climbed 5 -> 6.70 -> 8.39 -> 10
 // and stayed there. Difficulty is clamped at 10 and stability growth carries an (11 - D)
 // factor, so one bad session permanently flattened that card's ability to gain stability.
-import { relearnStep, reviewOutcome, retention, wantsHook, totalMisses } from "../src/lib/schedule.js";
+import { relearnStep, reviewOutcome, retention, wantsHook, totalMisses, capForSupport, supportCue } from "../src/lib/schedule.js";
+import { AGAIN, HARD, GOOD, EASY } from "./fsrs.mjs";
+import { CUE } from "./learner.mjs";
+import { ACTIVITY } from "./compose.mjs";
 import { intervalFor } from "./fsrs.mjs";
 
 let fail = 0, run = 0;
@@ -95,5 +98,30 @@ t("two misses and no run of correct answers wants a hook", () => {
   eq(wantsHook({ seen: 3, correct: 2, streak: 0 }), false, "one miss is normal");
 });
 
+console.log("=== a hinted success is not independent recall ===");
+t("support caps the grade; a miss stays a miss", () => {
+  eq(capForSupport(EASY, CUE.CHOOSE), HARD, "picking from options");
+  eq(capForSupport(GOOD, CUE.SHOWN), HARD, "the answer was on screen");
+  eq(capForSupport(EASY, CUE.STRONG), HARD, "か＿＿び");
+  eq(capForSupport(EASY, CUE.PARTIAL), GOOD, "かよう＿＿");
+  eq(capForSupport(EASY, CUE.FREE), EASY, "free recall is uncapped");
+  eq(capForSupport(AGAIN, CUE.CHOOSE), AGAIN);
+  eq(capForSupport(EASY, null), EASY, "unknown support is not assumed");
+});
+t("the support comes from the activity actually shown", () => {
+  eq(supportCue(ACTIVITY.MC, CUE.FREE), CUE.CHOOSE, "a production ask rendered as choices is a choice");
+  eq(supportCue(ACTIVITY.LEARN), CUE.SHOWN);
+  eq(supportCue(ACTIVITY.BUILD), CUE.STRONG);
+  eq(supportCue(ACTIVITY.TYPE, CUE.STRONG), CUE.STRONG, "a typed answer keeps its hint level");
+  eq(supportCue(ACTIVITY.TYPE, null), CUE.FREE);
+  for (const a of ["mc","match","listen","cloze","tapfill","spell","emoji","learn","build","order","type","recall"]) eq(Object.values(ACTIVITY).includes(a), true, a + " must still be an ACTIVITY name");
+});
+t("a multiple-choice success grows the memory less than a free recall", () => {
+  const card = { seen: 3, correct: 3, streak: 3, fsrs: { S: 5, D: 5, last: Date.now() - 5 * 86400000, due: Date.now() } };
+  const free = reviewOutcome(card, { got: true, ms: 1500, dir: undefined, area: "vocab", cue: CUE.FREE });
+  const chose = reviewOutcome(card, { got: true, ms: 1500, dir: undefined, area: "vocab", cue: CUE.CHOOSE });
+  ok(chose.s1 < free.s1, `choice ${chose.s1} should be below free ${free.s1}`);
+  ok(chose.s1 > card.fsrs.S, "but it still counts for something");
+});
 console.log(`\nall ${run} relearning tests ${fail ? `— ${fail} FAILED` : "passed"}`);
 process.exitCode = fail ? 1 : 0;

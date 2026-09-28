@@ -89,7 +89,7 @@ import { GODAN_ROWS, conjugate, CONJ_FORMS } from "./src/lib/conjugate.js";
 import { unpackVideos, evidenceWeight, learningRate, applyRating, seedLevelsFromDeck, fuseLevels, seededShuffle, recommend, COVERAGE_LEADING_PARTICLES, COVERAGE_SAFE_SUFFIXES, COVERAGE_SAFE_SET, coverageAgainstDeck, band, bandName, relDots, agoLabel, blankInput } from "./src/lib/input-engine.js";
 import { SESSION_KEY, USER_EMAIL_KEY, loadSession, saveSession } from "./src/lib/session.js";
 import { TTS_OK, pickJpVoice, ttsUnlock, prefetchJa, speakJa, stopJa } from "./src/lib/tts.js";
-import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, wantsHook, dueness, statReview, boundMs, reviewOutcome, relearnStep, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
+import { retention, isWeak, masteryScore, DAY, REVIEW_INTERVALS, recallUnlocked, effLevel, isLeech, wantsHook, supportCue, dueness, statReview, boundMs, reviewOutcome, relearnStep, latencyNormsRef, refreshLatencyNorms, gradeAgainstNorm, statNeed, prodDue, MASTERY_CEIL, MASTERY_STOPS, masteryColor, masteryStyle, recallChance, needScore } from "./src/lib/schedule.js";
 
 const STORE_KEY = "jpn101:deck";
 const SEED_KEY = "jpn101:deckVersion";
@@ -875,7 +875,8 @@ export default function JpnFlashcards() {
            level still drive the existing UI, and keeping them means nothing already
            recorded is lost if this needs rolling back. The schedule, though, now comes
            from the memory model. */
-        const { next: nextState, isProd } = reviewOutcome(c, { got, ms: t, dir, area, firstPass });
+        const { next: nextState, isProd } = reviewOutcome(c, { got, ms: t, dir, area, firstPass,
+          cue: outcome && typeof outcome.cue === "number" ? outcome.cue : null });
         const fsrs = isProd ? c.fsrs : nextState;
         const rfsrs = isProd ? nextState : c.rfsrs;
         const ease = Math.max(0.55, Math.min(1.8, (c.ease || 1) + delta)); // adaptive: misses tighten the leash
@@ -2157,7 +2158,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     // Kana, kanji and 10k cards belong to their own decks and go home to their own keys.
     const outcome = { failure: got ? null : classifyFailure({ format: fmt,
       expected: c.reading || c.term, got: verdict && verdict.chose ? verdict.chose : (verdict && verdict.got ? verdict.got : "") }),
-      skill: skillForFormat(fmt) };
+      skill: skillForFormat(fmt),
+      /* How much help the answer had, for capping its credit (schedule.js::capForSupport). */
+      cue: supportCue(renderActivity, typeof cueLevel === "number" ? cueLevel : null) };
     /* Requeue passes are relearning steps. missRef is incremented BELOW, after this call,
        so it is still falsy the first time a card is graded and truthy on every retry. */
     const firstPass = !missRef.current[c.id];
@@ -2353,7 +2356,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
          - MP-09's got/want would have been dead on arrival for the same reason.
        Found by driving a real session and comparing the screen ("you wrote かようび")
        against the row it wrote (failure: blank, got: null). */
-  }, [queue, pos, onResult, verdict, declineNudge, showNudge]);
+  }, [queue, pos, onResult, verdict, declineNudge, showNudge, renderActivity, cueLevel]);
 
   /* ── spelling ──
      A production card used to be self-graded: see the English, think of the Japanese,
@@ -5482,7 +5485,7 @@ async function recordForeign(card, ok, ms, area, outcome, firstPass = true) {
       store[card.srcId] = applyOutcome({
         /* Same one-lapse-per-session rule as the vocabulary deck: a retry inside the
            session graduates or holds the card, it does not re-run the lapse formula. */
-        ...st, last: now, fsrs: firstPass ? statReview(st, ok, ms, now) : relearnStep(st.fsrs, ok, now),
+        ...st, last: now, fsrs: firstPass ? statReview(st, ok, ms, now, outcome && typeof outcome.cue === "number" ? outcome.cue : null) : relearnStep(st.fsrs, ok, now),
         seen: (st.seen || 0) + 1, correct: (st.correct || 0) + (ok ? 1 : 0),
         streak: ok ? (st.streak || 0) + 1 : 0,
         level: ok ? Math.min(5, (st.level || 0) + 1) : Math.max(0, (st.level || 0) - 2),
