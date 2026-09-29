@@ -62,19 +62,55 @@ t("an English gloss is required for a word bank — it IS the prompt", () => {
   eq(activityFor(pick({ format: "type", cue: CUE.PARTIAL }), noEn), ACTIVITY.TYPE);
 });
 t("formats the composer does not specialise pass straight through", () => {
-  for (const f of ["learn", "mc", "recall", "listen"]) {
+  for (const f of ["learn", "recall", "listen"]) {
     eq(activityFor(pick({ format: f }), withSentence), f);
   }
+  eq(activityFor(pick({ format: "mc" }), withSentence, { variety: false }), "mc", "with variety off, mc stays mc");
 });
 t("an unknown format never escapes as an unrenderable activity", () => {
   eq(activityFor(pick({ format: "nonsense" }), withSentence), ACTIVITY.MC);
 });
 
-t("recognition becomes a grid only when a real confusable is on the board", () => {
-  const withConf = { ...withSentence, canMatch: () => true };
+t("recognition becomes a grid when a real confusable is on the board", () => {
+  const withConf = { ...withSentence, canMatch: () => true, hasConfusable: () => true };
   eq(activityFor(pick({ format: "mc" }), withConf), ACTIVITY.MATCH);
-  // and stays plain multiple choice when there is nothing to discriminate against
-  eq(activityFor(pick({ format: "mc" }), withSentence), ACTIVITY.MC);
+  // no board at all: never a grid
+  ok(activityFor(pick({ format: "mc" }), withSentence) !== ACTIVITY.MATCH);
+});
+
+console.log("=== variety ===");
+const many = (fmt, m, n = 300, extra = {}) => Array.from({ length: n }, (_, i) => activityFor(pick({ id: "w" + i, format: fmt, ...extra }), m));
+const share = (list, a) => list.filter((x) => x === a).length / list.length;
+t("a board that exists only because the deck is big is an occasional grid, not every card", () => {
+  const anyBoard = { ...withSentence, sentenceFor: () => null, canMatch: () => true, hasConfusable: () => false };
+  const s = share(many("mc", anyBoard), ACTIVITY.MATCH);
+  ok(s > 0.1 && s < 0.3, `grid share ${s}`);
+});
+t("recognition rotates between choice, sentence and picture when the card has them", () => {
+  const rich = { ...withSentence, canEmoji: () => true };
+  const got = many("mc", rich);
+  for (const a of [ACTIVITY.MC, ACTIVITY.CLOZE, ACTIVITY.EMOJI]) ok(share(got, a) > 0.2, `${a} share ${share(got, a)}`);
+});
+t("no sentence with a translation, no in-context question", () => {
+  const noEn = { sentenceFor: () => ({ sentence: "わたしは がくせい です。" }) };
+  ok(!many("mc", noEn).includes(ACTIVITY.CLOZE));
+});
+t("the same card at the same step is always asked the same way", () => {
+  const rich = { ...withSentence, canEmoji: () => true };
+  eq(activityFor(pick({ id: "x1", format: "mc" }), rich), activityFor(pick({ id: "x1", format: "mc" }), rich));
+});
+t("free production is mostly typing, sometimes a word bank", () => {
+  const got = many("type", withSentence, 300, { cue: CUE.FREE });
+  const b = share(got, ACTIVITY.BUILD);
+  ok(b > 0.2 && b < 0.45, `build share ${b}`);
+  ok(share(got, ACTIVITY.TYPE) > 0.5);
+});
+t("a session carries at most one grid per six items", () => {
+  const conf = { ...withSentence, canMatch: () => true, hasConfusable: () => true };
+  const picks = Array.from({ length: 12 }, (_, i) => pick({ id: "g" + i, format: "mc" }));
+  const out = composeSession(picks, conf);
+  ok(out.filter((x) => x.activity === ACTIVITY.MATCH).length <= 2, "too many grids");
+  eq(out.length, 12, "capping changes the form, never drops an item");
 });
 
 console.log("=== the arc ===");

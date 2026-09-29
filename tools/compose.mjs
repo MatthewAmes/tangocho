@@ -30,6 +30,7 @@
    better at it. The composer only decides presentation and order. */
 
 import { CUE } from "./learner.mjs";
+import { hashSeed } from "./session.mjs";
 
 export const ACTIVITY = {
   LEARN: "learn",       // first contact — shown, not tested
@@ -59,7 +60,13 @@ export const DEFAULTS = {
   maxChunks: 8,
   recoveryAt: 0.45,      // where in the session a recent failure belongs (0..1)
   finale: true,          // end on the least-supported item available
+  gridEvery: 6,          // at most one matching grid per this many items
+  gridChance: 0.2,       // share of recognition cards offered a grid with no confusable
 };
+
+/* Deterministic per card and step: the same card asked the same way on a re-render, a
+   different way the next time it comes round. */
+const roll = (pick, salt) => hashSeed(`${salt}:${pick && pick.id}:${(pick && pick.step) || 0}`);
 
 /* ── 1. which activity ──
    The intervention engine has already chosen a skill and a cue. This turns that into the
@@ -88,12 +95,18 @@ export function activityFor(pick, material = {}, opts = {}) {
   if (fmt === "type") {
     /* Production, laddered by how much the learner still needs holding up. Tiles that are
        all correct (ORDER) is the gentlest — it only asks about order. Tiles with extras
-       (BUILD) also asks which words belong. Typing asks for everything. */
+       (BUILD) also asks which words belong. Typing asks for everything.
+
+       At the top of the ladder a third of the asks still build the sentence rather than
+       type the word: typing one word over and over is the monotony the learner reported,
+       and a word bank with extras is still production — choosing which words belong and
+       in what order is exactly using the word. */
     const chunks = material.chunkCount ? material.chunkCount(sent) : 0;
     const usable = sent && sent.en && chunks >= o.minChunks && chunks <= o.maxChunks;
     if (!usable) return ACTIVITY.TYPE;
     if (cue <= CUE.STRONG) return ACTIVITY.ORDER;
     if (cue === CUE.PARTIAL) return ACTIVITY.BUILD;
+    if (o.variety !== false && roll(pick, "build") < 1 / 3) return ACTIVITY.BUILD;
     return ACTIVITY.TYPE;
   }
 
@@ -102,13 +115,29 @@ export function activityFor(pick, material = {}, opts = {}) {
     return ACTIVITY.EMOJI;
   }
 
-  /* Recognition becomes a matching grid when a worthwhile board can be built — one that
-     holds a word this learner actually mixes up with the anchor. Four unrelated words in a
-     grid is four recognition questions shown at once, which is EASIER than asking them one
-     at a time; the confusable is what makes it an exercise. No confusable, no grid. */
-  if (fmt === "mc" && material.canMatch && material.canMatch(pick.id)) return ACTIVITY.MATCH;
-  if (fmt === "mc" && material.canEmoji && material.canEmoji(pick.id) && material.wantsEmoji && material.wantsEmoji(pick.id)) {
-    return ACTIVITY.EMOJI;
+  /* Recognition. A matching grid when a worthwhile board exists — one holding a word this
+     learner actually mixes up with the anchor, because four unrelated words in a grid are
+     four recognition questions shown at once, which is EASIER than asking them one at a
+     time. canMatch alone could not say that: it builds a board from the whole deck, so it
+     said yes to nearly every card and sessions became grid after grid. The confusable is
+     now asked for separately (hasConfusable), and without one a grid is only an occasional
+     change of pace (gridChance), capped per session in composeSession.
+
+     Everything else ROTATES between the recognition forms the card can support: plain
+     choice, the word inside a real sentence (when it has one with a translation), and the
+     picture. Same card, same step, same form — so nothing reshuffles under the learner. */
+  if (fmt === "mc") {
+    const board = material.canMatch && material.canMatch(pick.id);
+    const confusable = material.hasConfusable ? material.hasConfusable(pick.id) : true;
+    if (board && !o.noGrid && (confusable || (o.variety !== false && roll(pick, "grid") < o.gridChance))) return ACTIVITY.MATCH;
+    if (o.variety === false) {
+      if (material.canEmoji && material.canEmoji(pick.id) && material.wantsEmoji && material.wantsEmoji(pick.id)) return ACTIVITY.EMOJI;
+      return ACTIVITY.MC;
+    }
+    const forms = [ACTIVITY.MC];
+    if (sent && sent.en) forms.push(ACTIVITY.CLOZE);
+    if (material.canEmoji && material.canEmoji(pick.id)) forms.push(ACTIVITY.EMOJI);
+    return forms[Math.floor(roll(pick, "recog") * forms.length) % forms.length];
   }
 
   if (fmt === "spell") {
@@ -194,9 +223,19 @@ function spaceOutGrids(list) {
 
 /* The whole job: decide each activity, then arrange them. */
 export function composeSession(picks, material = {}, opts = {}) {
-  const withActivity = (picks || []).filter(Boolean)
-    .map((p) => ({ ...p, activity: activityFor(p, material, opts) }));
-  return arrange(withActivity, opts);
+  const o = { ...DEFAULTS, ...opts };
+  const list = (picks || []).filter(Boolean);
+  const withActivity = list.map((p) => ({ ...p, activity: activityFor(p, material, o) }));
+  /* No more than one grid per gridEvery items. The extras are re-chosen as ordinary
+     recognition — which now rotates — rather than all falling to plain multiple choice. */
+  const maxGrids = Math.max(1, Math.floor(list.length / o.gridEvery));
+  let grids = 0;
+  const capped = withActivity.map((x) => {
+    if (x.activity !== ACTIVITY.MATCH) return x;
+    if (++grids <= maxGrids) return x;
+    return { ...x, activity: activityFor(x, material, { ...o, noGrid: true }) };
+  });
+  return arrange(capped, o);
 }
 
 /* What the session turned out to be, for the screen that says what is coming. Counts the

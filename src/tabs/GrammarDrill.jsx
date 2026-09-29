@@ -21,7 +21,7 @@ const LEVEL_TEXT = { mastered: "mastered", recalls: "can produce", recognises: "
 const SESSION = 10;
 
 const kanaOf = (v) => { try { return toKana(String(v || "").trim()); } catch (e) { return String(v || "").trim(); } };
-const gid = (id) => "gram:" + id;
+const gid = (id) => "grammar:" + id;   // the note's card id in Smart Review too
 
 export default function GrammarDrill({ evidence = [], scripts = [], onAnswer }) {
   const inventory = useMemo(() => grammarInventory(), []);

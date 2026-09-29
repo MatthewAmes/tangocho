@@ -2,7 +2,7 @@
 //
 //   node tools/test-grammar-drills.mjs
 import { BOOK_GRAMMAR } from "../src/data/book-grammar.js";
-import { verbForms, drillItem, drillSession, bookExample, grammarInventory, PATTERNS, VERBS } from "./grammar-drills.mjs";
+import { verbForms, drillItem, drillSession, bookExample, grammarInventory, PATTERNS, VERBS, grammarDeck, verbOfDay } from "./grammar-drills.mjs";
 
 let fail = 0, run = 0;
 const t = (name, fn) => {
@@ -84,6 +84,21 @@ t("drill, conjugation, culture or nothing yet", () => {
   const inv = grammarInventory();
   const by = (id) => inv.find((g) => g.id === id).drill;
   eq(by("8.1"), "drill"); eq(by("7.1"), "conjugation"); eq(by("7.3"), "culture"); eq(by("7.4"), "none");
+});
+
+console.log("=== the Smart Review deck ===");
+t("one card per drillable note, in book order, all on the day's verb", () => {
+  const d = grammarDeck("2026-09-29");
+  eq(d.length, PATTERNS.length);
+  const v = verbOfDay("2026-09-29");
+  ok(d.every((g) => g.meaning.endsWith("(" + v.dict + ")")), "every meaning names the same verb");
+  for (let i = 1; i < d.length; i++) ok(d[i - 1].act <= d[i].act, "book order");
+  eq(new Set(d.map((g) => g.answer)).size, d.length, "no two notes build the same form");
+});
+t("the verb changes from day to day, the note ids do not", () => {
+  const days = ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03"];
+  ok(new Set(days.map((x) => verbOfDay(x).reading)).size >= 3, "verbs should vary across days");
+  eq(grammarDeck(days[0]).map((g) => g.id).join(), grammarDeck(days[3]).map((g) => g.id).join());
 });
 
 console.log(fail ? `${fail} of ${run} grammar-drill tests FAILED` : `all ${run} grammar-drill tests passed`);

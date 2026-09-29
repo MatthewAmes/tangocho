@@ -30,6 +30,7 @@ import Furigana from "./src/components/Furigana.jsx";
 import Bi from "./src/components/Bi.jsx";
 import ConjDrill from "./src/tabs/ConjDrill.jsx";
 import GrammarDrill from "./src/tabs/GrammarDrill.jsx";
+import { grammarDeck } from "./tools/grammar-drills.mjs";
 import Write from "./src/tabs/Write.jsx";
 import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
 import Quizzes from "./src/tabs/Quizzes.jsx";
@@ -49,7 +50,7 @@ import { calibrationReport } from "./tools/calibration.mjs";
 import { mine, cardFor, displacementPlan, describePlan, makeLexicon } from "./tools/mining.mjs";
 import { inContext, splitAround, contextCoverage } from "./tools/kanjicontext.mjs";
 import { drillSet, gradeDrill, orderDrill, buildDrill, fillDrill, usableChunks } from "./tools/production.mjs";
-import { ACTIVITY, activityFor, arrange, describeComposition } from "./tools/compose.mjs";
+import { ACTIVITY, activityFor, arrange, composeSession, describeComposition } from "./tools/compose.mjs";
 import { matchBoard, canMatch as canMatchBoard, tapResult, GRID } from "./tools/matchgrid.mjs";
 import { describeBand, bandFor, rankMaterial } from "./tools/comprehensible.mjs";
 import { reserveFor, cycleFor, sampleFor, scoreRun, estimateKnown, compareRuns,
@@ -568,12 +569,16 @@ function DrillTab() {
   useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
   const scripts = useMergedScripts();
   /* A grammar answer is typed with no hint: unassisted production, recorded against the
-     note ("gram:8.1") so the same proven levels apply as for words. */
+     note ("grammar:8.1", the same id its Smart Review card has) so the same proven levels
+     apply as for words. */
   const onAnswer = useCallback((item, ok, ms, kana) => {
     logEvidence(makeEvidence({
-      id: "gram:" + item.pattern, deck: "grammar", format: "type", skill: "production", cue: CUE.FREE,
+      id: "grammar:" + item.pattern, deck: "grammar", format: "type", skill: "production", cue: CUE.FREE,
       ok, ms, at: Date.now(), got: ok ? null : (kana || null), want: ok ? null : item.answer,
     }));
+    /* ...and the same memory state Smart Review schedules the note from, so practising a
+       pattern here moves when it next comes up there. */
+    recordForeign({ src: "grammar", srcId: item.pattern }, ok, ms, "grammar", { skill: "production", cue: CUE.FREE });
   }, []);
   return (
     <div className="tc-drilltab">
@@ -1457,12 +1462,24 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        cannot lose your place mid-run), so this shapes the NEXT session built: Go again, or a
        second Smart Review after a section drill. Reordering the live queue is a separate
        decision and deliberately not taken here. */
-    return buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
+    const main = buildSession(source, { now: Date.now(), isLeech, minutes: paceMinutes(plan.pace),
                                   exclude: heldOut, scope: { mode: plan.practice, act: actNow },
                                   /* The daily budget, not a per-session one — already
                                      reduced by what today took, and zero in catch-up. */
                                   maxNew: newLeft,
                                   act: actNow, recent: sessionLog.current });
+    /* Grammar is in every session. New grammar notes compete with new words for the day's
+       two or three new slots and almost always lost, so the grammar deck — most of what
+       Volume 2 teaches — could go weeks without appearing in the one button that gets
+       pressed. When the main pick has none, a small grammar round is built from that deck
+       alone (due notes first, then the next new one in book order) and added on. The
+       composer then places it like any other card. */
+    const gsrc = source.find((s) => s.deck === "grammar");
+    if (gsrc && gsrc.items.length && !main.some((p) => p.deck === "grammar")) {
+      const extra = buildSession([gsrc], { now: Date.now(), isLeech, size: 2, maxNew: 1, recent: sessionLog.current });
+      return [...main, ...extra];
+    }
+    return main;
     // retention.target: not a dep in the usual sense (it's a module `let`, not props/state) but
     // isLeech/dueness read it live, and the retention chip's onClick bumps `retentionPref`
     // right alongside it — so this recomputes on the same render that value changes.
@@ -1818,6 +1835,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     // Only claim a particle gap when the generator can actually produce one to grade.
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
     canMatch: (id) => canMatchBoard(queue.find((q) => q && q.id === id), cards, confusion),
+    hasConfusable: (id) => hasConfusion(confusion, id),
     canSpell: (id) => hasContrast(queue.find((q) => q && q.id === id) || cards.find((c) => c && c.id === id)),
     canEmoji: (id) => {
       const c = queue.find((q) => q && q.id === id) || cards.find((x) => x && x.id === id);
@@ -5096,7 +5114,10 @@ function composeQueue(pool, clozeIndex, known, confusion) {
     hasParticleGap: (s) => !!(s && s.sentence && fillDrill(s.sentence, { en: s.en })),
     // Same pool the board will use, or the gate promises a grid the builder cannot make.
     canMatch: (id) => canMatchBoard(byId.get(id), pool.filter((c) => c && c.id !== id), confusion),
+    // A grid is worth its screen when the board holds something this learner mixes up.
+    hasConfusable: (id) => hasConfusion(confusion, id),
     canSpell: (id) => hasContrast(byId.get(id)),
+    canEmoji: (id) => !!(byId.get(id) && byId.get(id).emoji),
   };
   const items = pool.map((c) => {
     let format = "recall", cue = null;
@@ -5104,10 +5125,20 @@ function composeQueue(pool, clozeIndex, known, confusion) {
       const iv = c._pick ? interventionFor({ ...c._pick, st: c }) : null;
       if (iv) { format = iv.format; cue = iv.cue; }
     } catch (e) { /* an un-composable card is still a card; it keeps the default */ }
-    return { id: c.id, _card: c, format, cue, wasMissed: !!(c._rescue || c._recovery) };
+    return { id: c.id, _card: c, format, cue, step: c._step || 0, wasMissed: !!(c._rescue || c._recovery) };
   });
-  const withActivity = items.map((x) => ({ ...x, activity: activityFor(x, material) }));
-  return arrange(withActivity).map((x) => ({ ...x._card, _activity: x.activity }));
+  /* composeSession, not activityFor + arrange: it also caps grids at one per six items,
+     which is what stops a session turning into grid after grid. */
+  return composeSession(items, material).map((x) => ({ ...x._card, _activity: x.activity }));
+}
+
+/* Does this word have a recorded confusion, in either direction? */
+function hasConfusion(confusion, id) {
+  if (!confusion || !confusion.get) return false;
+  const own = confusion.get(id);
+  if (Array.isArray(own) && own.length) return true;
+  for (const [, list] of confusion) if (Array.isArray(list) && list.includes(id)) return true;
+  return false;
 }
 
 const EVIDENCE_KEY = "jpn101:evidence";
@@ -5185,7 +5216,7 @@ export const AREAS = [
 function areaForDeck(deck) {
   if (deck === "kanji") return "kanji";
   if (deck === "kana" || deck === "scripts") return "reading";
-  if (deck === "conj" || deck === "dates") return "grammar";
+  if (deck === "conj" || deck === "dates" || deck === "grammar") return "grammar";
   if (deck === "input") return "listening";
   if (deck === "oral") return "speaking";
   return "vocabulary";
@@ -5358,6 +5389,7 @@ function foreignKey(src) {
   if (src === "kana") return KANA_KEY;
   if (src === "kanji") return KANJI_KEY;
   if (src === "conj") return CONJ_KEY;
+  if (src === "grammar") return GRAMMAR_KEY;
   if (src === "dates") return DATES_KEY;
   if (src === "quiz") return QUIZ_KEY;
   return "jpn101:freq";
@@ -5526,6 +5558,13 @@ function foreignCard(src, raw) {
              meaning: `${raw.f.ask} of ${raw.w.dict} (${raw.w.meaning})`,
              kind: "conj", emoji: "🔀" };
   }
+  /* A Volume 2 grammar note (tools/grammar-drills.mjs::grammarDeck): the built form is the
+     term, and the meaning is what the pattern does plus today's verb — "try …-ing (食べる)"
+     — so it can be asked either way round, and only the grammar tells the options apart. */
+  if (src === "grammar") {
+    return { id: "grammar:" + raw.id, src, srcId: raw.id, term: raw.answer, reading: raw.answer,
+             romaji: "", meaning: raw.meaning, kind: "grammar", emoji: "🧩", act: raw.act };
+  }
   /* Dates and counters. The question is the kanji, the answer is how it is read, which is
      the whole difficulty: 二十日 is not read the way its characters suggest. */
   if (src === "dates") {
@@ -5639,6 +5678,14 @@ async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
       act: c.f.pol === "formal" ? 4 : 8,
     })), stats);
     out.push({ deck: "conj", items, stats: remapStats(stats, "conj") });
+  } catch (e) {}
+  /* Volume 2 grammar: the textbook's drillable notes, in book order, on today's verb. The
+     frontier introduces them a few at a time like every other strand. */
+  try {
+    const raw = await sGet(GRAMMAR_KEY);
+    const stats = raw ? JSON.parse(raw) : {};
+    const items = withFrontier(grammarDeck().map((g) => foreignCard("grammar", g)), stats);
+    out.push({ deck: "grammar", items, stats: remapStats(stats, "grammar") });
   } catch (e) {}
   try {
     const raw = await sGet(DATES_KEY);
@@ -8554,6 +8601,7 @@ function Kanji({ cards }) {
    CONJ_BANK gives you all 8 cells for free.
    Validated against the 33 hand-authored negatives already in CONJ_BANK: all 33 match. */
 const CONJ_KEY = "jpn101:conj";
+const GRAMMAR_KEY = "jpn101:grammar";
 
 
 

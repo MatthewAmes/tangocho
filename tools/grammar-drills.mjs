@@ -129,3 +129,23 @@ export function grammarInventory() {
     drill: PATTERN_BY_ID.has(g.id) ? "drill" : COVERED_BY_CONJUGATION[g.id] ? "conjugation" : g.kind === "culture" ? "culture" : "none",
   }));
 }
+
+/* ── the grammar deck, for Smart Review ──
+   One card per drillable note, all built on the SAME verb for the day. That is deliberate:
+   Smart Review asks a card either way round — the form, pick what it means; or the
+   meaning, produce the form — and if every note used a different verb, the verb alone would
+   give the choice away. With one verb, only the grammar distinguishes the options. The verb
+   changes daily, so the pattern is met on a new word each time it comes round — the
+   transfer the note is actually for. Ids are the note ids, so progress here and in the
+   Drill tab is one record. */
+export function verbOfDay(dayKey = new Date().toISOString().slice(0, 10)) {
+  return VERBS[Math.floor(hashSeed("verb:" + dayKey) * VERBS.length) % VERBS.length];
+}
+export function grammarDeck(dayKey) {
+  const v = verbOfDay(dayKey);
+  const act = (id) => parseInt(id, 10);
+  return PATTERNS.map((p) => {
+    const item = drillItem(p.id, v);
+    return item && { id: p.id, act: act(p.id), answer: item.answer, meaning: `${p.gloss} (${v.dict})`, how: item.how };
+  }).filter(Boolean).sort((a, b) => a.act - b.act || parseFloat(a.id) - parseFloat(b.id));
+}

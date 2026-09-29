@@ -133,7 +133,7 @@ export function mergeInput(localRaw, cloudRaw) {
 /* Two per-item stat blobs keyed by item id. Whichever side has drilled an item more times
    knows more about it, so that record wins; items only one side has are kept outright.
    Losing a study session because the other device synced later is the exact failure this
-   avoids. Used for jpn101:kanji, jpn101:dates, jpn101:kana, jpn101:conj. */
+   avoids. Used for jpn101:kanji, jpn101:dates, jpn101:kana, jpn101:conj, jpn101:grammar. */
 export function mergeStats(localRaw, cloudRaw) {
   let a = {}, b = {};
   try { a = JSON.parse(localRaw || "{}") || {}; } catch (e) {}
@@ -194,7 +194,7 @@ export function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPu
     if (k === "jpn101:days") { out[k] = mergeDays(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:scripts" || k === "jpn101:scripts:mirror") { out[k] = mergeScripts(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:input") { out[k] = mergeInput(localSnap[k], cloudSnap[k]); return; }
-    if (k === "jpn101:kanji" || k === "jpn101:dates" || k === "jpn101:kana" || k === "jpn101:conj") { out[k] = mergeStats(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:kanji" || k === "jpn101:dates" || k === "jpn101:kana" || k === "jpn101:conj" || k === "jpn101:grammar") { out[k] = mergeStats(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:evidence") { out[k] = mergeEvidence(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:freq") { out[k] = mergeDeck(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:hooks") { out[k] = mergeHooks(localSnap[k], cloudSnap[k]); return; }
