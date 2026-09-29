@@ -967,6 +967,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-restorebtns{display:flex;gap:8px;margin-top:8px;}
 .tc-restoremsg{font-size:13px;color:#e6a23c;line-height:1.5;margin:8px 0 0;}
 .tc-voicerow{display:flex;gap:6px;margin:10px 0 2px;}
+/* furigana and English/rōmaji switches, under Voice / Slow (src/components/ReadingToggles.jsx) */
+.tc-readrow{margin-top:-6px;}
 .tc-voicenote{margin:8px 0 0;font-size:12px;color:var(--mut-2);}
 .tc-rehnav{display:flex;gap:8px;align-items:center;margin-top:14px;}
 .tc-rehnav .tc-btn-primary{flex:1;}

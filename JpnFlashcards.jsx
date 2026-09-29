@@ -14,6 +14,8 @@ import { MASCOT_GIFS } from "./data/mascot.js";
 import Mascot, { mascotState } from "./src/components/Mascot.jsx";
 import SpeakBtn from "./src/components/SpeakBtn.jsx";
 import FeedbackSheet from "./src/components/FeedbackSheet.jsx";
+import ReadingToggles from "./src/components/ReadingToggles.jsx";
+import { useReadingPrefs } from "./src/lib/readingPrefs.js";
 import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
 import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
@@ -5903,6 +5905,8 @@ function lineText(tokens) { return (tokens || []).map((t) => t.t || "").join("")
 const LISTEN_COUNT = 8;
 
 function ScriptListen({ scripts, cards, onExit }) {
+  /* Furigana on/off and English + rōmaji shown/hidden (src/lib/readingPrefs.js). */
+  const [rp] = useReadingPrefs();
   const [evidence, setEvidence] = useState(null);      // null = still loading
   // Bumped by "Go again", so a second session is a different draw rather than a replay.
   const [seed, setSeed] = useState(() => Math.floor(Date.now() / 1000));
@@ -6029,6 +6033,7 @@ function ScriptListen({ scripts, cards, onExit }) {
           onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>🔊 Voice {voiceOn ? "on" : "off"}</button>
         <button className={"tc-fchip" + (slow ? " is-on" : "")} onClick={() => setSlow((v) => !v)}><span aria-hidden="true">🐢</span> Slow</button>
       </div>
+      <ReadingToggles />
 
       <div className="tc-card2">
         <p className="tc-eyebrow">{LISTEN_LABEL[ex.format]} · {at + 1}/{set.length}</p>
@@ -6046,7 +6051,7 @@ function ScriptListen({ scripts, cards, onExit }) {
             </button>
           )}
           {shown && (
-            <p lang="ja" className="tc-listenshown"><Furigana tokens={ex.reveal.tokens} /></p>
+            <p lang="ja" className="tc-listenshown"><Furigana tokens={ex.reveal.tokens} show={rp.furigana} /></p>
           )}
         </div>
 
@@ -6065,9 +6070,9 @@ function ScriptListen({ scripts, cards, onExit }) {
 
         {verdict && (
           <div className="tc-listenrev">
-            <p lang="ja" className="tc-listenjp"><Furigana tokens={ex.reveal.tokens} /></p>
-            {ex.reveal.romaji && <p className="tc-sentans">{ex.reveal.romaji}</p>}
-            {ex.reveal.en && <p className="tc-listenen">{ex.reveal.speaker ? ex.reveal.speaker + ": " : ""}{ex.reveal.en}</p>}
+            <p lang="ja" className="tc-listenjp"><Furigana tokens={ex.reveal.tokens} show={rp.furigana} /></p>
+            {rp.helpers && ex.reveal.romaji && <p className="tc-sentans">{ex.reveal.romaji}</p>}
+            {rp.helpers && ex.reveal.en && <p className="tc-listenen">{ex.reveal.speaker ? ex.reveal.speaker + ": " : ""}{ex.reveal.en}</p>}
             <button className="tc-btn tc-btn-primary" onClick={next}>
               {at + 1 >= set.length ? "Finish" : "Next →"}
             </button>
@@ -6115,6 +6120,8 @@ function ScriptListen({ scripts, cards, onExit }) {
 /* exitLabel because this component now has two front doors — the Scripts tab and the
    Tutor tab's Textbook mode — and "← Scripts" is a lie in one of them. */
 function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
+  /* Furigana on/off and English + rōmaji shown/hidden (src/lib/readingPrefs.js). */
+  const [rp] = useReadingPrefs();
   // Bumped by "Play it again", so a second run draws different wrong answers.
   const [seed, setSeed] = useState(() => Math.floor(Date.now() / 1000));
   const [chosen, setChosen] = useState(null);       // {id, part} — null = still choosing
@@ -6275,15 +6282,15 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
                 {b.npc.map((n) => (
                   <li key={"n" + n.lineIdx} className="tc-dialline">
                     <span className="tc-dialwho">{n.speaker}</span>
-                    <span lang="ja" className="tc-dialjp"><Furigana tokens={n.tokens} /></span>
-                    <span className="tc-dialen">{n.en}</span>
+                    <span lang="ja" className="tc-dialjp"><Furigana tokens={n.tokens} show={rp.furigana} /></span>
+                    {rp.helpers && <span className="tc-dialen">{n.en}</span>}
                   </li>
                 ))}
                 {b.turn && (
                   <li key={"m" + b.turn.lineIdx} className="tc-dialline is-mine">
                     <span className="tc-dialwho">{b.turn.speaker}</span>
-                    <span lang="ja" className="tc-dialjp"><Furigana tokens={b.turn.reveal.tokens} /></span>
-                    <span className="tc-dialen">{b.turn.reveal.en}</span>
+                    <span lang="ja" className="tc-dialjp"><Furigana tokens={b.turn.reveal.tokens} show={rp.furigana} /></span>
+                    {rp.helpers && <span className="tc-dialen">{b.turn.reveal.en}</span>}
                   </li>
                 )}
               </React.Fragment>
@@ -6328,6 +6335,7 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
           <span key={combo} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>{combo}<i>×</i></span>
         )}
       </div>
+      <ReadingToggles />
 
       <div className="tc-card2">
         <p className="tc-eyebrow">{dialogue.name} · beat {at + 1}/{dialogue.beats.length}</p>
@@ -6344,10 +6352,10 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
               <button type="button" className="tc-speakbtn" aria-label={"Hear " + n.speaker + " again"}
                 onClick={() => speak(n.text)}>🔊</button>
             </p>
-            <p lang="ja" className="tc-dialjp"><Furigana tokens={n.tokens} /></p>
+            <p lang="ja" className="tc-dialjp"><Furigana tokens={n.tokens} show={rp.furigana} /></p>
             {/* The English is the one thing withheld: understanding what was just said is
                 what the reply is being asked to prove. */}
-            {(resolved || !turn) && <p className="tc-dialen">{n.en}</p>}
+            {rp.helpers && (resolved || !turn) && <p className="tc-dialen">{n.en}</p>}
           </div>
         ))}
 
@@ -6374,7 +6382,7 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
 
         {turn && turn.kind === TURN.SAY && (
           <div className="tc-dialsay">
-            <p className="tc-sentgoal">{turn.reveal.en}</p>
+            {rp.helpers && <p className="tc-sentgoal">{turn.reveal.en}</p>}
             {step === STEP.ASK ? (
               <>
                 {/* No honest question can be built here — nothing was said for this line to
@@ -6384,7 +6392,7 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
                 <button className="tc-btn tc-btn-primary" onClick={said}>Reveal</button>
               </>
             ) : (
-              <p lang="ja" className="tc-dialjp"><Furigana tokens={turn.reveal.tokens} /></p>
+              <p lang="ja" className="tc-dialjp"><Furigana tokens={turn.reveal.tokens} show={rp.furigana} /></p>
             )}
           </div>
         )}
@@ -6393,12 +6401,12 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
           <div className="tc-listenrev">
             {turn && turn.kind === TURN.CHOICE && (
               <>
-                <p lang="ja" className="tc-listenjp"><Furigana tokens={turn.reveal.tokens} /></p>
-                {turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
-                {turn.reveal.en && <p className="tc-listenen">{turn.reveal.en}</p>}
+                <p lang="ja" className="tc-listenjp"><Furigana tokens={turn.reveal.tokens} show={rp.furigana} /></p>
+                {rp.helpers && turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
+                {rp.helpers && turn.reveal.en && <p className="tc-listenen">{turn.reveal.en}</p>}
               </>
             )}
-            {turn && turn.kind === TURN.SAY && turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
+            {rp.helpers && turn && turn.kind === TURN.SAY && turn.reveal.romaji && <p className="tc-sentans">{turn.reveal.romaji}</p>}
             <button className="tc-btn tc-btn-primary" onClick={advance}>
               {at + 1 >= dialogue.beats.length ? "Finish" : "Next →"}
             </button>
@@ -6418,6 +6426,8 @@ function ScriptDialogue({ scripts, onExit, exitLabel = "Scripts" }) {
 /* ── active AI helpers ── */
 // hookPrompt/debriefPrompt lived here; those prompts now live in cf/src/ai.js (Worker-owned).
 function Scripts({ cards = [] }) {
+  /* Furigana on/off and English + rōmaji shown/hidden (src/lib/readingPrefs.js). */
+  const [rp] = useReadingPrefs();
   const [scripts, setScripts] = useState([]);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState("list");
@@ -6646,15 +6656,16 @@ function Scripts({ cards = [] }) {
         ) : (
           <p className="tc-voicenote">This device has no speech voices available — voice playback disabled.</p>
         )}
+        <ReadingToggles />
 
         {idx < active.lines.length ? (
           <div className="tc-card2">
             <p className="tc-eyebrow">{line.speaker}{part === "read" ? "" : mine ? " · your line" : " · cue"} · {idx + 1}/{active.lines.length}</p>
-            <p className="tc-sentgoal">{line.en}</p>
+            {rp.helpers && <p className="tc-sentgoal">{line.en}</p>}
             {(!mine || revealed) ? (
               <>
-                <p className="tc-sentjp"><Furigana tokens={line.tokens} /></p>
-                {line.romaji && <p className="tc-sentans">{line.romaji}</p>}
+                <p className="tc-sentjp"><Furigana tokens={line.tokens} show={rp.furigana} /></p>
+                {rp.helpers && line.romaji && <p className="tc-sentans">{line.romaji}</p>}
               </>
             ) : (
               <p className="tc-cue">Your line — say it out loud, then check.</p>
