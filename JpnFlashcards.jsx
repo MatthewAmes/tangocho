@@ -29,6 +29,7 @@ const LEVEL_LABEL = { mastered: "mastered", recalls: "can recall", recognises: "
 import Furigana from "./src/components/Furigana.jsx";
 import Bi from "./src/components/Bi.jsx";
 import ConjDrill from "./src/tabs/ConjDrill.jsx";
+import GrammarDrill from "./src/tabs/GrammarDrill.jsx";
 import Write from "./src/tabs/Write.jsx";
 import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
 import Quizzes from "./src/tabs/Quizzes.jsx";
@@ -558,6 +559,33 @@ function ConfusionPair({ want, got }) {
   );
 }
 
+/* The Drill tab: Volume 2 grammar (the textbook's notes, drilled as whole forms) and the
+   conjugation grid it builds on. Grammar opens first — it is most of what Volume 2 teaches
+   and it had no practice at all until 2026-09-29. */
+function DrillTab() {
+  const [mode, setMode] = useState("grammar");
+  const [evidence, setEvidence] = useState([]);
+  useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
+  const scripts = useMergedScripts();
+  /* A grammar answer is typed with no hint: unassisted production, recorded against the
+     note ("gram:8.1") so the same proven levels apply as for words. */
+  const onAnswer = useCallback((item, ok, ms, kana) => {
+    logEvidence(makeEvidence({
+      id: "gram:" + item.pattern, deck: "grammar", format: "type", skill: "production", cue: CUE.FREE,
+      ok, ms, at: Date.now(), got: ok ? null : (kana || null), want: ok ? null : item.answer,
+    }));
+  }, []);
+  return (
+    <div className="tc-drilltab">
+      <div className="tc-sentmodes" role="group" aria-label="What to drill">
+        <button className={"tc-segbtn" + (mode === "grammar" ? " is-on" : "")} aria-pressed={mode === "grammar"} onClick={() => setMode("grammar")}>Volume 2 grammar</button>
+        <button className={"tc-segbtn" + (mode === "conj" ? " is-on" : "")} aria-pressed={mode === "conj"} onClick={() => setMode("conj")}>Conjugation</button>
+      </div>
+      {mode === "grammar" ? <GrammarDrill evidence={evidence} scripts={scripts} onAnswer={onAnswer} /> : <ConjDrill />}
+    </div>
+  );
+}
+
 function recordShadow({ id, ok, ms }) {
   logEvidence(makeEvidence({ id: "shadow:" + id, deck: "scripts", format: "shadow", ok, ms, at: Date.now() }));
 }
@@ -986,7 +1014,7 @@ export default function JpnFlashcards() {
         ) : tab === "study" ? (
           <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
         ) : tab === "drill" ? (
-          <ConjDrill />
+          <DrillTab />
         ) : tab === "input" ? (
           <Input cards={cards} onAdd={addCards} onPark={parkCards} />
         ) : tab === "oral" ? (

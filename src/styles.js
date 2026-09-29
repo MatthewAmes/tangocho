@@ -145,6 +145,35 @@ body{min-height:100%;overscroll-behavior-y:none;}
    down to a background that reads DARKER than the translucent unarmed one. The token it
    wanted is drawn as an inset ring instead — no layout box, no new colour. */
 .tc-segbtn.is-on{background:var(--surface-3);box-shadow:inset 0 0 0 1px var(--info);color:var(--washi);font-weight:600;}
+/* Drill tab: Volume 2 grammar (src/tabs/GrammarDrill.jsx) */
+.tc-drilltab{display:flex;flex-direction:column;gap:12px;}
+.tc-drilltab>.tc-sentmodes{justify-content:center;}
+.tc-gram{text-align:left;}
+.tc-gramtop{display:flex;align-items:center;gap:10px;justify-content:space-between;}
+.tc-gramtitle{margin:12px 0 2px;font-size:18px;font-weight:600;}
+.tc-gramgloss{margin:0 0 12px;font-size:15px;color:var(--mut);}
+.tc-gramverb{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);}
+.tc-gramverbjp{font-size:26px;font-weight:700;}
+.tc-gramverbread{font-size:16px;color:var(--mut);}
+.tc-gramverben{font-size:14px;}
+.tc-gramex{margin:8px 0 0;font-size:15px;line-height:1.6;}
+.tc-gramex b{color:var(--ok);}
+.tc-gramexsrc{font-size:12px;color:var(--mut);}
+.tc-gramact{margin-top:10px;border-top:1px solid var(--line);}
+.tc-gramacthead{appearance:none;background:none;border:0;color:inherit;font:inherit;width:100%;display:flex;gap:10px;align-items:baseline;padding:12px 2px;cursor:pointer;text-align:left;}
+.tc-gramacthead>span:first-child{font-weight:600;min-width:52px;}
+.tc-gramacthead>span:last-child{margin-left:auto;color:var(--mut);}
+.tc-gramrow{display:grid;grid-template-columns:38px 1fr auto auto;gap:8px;align-items:center;padding:6px 2px;border-top:1px solid rgba(255,255,255,.05);}
+.tc-gramrow.is-culture{opacity:.6;}
+.tc-gramid{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;}
+.tc-gramname{font-size:14px;line-height:1.35;min-width:0;}
+.tc-gramscene{color:var(--mut);font-size:12px;}
+.tc-gramchip{font-size:11px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap;color:var(--mut);}
+.tc-gramchip.is-mastered{border-color:var(--ok);color:var(--ok);}
+.tc-gramchip.is-recalls{border-color:var(--info);color:#93c5fd;}
+.tc-gramchip.is-learning,.tc-gramchip.is-recognises{border-color:var(--warn);color:var(--warn);}
+.tc-gramchip.is-none{grid-column:3 / 5;justify-self:end;}
+@media (max-width:480px){.tc-gramrow{grid-template-columns:34px 1fr auto;}.tc-gramrow .tc-btn{grid-column:2 / 4;justify-self:start;}}
 .tc-start{width:100%;}
 .tc-batchhead{display:flex;align-items:center;justify-content:space-between;margin:20px 0 10px;}
 .tc-batchhead>span{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--mut-2);}
