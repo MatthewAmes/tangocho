@@ -19,6 +19,7 @@ import { useReadingPrefs } from "./src/lib/readingPrefs.js";
 import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
 import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
+import { bookOrdered, unlockedFrom, bookKanjiStatus, bookKanjiSummary, BOOK_ORDER } from "./tools/bookkanji.mjs";
 
 /* The textbook words of an act: tagged with a real scene (7-1, 12-9R), not the
    supplemental lists (class notes, dates) that share the act number. */
@@ -5293,22 +5294,25 @@ function coverageFrom(days, span = 14) {
    The order is the learner's own vocabulary first: a character that appears in words you
    have actually studied outranks one that is merely frequent in newspapers. */
 function kanjiOrdered(list, deckMap) {
-  if (!deckMap || !deckMap.size) return list || [];
+  /* The Volume 2 textbook's 133 kanji lead, in the book's own numbering (tools/bookkanji.mjs):
+     they are the characters being taught and tested now. Everything else keeps the old
+     order after them — your own vocabulary first, then frequency. */
+  if (!deckMap || !deckMap.size) return bookOrdered(list || []);
   const rank = (k, i) => {
     const d = deckMap.get(k.c);
     if (!d) return 2000000 + i;
     return (d.studied ? 0 : 1000000) + i - Math.min(d.n, 40) * 40;
   };
-  return (list || []).map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k);
+  return bookOrdered((list || []).map((k, i) => ({ k, r: rank(k, i) })).sort((a, b) => a.r - b.r).map((x) => x.k));
 }
 
 /* The unlocked set grows only as characters go solid, so the frontier cannot run away
    from you. Smart Review introduces from exactly this set, which is why a character met
    there shows up on the Kanji page as met — they are the same list and the same store. */
 function kanjiUnlocked(all, stats) {
-  const mastered = (all || []).filter((k) => (((stats || {})[k.c] || {}).level || 0) >= 4).length;
-  const frontier = Math.min((all || []).length, KANJI_BATCH * (Math.floor(mastered / KANJI_BATCH) + 2));
-  return (all || []).slice(0, frontier);
+  /* Same frontier as before, plus anything already studied: moving to the book's order must
+     never take a character out of rotation that is part-way learned. */
+  return unlockedFrom(all || [], stats || {}, KANJI_BATCH);
 }
 
 /* ── the other decks, as cards ──
@@ -8015,6 +8019,21 @@ function Kanji({ cards }) {
   const getS = useCallback(
     (c) => statsRef.current[c] || { seen: 0, correct: 0, level: 0, streak: 0 }, []);
   const deckMap = useMemo(() => deckKanjiIndex(cards), [cards]);
+  /* The textbook's kanji, each read through the deck words that contain it
+     (tools/bookkanji.mjs): a kanji is as known as the words it has been produced in. */
+  const [evidence, setEvidence] = useState([]);
+  useEffect(() => { loadEvidence().then((e) => setEvidence(e.slice())).catch(() => {}); return subscribeEvidence(setEvidence); }, []);
+  const wordLevels = useMemo(() => levelsFor(evidence, (cards || []).map((c) => c.id)), [evidence, cards]);
+  const bookStatus = useMemo(() => bookKanjiStatus(cards || [], wordLevels), [cards, wordLevels]);
+  const bookSum = useMemo(() => bookKanjiSummary(bookStatus), [bookStatus]);
+  const bookScenes = useMemo(() => {
+    const out = [];
+    for (const k of bookStatus) {
+      if (!out.length || out[out.length - 1].sec !== k.sec) out.push({ sec: k.sec, kanji: [] });
+      out[out.length - 1].kanji.push(k);
+    }
+    return out;
+  }, [bookStatus]);
 
   const all = useMemo(() => kanjiOrdered(data ? data.kanji : [], deckMap), [data, deckMap]);
 
@@ -8358,7 +8377,7 @@ function Kanji({ cards }) {
           <p className="tc-kanjicount"><b>{mastered}</b> <span>/ {all.length} jōyō kanji</span></p>
           <div className="tc-kanjibar"><div className="tc-kanjibarfill" style={{ width: Math.max(pctAll, mastered ? 0.4 : 0) + "%" }} /></div>
           <p className="tc-kanjisub">
-            {mastered === 0 ? "Every kanji in the language, your own vocabulary first."
+            {mastered === 0 ? "Every kanji in the language — the textbook's 133 first, in its order."
               : pctAll.toFixed(1) + "% mastered · " + started + " started"}
           </p>
         </div>
@@ -8378,10 +8397,44 @@ function Kanji({ cards }) {
         </p>
       )}
       <p className="tc-smarthint">
-        {unlocked.length} unlocked. {deckMap.size > 0
-          ? "Ordered by your own vocabulary first — " + deckMap.size + " of these appear in words in your deck."
-          : "Ordered by how often each character appears in real Japanese."}
+        {unlocked.length} unlocked. New characters come in the textbook's order — the 133 kanji of
+        Volume 2 first{deckMap.size > 0 ? ", then the rest of your own vocabulary" : ""}.
       </p>
+
+      {/* ── Volume 2, in the book's order ──
+          Every numbered kanji from the textbook, grouped by the reading scene that teaches it,
+          coloured by the best WORD it has been produced in. A character you can name in
+          English but have never read inside a word is not known yet, and does not show as
+          known. */}
+      <div className="tc-kanjinext">
+        <p className="tc-eyebrow">Volume 2 kanji · book order</p>
+        <p className="tc-smarthint" style={{ marginTop: 4 }}>
+          <b>{bookSum.mastered + bookSum.recalls}</b> of {bookSum.total} read in a word you can recall
+          {bookSum.mastered > 0 ? ` · ${bookSum.mastered} in a mastered word` : ""}.
+          A kanji counts once you've produced a word that uses it, not from knowing its English meaning.
+        </p>
+        {bookScenes.map((sc) => (
+          <div key={sc.sec} className="tc-kbookrow">
+            <span className="tc-kbooksec">{sc.sec}</span>
+            <div className="tc-kgrid">
+              {sc.kanji.map((k) => {
+                const info = all.find((x) => x.c === k.c);
+                return (
+                  <button key={k.c} className={"tc-kcell tc-kbook is-" + k.best + (k.words ? "" : " no-words")}
+                    disabled={!info}
+                    onClick={() => info && setInspect(info)}
+                    title={`#${k.n} · ${k.words} word${k.words === 1 ? "" : "s"} in your deck · ${LEVEL_LABEL[k.best]}`}>
+                    {k.c}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <p className="tc-provenkey" aria-hidden="true">
+          {[...LEVEL_ORDER].reverse().filter((l) => l !== "learning").map((l) => <span key={l}><i className={"is-" + l} />{l === "new" ? "no word yet" : LEVEL_LABEL[l]}</span>)}
+        </p>
+      </div>
       {/* The collection. Every character met, newest last, tinted by how solid it is —
           the point is watching it fill up, which a counter alone does not give you.
           Tapping one opens what it means, how it sounds, and the words you already have
@@ -8411,6 +8464,15 @@ function Kanji({ cards }) {
             <button className="tc-inx" onClick={() => setInspect(null)} aria-label="close">×</button>
             {inspect.e && <div className="tc-kemoji">{inspect.e}</div>}
             <div lang="ja" className="tc-kanjibig">{inspect.c}</div>
+            {BOOK_ORDER.has(inspect.c) && (() => {
+              const b = bookStatus.find((k) => k.c === inspect.c);
+              return (
+                <p className="tc-kbookinfo">
+                  Textbook kanji #{BOOK_ORDER.get(inspect.c).n} · Scene {BOOK_ORDER.get(inspect.c).sec}
+                  {b ? (b.words ? ` · ${b.recalled} of ${b.words} word${b.words === 1 ? "" : "s"} recalled` : " · in no deck word yet") : ""}
+                </p>
+              );
+            })()}
             <button className="tc-btn tc-btn-sm" onClick={() => speak(inspect)}>🔊 How it sounds</button>
             <div className="tc-meaning tc-meaning-lg">{inspect.m.join(", ")}</div>
             {inspect.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {readingList(inspect.on)}</div>}

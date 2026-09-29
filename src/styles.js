@@ -1379,6 +1379,16 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kcell.is-new{border-color:rgba(255,255,255,.14);}
 .tc-kcell.is-ok{border-color:rgba(255,190,90,.5);background:rgba(255,190,90,.1);}
 .tc-kcell.is-solid{border-color:#3d9150;background:rgba(61,145,80,.18);}
+/* Volume 2 kanji in book order (Kanji tab): coloured by the best word each is produced in */
+.tc-kbookrow{display:grid;grid-template-columns:52px 1fr;gap:8px;align-items:start;margin-top:10px;}
+.tc-kbooksec{font-size:12px;color:var(--mut);padding-top:14px;font-variant-numeric:tabular-nums;}
+.tc-kbookrow .tc-kgrid{margin-top:0;}
+.tc-kcell.tc-kbook{font-size:20px;}
+.tc-kcell.tc-kbook.is-mastered{border-color:var(--ok);background:rgba(16,185,129,.2);}
+.tc-kcell.tc-kbook.is-recalls{border-color:var(--info);background:rgba(59,130,246,.18);}
+.tc-kcell.tc-kbook.is-recognises,.tc-kcell.tc-kbook.is-learning{border-color:var(--warn);background:rgba(245,158,11,.12);}
+.tc-kcell.tc-kbook.no-words{border-style:dashed;opacity:.6;}
+.tc-kbookinfo{margin:4px 0 8px;font-size:13px;color:var(--mut);}
 .tc-kmodal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;
   justify-content:center;padding:20px;z-index:50;}
 .tc-kmodalcard{position:relative;background:#1b2030;border:1px solid rgba(255,255,255,.12);border-radius:16px;
