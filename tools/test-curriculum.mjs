@@ -75,8 +75,10 @@ t("the volume table is data a third volume can be appended to", () => {
   eq(VOLUME_ACTS.length, 2);
   ok(VOLUME_ACTS.every((v) => v.from <= v.to));
 });
-t("Vol. 2 is 792 cards — the same 792 tools/assign-emoji2.mjs was written for", () => {
-  eq(SEED.filter((c) => provenanceOf(c).volume === 2).length, 792);
+t("Vol. 2 is 827 cards — the 792 tools/assign-emoji2.mjs was written for, plus the 35 the book glossary restored", () => {
+  // 2026-09-29: +35 Volume 2 words the web glossary had dropped (see the note at the end
+  // of src/data/seed.js). They carry no emoji; assign-emoji2 was never re-run over them.
+  eq(SEED.filter((c) => provenanceOf(c).volume === 2).length, 827);
 });
 
 console.log("=== lesson -> act, derived from the deck rather than hard-coded ===");
@@ -115,7 +117,7 @@ t("a lesson on an act boundary stays null rather than picking a side", () => {
 });
 
 console.log("=== provenanceOf: every card gets a record ===");
-t("all 1632 cards return a full record, with nulls rather than gaps", () => {
+t("all 1667 cards return a full record, with nulls rather than gaps", () => {
   const KEYS = ["textbookId", "volume", "act", "scene", "sourceType", "lesson", "section", "via"];
   let bad = 0;
   for (const c of SEED) {
@@ -123,7 +125,7 @@ t("all 1632 cards return a full record, with nulls rather than gaps", () => {
     if (!p || KEYS.some((k) => !(k in p))) bad++;
   }
   eq(bad, 0, `cards with an incomplete record: ${bad};`);
-  eq(SEED.length, 1632, "deck size — update the coverage floors below if this moves;");
+  eq(SEED.length, 1667, "deck size — update the coverage floors below if this moves;");
 });
 t("junk in does not throw", () => {
   eq(provenanceOf(null).act, null);

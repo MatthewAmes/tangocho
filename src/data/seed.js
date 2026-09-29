@@ -1,6 +1,6 @@
 /* Matthew's JPN 101 vocabulary. New batches get appended here with the version bumped. */
 
-export const SEED_VERSION = 34;
+export const SEED_VERSION = 35;
 
 // Matthew's JPN 101 vocabulary. New batches get appended here with the version bumped.
 export const SEED = [
@@ -1680,4 +1680,44 @@ export const SEED = [
   { term: "安田", reading: "やすだ", romaji: "yasuda", meaning: "[family name]", kind: "kanji", emoji: "👨‍👩‍👧", lesson: 65, sec: "12-9R" },
   { term: "安子", reading: "やすこ", romaji: "yasuko", meaning: "[given name]", kind: "kanji", emoji: "🧑", lesson: 65, sec: "12-9R" },
   { term: "昼休み", reading: "ひるやすみ", romaji: "hiruyasumi", meaning: "lunch break", kind: "kanji", emoji: "🍚", lesson: 65, sec: "12-9R" },
+  /* ── Volume 2 words the web glossary dropped (v35, 2026-09-29) ──
+     Checked against the printed Volume 2 textbook's Appendix B (glossary by act and scene)
+     with tools/import-book-glossary.mjs, then row by row: most open with a frame like
+     "(X に)", which the web import could not parse. Glosses as the book prints them;
+     勤める is printed without one. */
+  { term: "慣れる", reading: "なれる", romaji: "nareru", meaning: "get used/accustomed (to X) — X に慣れる", kind: "kanji", lesson: 60, sec: "7-1" },
+  { term: "なさる", reading: "なさる", romaji: "nasaru", meaning: "do (honorific)", kind: "hiragana", lesson: 60, sec: "7-4" },
+  { term: "直る", reading: "なおる", romaji: "naoru", meaning: "get better, get fixed; restore (itself) — also 治る", kind: "kanji", lesson: 60, sec: "7-6" },
+  { term: "聞こえる", reading: "きこえる", romaji: "kikoeru", meaning: "be audible", kind: "kanji", lesson: 61, sec: "8-1" },
+  { term: "お誕生日おめでとうございます", reading: "おたんじょうびおめでとうございます", romaji: "otanjoubiomedetougozaimasu", meaning: "Happy birthday.", kind: "kanji", lesson: 61, sec: "8-1" },
+  { term: "止める", reading: "やめる", romaji: "yameru", meaning: "stop, quit (something) — also 辞める", kind: "kanji", lesson: 61, sec: "8-2" },
+  { term: "乾く", reading: "かわく", romaji: "kawaku", meaning: "become dry", kind: "kanji", lesson: 61, sec: "8-4" },
+  { term: "一回も", reading: "いっかいも", romaji: "ikkaimo", meaning: "not a single time (number + も)", kind: "kanji", lesson: 61, sec: "8-6" },
+  { term: "片付ける", reading: "かたづける", romaji: "katazukeru", meaning: "clean (something) up, tidy up", kind: "kanji", lesson: 62, sec: "9-1" },
+  { term: "〜はじめる", reading: "はじめる", romaji: "hajimeru", meaning: "begin X-ing (Verb stem + はじめる)", kind: "hiragana", lesson: 62, sec: "9-2" },
+  { term: "〜おわる", reading: "おわる", romaji: "owaru", meaning: "finish X-ing (Verb stem + おわる)", kind: "hiragana", lesson: 62, sec: "9-2" },
+  { term: "勤める", reading: "つとめる", romaji: "tsutomeru", meaning: "work for, be employed (at X)", kind: "kanji", lesson: 62, sec: "9-3" },
+  { term: "気がつく", reading: "きがつく", romaji: "kigatsuku", meaning: "notice X — X に気がつく", kind: "kanji", lesson: 62, sec: "9-5" },
+  { term: "思い出す", reading: "おもいだす", romaji: "omoidasu", meaning: "remember", kind: "kanji", lesson: 62, sec: "9-5" },
+  { term: "仕上げる", reading: "しあげる", romaji: "shiageru", meaning: "finish up, complete", kind: "kanji", lesson: 63, sec: "10-2" },
+  { term: "済ませる", reading: "すませる", romaji: "sumaseru", meaning: "finish, get through", kind: "kanji", lesson: 63, sec: "10-2" },
+  { term: "終わらせる", reading: "おわらせる", romaji: "owaraseru", meaning: "finish (something), close (something)", kind: "kanji", lesson: 63, sec: "10-2" },
+  { term: "出かける", reading: "でかける", romaji: "dekakeru", meaning: "go out", kind: "kanji", lesson: 63, sec: "10-2" },
+  { term: "待たせる", reading: "またせる", romaji: "mataseru", meaning: "make someone wait", kind: "kanji", lesson: 63, sec: "10-3" },
+  { term: "間違える", reading: "まちがえる", romaji: "machigaeru", meaning: "mistake (something), make a mistake or error", kind: "kanji", lesson: 63, sec: "10-4" },
+  { term: "受ける", reading: "うける", romaji: "ukeru", meaning: "receive; catch; be given", kind: "kanji", lesson: 63, sec: "10-6" },
+  { term: "明けましておめでとうございます", reading: "あけましておめでとうございます", romaji: "akemashiteomedetougozaimasu", meaning: "Happy New Year", kind: "kanji", lesson: 63, sec: "10-8R" },
+  { term: "申し伝える", reading: "もうしつたえる", romaji: "moushitsutaeru", meaning: "convey a message (humble)", kind: "kanji", lesson: 64, sec: "11-2" },
+  { term: "申し上げる", reading: "もうしあげる", romaji: "moushiageru", meaning: "say, tell (humble)", kind: "kanji", lesson: 64, sec: "11-2" },
+  { term: "代わる", reading: "かわる", romaji: "kawaru", meaning: "switch over to X (on the telephone) — X と・に代わる", kind: "kanji", lesson: 64, sec: "11-2" },
+  { term: "似合う", reading: "にあう", romaji: "niau", meaning: "X looks good on Y — X が Y に似合う", kind: "kanji", lesson: 64, sec: "11-2" },
+  { term: "呑む", reading: "のむ", romaji: "nomu", meaning: "ingest, swallow", kind: "kanji", lesson: 64, sec: "11-5" },
+  { term: "くださる", reading: "くださる", romaji: "kudasaru", meaning: "give (to in-group) (honorific)", kind: "hiragana", lesson: 65, sec: "12-1" },
+  { term: "受け取る", reading: "うけとる", romaji: "uketoru", meaning: "take, accept", kind: "kanji", lesson: 65, sec: "12-2" },
+  { term: "離れる", reading: "はなれる", romaji: "hanareru", meaning: "be away, separate from X — X から・と離れる", kind: "kanji", lesson: 65, sec: "12-2" },
+  { term: "足りる", reading: "たりる", romaji: "tariru", meaning: "be enough, suffice", kind: "kanji", lesson: 65, sec: "12-4" },
+  { term: "来てくれてありがとう", reading: "きてくれてありがとう", romaji: "kitekuretearigatou", meaning: "Thanks for coming.", kind: "kanji", lesson: 65, sec: "12-4" },
+  { term: "並ぶ", reading: "ならぶ", romaji: "narabu", meaning: "stand alongside; line up — X と・に並ぶ", kind: "kanji", lesson: 65, sec: "12-5" },
+  { term: "似る", reading: "にる", romaji: "niru", meaning: "look like X; resemble — X と・に似る", kind: "kanji", lesson: 65, sec: "12-5" },
+  { term: "差し上げる", reading: "さしあげる", romaji: "sashiageru", meaning: "give (to out-group) (humble)", kind: "kanji", lesson: 65, sec: "12-6" },
 ];
