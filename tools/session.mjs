@@ -625,8 +625,11 @@ export function buildSession(sources, opts = {}) {
      Current Lesson session to the earliest unstudied word in the book, which is the one act
      the learner is demonstrably not on. Both keys are 0 when there is no scope, so the sort
      falls through to exactly the comparison it has always used. */
-  const fresh = all.filter((c) => c.fresh)
+  let fresh = all.filter((c) => c.fresh)
     .sort((a, b) => (b.scopeShift || 0) - (a.scopeShift || 0) || (a.item.order ?? 0) - (b.item.order ?? 0));
+  /* The caller may state its own intake priorities (tools/intake.mjs: Volume 2 first, the
+     10,000-word list alongside). Applied to the sorted list, so ties keep the old order. */
+  if (typeof o.orderFresh === "function") fresh = o.orderFresh(fresh);
 
   /* Leech throttle. Drilling a stuck word harder does not unstick it, and a pool sorted
      purely by decay fills up with exactly those words — they are the most decayed things

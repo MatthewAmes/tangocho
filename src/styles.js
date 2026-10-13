@@ -251,6 +251,8 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-objbar i.is-mid{background:var(--warn);}   /* --due does not exist; the amber token is --warn, and var() on a missing token silently renders transparent */
 /* Volume 2, proven (Plan tab): word-by-word levels from tools/proven.mjs */
 .tc-provensum{margin:6px 0 10px;font-size:14px;line-height:1.5;}
+.tc-planh-sm{font-size:16px;margin-top:18px;}
+.tc-fbnote{margin:6px 0 0;font-size:13px;color:var(--mut);}
 .tc-proven{display:flex;flex-direction:column;gap:8px;}
 .tc-provenrow{display:grid;grid-template-columns:56px 1fr 64px;gap:10px;align-items:center;}
 .tc-provenact{font-size:13px;color:var(--mut);}

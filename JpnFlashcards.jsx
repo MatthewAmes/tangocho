@@ -19,6 +19,8 @@ import { useReadingPrefs } from "./src/lib/readingPrefs.js";
 import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
 import { cleanWord, sessionCard } from "./tools/wordform.mjs";
+import { orderIntake } from "./tools/intake.mjs";
+import { normalise as normaliseKana } from "./tools/benchmark.mjs";
 import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
 import { bookOrdered, unlockedFrom, bookKanjiStatus, bookKanjiSummary, BOOK_ORDER } from "./tools/bookkanji.mjs";
 
@@ -74,7 +76,7 @@ import { currentAct, volumeOfAct, VOLUME_ACTS, provenanceOf, actProfiles, actSki
 import { grammarProfiles, nodeStatus, weakestSubRule, nodesForAct, GRAMMAR_NODES } from "./tools/grammar.mjs";
 import { volumeProgress, actProgress, describeVolume, actOfScene } from "./tools/progress.mjs";
 import { allVolumes, unplaced, describeComposite, STRANDS } from "./tools/strands.mjs";
-import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA } from "./src/lib/freq.js";
+import { freqStatsFrom, freqPool, FREQ_DEFAULT_QUOTA, learnable } from "./src/lib/freq.js";
 import {
   SKILLS, SKILL_LABEL, skillForFormat, CUE, cueHint, classifyFailure,
   makeEvidence, profileFrom, biggestGap, explainPick, summarise, CONFIDENCE,
@@ -1528,6 +1530,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                                   /* The daily budget, not a per-session one — already
                                      reduced by what today took, and zero in catch-up. */
                                   maxNew: newLeft,
+                                  /* New words: Volume 2 first, the 10,000 most common
+                                     alongside (tools/intake.mjs). Only on the default mix —
+                                     a chosen practice mode keeps its own lean. */
+                                  orderFresh: (!plan.practice || plan.practice === "mix") ? orderIntake : undefined,
                                   act: actNow, recent: sessionLog.current });
     /* Grammar is in every session. New grammar notes compete with new words for the day's
        two or three new slots and almost always lost, so the grammar deck — most of what
@@ -3115,8 +3121,24 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
   /* The feedback sheet, once an answer has been judged. keyed by position so a new card
      never inherits the previous card's open explanation. */
+  /* When this word comes back, from the same scheduler step that grading is about to run —
+     a dry run of reviewOutcome on the card as it stands. Said on the sheet because "the app
+     knows when I need more practice" is only believable if it says so, word by word. Deck
+     words only: the other decks keep their memory state elsewhere. */
+  const nextReview = (() => {
+    if (!verdict || !live || card.src) return null;
+    try {
+      const r = reviewOutcome(live, { got: !!verdict.ok, ms: thinkRef.current || 0, dir: isProd ? "prod" : undefined,
+        area: "vocab", cue: supportCue(renderActivity, typeof cueLevel === "number" ? cueLevel : null) });
+      const due = r && r.next && r.next.due;
+      if (!due) return null;
+      const d = (due - Date.now()) / 86400000;
+      const when = d < 0.75 ? "later today" : d < 1.5 ? "tomorrow" : d < 45 ? `in ${Math.round(d)} days` : `in about ${Math.round(d / 30)} months`;
+      return verdict.ok ? `Next review ${when}.` : `It comes back in this session, then ${when}.`;
+    } catch (e) { return null; }
+  })();
   const feedbackSheet = verdict ? (
-    <FeedbackSheet key={pos} ok={!!verdict.ok} answer={sheetAnswer(card, verdict)}
+    <FeedbackSheet key={pos} ok={!!verdict.ok} answer={sheetAnswer(card, verdict)} note={nextReview}
       nextLabel={verdict.ok ? "Next →" : "Got it — next →"}
       onNext={() => grade(verdict.ok)}
       onExplain={wantKanji}
@@ -4178,6 +4200,13 @@ function Plan({ cards = [], onResult }) {
   const vol2Words = useMemo(() => cards.filter((c) => isBookWord(c) && actOfCard(c) >= 7 && actOfCard(c) <= 12), [cards]);
   const vol2Levels = useMemo(() => levelsFor(evidence, vol2Words.map((c) => c.id)), [evidence, vol2Words]);
   const vol2 = useMemo(() => tally(vol2Levels), [vol2Levels]);
+  /* The 10,000 most common words beyond the textbook, through the same proven levels. The
+     population is the words started — 9,000 untouched words would make every number here
+     a rounding error and tell nothing. */
+  const freqProg = useMemo(() => {
+    const ids = [...new Set((evidence || []).filter((r) => r && String(r.id).startsWith("freq:")).map((r) => r.id))];
+    return tally(levelsFor(evidence, ids));
+  }, [evidence]);
   const vol2Acts = useMemo(() => [7, 8, 9, 10, 11, 12].map((act) => {
     const ids = vol2Words.filter((c) => actOfCard(c) === act).map((c) => c.id);
     return { act, t: tally(new Map(ids.map((id) => [id, vol2Levels.get(id)]))) };
@@ -4489,6 +4518,16 @@ function Plan({ cards = [], onResult }) {
         </div>
         <p className="tc-provenkey" aria-hidden="true">
           {[...LEVEL_ORDER].reverse().map((l) => <span key={l}><i className={"is-" + l} />{LEVEL_LABEL[l]}</span>)}
+        </p>
+        <h3 className="tc-planh tc-planh-sm">The 10,000 most common words <span className="tc-planh-sub">beyond the textbook</span></h3>
+        <p className="tc-provensum">
+          {freqProg.total > 0
+            ? <><b>{freqProg.total}</b> started · <b>{freqProg.recalls}</b> can recall · <b>{freqProg.mastered}</b> mastered</>
+            : "Not started yet — Smart Review introduces a few each day alongside Volume 2."}
+        </p>
+        <p className="tc-planhint">
+          New words each day come about half from Volume 2, in book order, and a third from this list, most common
+          first. Words already in your deck are skipped here so nothing is learned twice.
         </p>
       </section>
 
@@ -5865,7 +5904,26 @@ async function loadForeignDecks(cards, enrich = ENRICHMENT_DEFAULT) {
       sGet("jpn101:freq"), loadFreqWords(), loadDays(), sGet("jpn101:freqQuota"),
     ]);
     const stats = freqStatsFrom(raw ? JSON.parse(raw) : null);
-    const words = (d && d.words) || [];
+    /* A common word the deck already teaches is not offered again: 学校 from the 10k list
+       and 学校 from Act 9 would be two cards for one word, learned and scheduled twice. */
+    /* A list word written in kana (ありがとう) also matches a deck word by its reading. */
+    const inDeck = new Set(), deckReadings = new Set();
+    for (const c of cards || []) {
+      if (!c) continue;
+      const t = normaliseKana(cleanWord(c.term).replace(/[（(][^）)]*[）)]/g, ""));
+      if (t) inDeck.add(t);
+      const r = normaliseKana(cleanWord(c.reading).replace(/[（(][^）)]*[）)]/g, ""));
+      if (r) deckReadings.add(r);
+    }
+    const kanaOnly = (s) => /^[぀-ヿー]+$/.test(s);
+    /* ...and only rows that are real words with a trustworthy gloss (freq.js::learnable):
+       the top of the list is particles and fragments glossed from the wrong dictionary
+       entry — の as "field", いる as "to shoot". */
+    const words = ((d && d.words) || []).filter((w) => {
+      if (!learnable(w)) return false;
+      const t = normaliseKana(w.t);
+      return !inDeck.has(t) && !(kanaOnly(t) && deckReadings.has(t));
+    });
     const quota = Number(qRaw) || FREQ_DEFAULT_QUOTA;
     const today = days[localDayKey()];
     const room = Math.max(0, quota - ((today && today.fnew) || 0));

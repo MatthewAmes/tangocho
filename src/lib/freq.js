@@ -29,6 +29,34 @@ export const FREQ_DEFAULT_QUOTA = 15;
 /** How many unstarted words to offer the session builder beyond what it can introduce. */
 export const FREQ_FRONTIER = 40;
 
+/* ── which rows are words worth a flashcard ──
+   The list is corpus token frequency with glosses looked up afterwards, and the top of it
+   is particles, endings and fragments — の, に, て, た, し, ます, まし — each matched to the
+   WRONG dictionary entry: の "field", が "moth", いる "to shoot (an arrow)", する "to rub",
+   この "nine". Offered as cards, those taught wrong meanings for the commonest words in
+   the language. They are left out: short hiragana tokens (the particles and fragments, and
+   the homographs a gloss cannot be trusted on), and grammatical parts of speech. Real
+   short words — する, いる, これ, ここ — are in the textbook deck already, with correct
+   meanings, and that deck is where they are learned. */
+const NOT_A_CARD_POS = new Set(["prt", "aux", "aux-v", "cop", "suf", "pref", "n-suf", "n-pref", "unc", "ctr", "exp"]);
+/* Three more classes the gloss cannot be trusted on, found by reading the list:
+   - a single kanji on its own: 本 read もと ("origin"), 家 read うち ("inside"), 出 read で
+     ("coming out") — one character, many readings, and the lookup picked one at random.
+     The common ones (本, 家, 日, 月, 年 …) are textbook words, glossed by the book.
+   - a kana word whose stored reading is a DIFFERENT word: あなた read かなた ("beyond").
+   - a masu-stem fragment filed as a noun: わかり, ござい ("five punishments"), あり. */
+const HIRA = /^[぀-ゟ]+$/;
+const kataToHira = (s) => String(s || "").replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+export function learnable(w) {
+  if (!w || !w.t || !w.m) return false;
+  if (NOT_A_CARD_POS.has(w.p)) return false;
+  if (/^[぀-ゟ]{1,2}$/.test(w.t)) return false;
+  if (/^[一-鿿々]$/.test(w.t)) return false;
+  if (/^[぀-ヿー]+$/.test(w.t) && w.r && kataToHira(w.r) !== kataToHira(w.t)) return false;
+  if (HIRA.test(w.t) && w.p === "n" && /[いきしちにひみりぎじびぴ]$/.test(w.t)) return false;
+  return true;
+}
+
 /** A freq.json row -> the card shape the rest of the app uses.
  *  Rows are terse to keep the file small: t=term, r=reading, m=meaning, p=part of speech,
  *  k=rank. A word written in kana already has no separate reading, hence the fallback. */

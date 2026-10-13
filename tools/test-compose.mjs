@@ -234,23 +234,27 @@ t("the production ladder still needs English, because its cue IS the English", (
   eq(activityFor({ id: "a", format: "type", cue: CUE.STRONG }, mat(withEn, false)), ACTIVITY.ORDER);
 });
 
-console.log("=== calm mode: four ways, one order ===");
-t("calm: every recognition form is the flip card", () => {
-  const rich = { ...withSentence, canMatch: () => true, hasConfusable: () => true, canEmoji: () => true, canSpell: () => true };
-  for (const f of ["mc", "recall", "listen", "emoji", "spell", "match"]) eq(activityFor(pick({ format: f }), rich, { calm: true }), ACTIVITY.RECALL, f);
+console.log("=== calm mode: variety without the filler ===");
+t("calm: no grid unless the learner has really mixed the word up", () => {
+  const anyBoard = { ...withSentence, sentenceFor: () => null, canMatch: () => true, hasConfusable: () => false };
+  const got = Array.from({ length: 300 }, (_, i) => activityFor(pick({ id: "w" + i, format: "mc" }), anyBoard, { calm: true }));
+  ok(!got.includes(ACTIVITY.MATCH), "a grid appeared with no confusable");
+  eq(activityFor(pick({ format: "mc" }), { ...withSentence, canMatch: () => true, hasConfusable: () => true }, { calm: true }), ACTIVITY.MATCH);
 });
-t("calm: first contact, typing, then the sentence once production is free", () => {
+t("calm: recognition still varies — choice, sentence, picture", () => {
+  const rich = { ...withSentence, canEmoji: () => true };
+  const got = Array.from({ length: 300 }, (_, i) => activityFor(pick({ id: "r" + i, format: "mc" }), rich, { calm: true }));
+  for (const a of [ACTIVITY.MC, ACTIVITY.CLOZE, ACTIVITY.EMOJI]) ok(got.includes(a), a + " never appeared");
+});
+t("calm: production still climbs order -> word bank -> typing", () => {
+  eq(activityFor(pick({ format: "type", cue: CUE.STRONG }), withSentence, { calm: true }), ACTIVITY.ORDER);
+  eq(activityFor(pick({ format: "type", cue: CUE.PARTIAL }), withSentence, { calm: true }), ACTIVITY.BUILD);
   eq(activityFor(pick({ format: "learn" }), withSentence, { calm: true }), ACTIVITY.LEARN);
-  eq(activityFor(pick({ format: "type", cue: CUE.STRONG }), withSentence, { calm: true }), ACTIVITY.TYPE);
-  eq(activityFor(pick({ format: "type", cue: CUE.FREE }), withSentence, { calm: true }), ACTIVITY.BUILD);
-  eq(activityFor(pick({ format: "type", cue: CUE.FREE }), noMaterial, { calm: true }), ACTIVITY.TYPE, "no sentence: type it");
-  eq(activityFor(pick({ format: "cloze", cue: CUE.CONTEXT }), withSentence, { calm: true }), ACTIVITY.CLOZE);
 });
-t("calm: a whole session never shows a grid, a picture or multiple choice", () => {
-  const rich = { ...withSentence, canMatch: () => true, hasConfusable: () => true, canEmoji: () => true };
-  const picks = Array.from({ length: 20 }, (_, i) => pick({ id: "c" + i, format: ["mc", "type", "learn", "recall"][i % 4], cue: [CUE.CHOOSE, CUE.STRONG, CUE.FREE][i % 3] }));
-  const kinds = new Set(composeSession(picks, rich, { calm: true }).map((x) => x.activity));
-  for (const a of [ACTIVITY.MATCH, ACTIVITY.EMOJI, ACTIVITY.MC, ACTIVITY.LISTEN, ACTIVITY.SPELL]) ok(!kinds.has(a), a + " appeared");
+t("calm: at most one grid per eight cards", () => {
+  const conf = { ...withSentence, canMatch: () => true, hasConfusable: () => true };
+  const picks = Array.from({ length: 16 }, (_, i) => pick({ id: "g" + i, format: "mc" }));
+  ok(composeSession(picks, conf, { calm: true }).filter((x) => x.activity === ACTIVITY.MATCH).length <= 2);
 });
 
 

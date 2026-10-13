@@ -22,7 +22,7 @@ function Marked({ marks }) {
   );
 }
 
-export default function FeedbackSheet({ ok, answer, onNext, nextLabel, explain, onExplain, extra }) {
+export default function FeedbackSheet({ ok, answer, onNext, nextLabel, explain, onExplain, extra, note }) {
   const [open, setOpen] = useState(false);
 
   const toggle = (e) => {
@@ -45,6 +45,7 @@ export default function FeedbackSheet({ ok, answer, onNext, nextLabel, explain, 
           {answer.meaning && <span className="tc-fbmean">{answer.meaning}</span>}
         </p>
       )}
+      {note && <p className="tc-fbnote">{note}</p>}
       {open && explain && (
         <div className="tc-fbexplain">
           {explain.marks && explain.marks.some((m) => m.miss) && <Marked marks={explain.marks} />}
