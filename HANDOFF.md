@@ -14,10 +14,15 @@ secret is set). The last handoff was written 2026-08-27; everything below replac
 Matthew: "I hate the app and the smart review … so clunky, not helpful, nonsensical." The
 answer was a strip-down, behind one switch: `const CALM = true` in `JpnFlashcards.jsx`.
 
-- Smart Review asks every card one of four ways, in one order: see it (LEARN), recall it
-  (RECALL flip), type it (TYPE), use it in a sentence (BUILD / CLOZE when a translated
-  sentence exists). `tools/compose.mjs::calmActivity`. Grids, pictures, multiple choice,
-  listening and spelling still exist in their own tabs, not in Smart Review.
+- *Revised the same day:* the first calm mode cut every card to a flip or a typed answer;
+  Matthew then asked for "a variety of exercises … to engrain it". Calm now KEEPS the
+  variety (recognition rotates choice / sentence / picture; production climbs order → word
+  bank → typing) and drops only the filler: no grid without a recorded confusion, at most
+  one per eight cards (`activityFor` with `calm: true`).
+- New words: Volume 2 first (55%, book order), the 10,000-word list alongside (30%, most
+  common first), strands 15% — `tools/intake.mjs`. The frequency list is filtered to words
+  with trustworthy glosses (`src/lib/freq.js::learnable`; its top rows were particles
+  glossed from the wrong dictionary entry) and deduplicated against the deck.
 - No XP, combos, rescue/memory-check banners, badges, "Why this one?", rōmaji/pitch pills.
 - A right answer advances by itself after ~0.75s; a wrong one shows the answer and waits.
 - A miss comes back once, four cards later — no multi-rung recovery ladder.
