@@ -77,6 +77,7 @@ export function activityFor(pick, material = {}, opts = {}) {
   const fmt = pick && pick.format;
   const cue = typeof (pick && pick.cue) === "number" ? pick.cue : CUE.FREE;
   const sent = sentenceFor(pick, material);
+  if (o.calm) return calmActivity(fmt, cue, sent, material, o);
 
   if (fmt === "cloze") {
     if (!sent) return ACTIVITY.MC;                       // promised context, has none
@@ -146,6 +147,22 @@ export function activityFor(pick, material = {}, opts = {}) {
   }
 
   return fmt in SUPPORT ? fmt : ACTIVITY.MC;
+}
+
+/* ── calm mode ──
+   One way through a word, the same every time: see it, recall it, type it, use it in a
+   sentence. The intervention engine still decides WHICH of those a card is ready for (the
+   format and cue it hands over); calm mode only refuses to dress the answer up as a
+   different kind of exercise each time. Recognition of every kind is the flip card;
+   production is typing until it is free, then building the sentence when the card has one
+   with a translation; contextual use is the sentence blank. */
+function calmActivity(fmt, cue, sent, material, o) {
+  if (fmt === "learn") return ACTIVITY.LEARN;
+  const chunks = material.chunkCount ? material.chunkCount(sent) : 0;
+  const buildable = sent && sent.en && chunks >= o.minChunks && chunks <= o.maxChunks;
+  if (fmt === "type") return buildable && cue >= CUE.FREE ? ACTIVITY.BUILD : ACTIVITY.TYPE;
+  if (fmt === "cloze") return sent && sent.en ? ACTIVITY.CLOZE : ACTIVITY.TYPE;
+  return ACTIVITY.RECALL;
 }
 
 function sentenceFor(pick, material) {

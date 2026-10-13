@@ -811,6 +811,19 @@ body{min-height:100%;overscroll-behavior-y:none;}
    sentence against the XP figure. */
 .tc-doneweak{margin:0 auto 22px;max-width:40ch;font-size:14px;line-height:1.5;color:var(--mut);}
 .tc-donenext{margin:0 auto 22px;max-width:40ch;font-size:14px;line-height:1.5;color:var(--mut);}
+/* calm mode (2026-10-13): the More menu and the plain end-of-session screen */
+.tc-more{display:flex;flex-direction:column;gap:8px;max-width:520px;margin:8px auto 0;}
+.tc-moreitem{appearance:none;display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:14px 16px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--washi);font:inherit;cursor:pointer;min-height:var(--tap);}
+.tc-moreitem:active{transform:scale(.99);}
+.tc-moreitem:focus-visible{outline:2px solid var(--info);outline-offset:2px;}
+.tc-morelabel{font-size:16px;font-weight:600;}
+.tc-morenote{font-size:13px;color:var(--mut);}
+.tc-calmscore{margin:6px 0 14px;font-size:18px;}
+.tc-calmscore b{font-size:34px;}
+.tc-calmmissed{max-width:420px;margin:0 auto 16px;text-align:left;}
+.tc-calmmiss{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin:6px 0;font-size:16px;}
+.tc-calmread{font-size:14px;color:var(--mut);}
+.tc-calmmean{font-size:14px;}
 .tc-donerate{margin:6px 0 0;font-size:14px;color:var(--mut);}
 .tc-donerate b{color:var(--ok);}
 /* Last and smallest, on purpose. See the comment beside it in the JSX. */

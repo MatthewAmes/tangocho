@@ -91,7 +91,8 @@ t("one card per drillable note, in book order, all on the day's verb", () => {
   const d = grammarDeck("2026-09-29");
   eq(d.length, PATTERNS.length);
   const v = verbOfDay("2026-09-29");
-  ok(d.every((g) => g.meaning.endsWith("(" + v.dict + ")")), "every meaning names the same verb");
+  ok(d.every((g) => g.meaning.startsWith(v.dict + " + 〜")), "every meaning names the same verb and the pattern");
+  ok(d.find((g) => g.id === "8.1").meaning.includes("〜てみる"), "〜てみる is written out");
   for (let i = 1; i < d.length; i++) ok(d[i - 1].act <= d[i].act, "book order");
   eq(new Set(d.map((g) => g.answer)).size, d.length, "no two notes build the same form");
 });

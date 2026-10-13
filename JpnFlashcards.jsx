@@ -18,6 +18,7 @@ import ReadingToggles from "./src/components/ReadingToggles.jsx";
 import { useReadingPrefs } from "./src/lib/readingPrefs.js";
 import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
+import { cleanWord, sessionCard } from "./tools/wordform.mjs";
 import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
 import { bookOrdered, unlockedFrom, bookKanjiStatus, bookKanjiSummary, BOOK_ORDER } from "./tools/bookkanji.mjs";
 
@@ -650,7 +651,48 @@ const TABS = [
   ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"],
   ["scripts", "Scripts"], ["quizzes", "Quizzes"], ["browse", "Browse"], ["plan", "Plan"],
 ];
-const tabLabel = (id) => (TABS.find((t) => t[0] === id) || [, id])[1];
+const tabLabel = (id) => (id === "more" ? "More" : (TABS.find((t) => t[0] === id) || [, id])[1]);
+
+/* ── calm mode (2026-10-13) ──
+   "So clunky, not helpful, nonsensical." Every request had been answered by adding
+   something — another banner, another activity type, another tab — and the sum was a
+   study session that never settled into a rhythm. Calm mode is the strip-down:
+
+   - Smart Review asks every card one of four ways, in one order: see it (first
+     contact), recall it (flip card), type it, use it in a sentence. Grids, pictures,
+     multiple choice, listening and spelling drills stay in their own tabs.
+   - No XP, combos, rescue banners, memory-check banners, badges or "why this one".
+   - A right answer moves on by itself; a wrong one shows the answer and waits.
+   - A miss simply comes back a few cards later, instead of a multi-step recovery.
+   - Three tabs in the bar — Study, Tutor, Plan — and everything else under More.
+
+   One switch so the whole change can be undone in one line; nothing was deleted. */
+const CALM = true;
+const PRIMARY_TABS = ["study", "tutor", "plan"];
+const MORE_TABS = [
+  ["drill", "Drill", "Volume 2 grammar and verb conjugation"],
+  ["chars", "Kanji・Kana", "The textbook's kanji, and kana practice"],
+  ["scripts", "Scripts", "Textbook scenes — read, listen, act them out"],
+  ["shadow", "Shadow", "Hear a line, say it back"],
+  ["write", "Write", "Produce words you already recognise"],
+  ["quizzes", "Quizzes", "Activity-book exercises"],
+  ["dates", "Dates", "Dates, times and counters"],
+  ["input", "Input", "Videos and podcasts at your level"],
+  ["browse", "Browse", "Your whole deck, search and edit"],
+];
+
+function MoreMenu({ go }) {
+  return (
+    <div className="tc-more">
+      {MORE_TABS.map(([id, label, note]) => (
+        <button key={id} type="button" className="tc-moreitem" onClick={() => go(id)}>
+          <span className="tc-morelabel">{label}</span>
+          <span className="tc-morenote">{note}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function JpnFlashcards() {
   const [cards, setCards] = useState([]);
@@ -989,7 +1031,19 @@ export default function JpnFlashcards() {
                 section you are in and every button is reachable the ordinary way. */}
             {/* Kanji and Kana are one chip: same job, two scales, and the bar was carrying
                 twelve. The picker inside it remembers which you were on. */}
-            {TABS.map(([id, label]) => (
+            {CALM ? (
+              <>
+                {PRIMARY_TABS.map((id) => (
+                  <button key={id} aria-current={tab === id ? "page" : undefined}
+                    className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => go(id)}>{tabLabel(id)}</button>
+                ))}
+                {/* More stays lit while you are in one of its sections, and says which. */}
+                <button aria-current={!PRIMARY_TABS.includes(tab) ? "page" : undefined}
+                  className={"tc-tab" + (!PRIMARY_TABS.includes(tab) ? " is-on" : "")} onClick={() => go("more")}>
+                  {!PRIMARY_TABS.includes(tab) && tab !== "more" ? "More · " + tabLabel(tab) : "More"}
+                </button>
+              </>
+            ) : TABS.map(([id, label]) => (
               <button key={id} aria-current={tab === id ? "page" : undefined}
                 className={"tc-tab" + (tab === id ? " is-on" : "")} onClick={() => go(id)}>{label}</button>
             ))}
@@ -1016,6 +1070,8 @@ export default function JpnFlashcards() {
         <h2 className="tc-sr">{tabLabel(tab)}</h2>
         {!ready ? (
           <div className="tc-empty">Loading your deck…</div>
+        ) : tab === "more" ? (
+          <MoreMenu go={go} />
         ) : tab === "study" ? (
           <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
         ) : tab === "drill" ? (
@@ -1141,6 +1197,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      the one conversation actually uses — and it needs no Japanese keyboard. */
   const [hearing, setHearing] = useState(false);
   const recRef = useRef(null);
+  const [moreWays, setMoreWays] = useState(false);   // calm mode: the sections grid, folded away
   /* The kanji dictionary, for taking a word apart in an explanation. Fetched the first time
      Explain is pressed, not on mount: most sessions never open one, and kanji.json is the
      largest file the app loads. */
@@ -1184,6 +1241,10 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      so "sound off" means sound off. Only when an answer is first judged, never on
      re-render. */
   const judgedRef = useRef(null);
+  /* Calm mode: right answers advance on their own after a beat, so a correct card costs one
+     tap — the answer itself. A wrong one stays, because reading the correction is the
+     point of getting it wrong. */
+  const autoNextRef = useRef(null);
   useEffect(() => {
     if (!verdict) { judgedRef.current = null; return; }
     if (judgedRef.current === verdict) return;
@@ -1680,7 +1741,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
        learner asked for by name, and reordering it would be answering a question nobody
        asked; those cards also carry no _pick, so there is nothing to compose from. */
     const composable = ordered.some((c) => c && c._pick);
-    setQueue(composable ? composeQueue(ordered, clozeIndex, ordered.map((c) => c.term), confusion) : ordered);
+    /* Shown and checked without the glossary's conjugation notes — 通う, not
+       通う(-u; 通った) — and with the reading fixed where a note had reached it, which made
+       a typed びっくりする impossible to get right. Ids are untouched (tools/wordform.mjs). */
+    const shown = ordered.map(sessionCard);
+    setQueue(composable ? composeQueue(shown, clozeIndex, shown.map((c) => c.term), confusion) : shown);
     setPos(0); setPoolSize(pool.length);
     setPassed(new Set()); setFirstTry(new Set()); setStruggled(new Set());
     setCombo(0); setBestCombo(0);
@@ -1858,7 +1923,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
      different answer from the one the arrangement was based on. Cards that never went
      through it — a section drill, a mid-session requeue — still get one on the spot. */
   const activity = useMemo(
-    () => (card ? (card._activity || activityFor({ id: card.id, format: fmt, cue: cueLevel }, material)) : fmt),
+    () => (card ? (card._activity || activityFor({ id: card.id, format: fmt, cue: cueLevel }, material, { calm: CALM })) : fmt),
     [card, fmt, cueLevel, material],
   );
 
@@ -2381,13 +2446,15 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
            tools/recovery.mjs: which rungs, where they land, and what happens when a rung is
            missed in its turn. Falls back to the old spaced requeue when there is no ladder
            worth running. */
-        setQueue((prev) => sequenceRecovery({
-          queue: prev, pos, card: c,
-          failure: outcome && outcome.failure,
-          failedFormat: fmt,
-          failedCue: intervention ? intervention.cue : null,
-          caps: (c._pick && c._pick.caps) || {},
-        }).queue);
+        setQueue((prev) => (CALM
+          ? (() => { const q = prev.slice(); q.splice(Math.min(q.length, pos + 4), 0, { ...c, _step: (c._step || 0) + 1 }); return q; })()
+          : sequenceRecovery({
+              queue: prev, pos, card: c,
+              failure: outcome && outcome.failure,
+              failedFormat: fmt,
+              failedCue: intervention ? intervention.cue : null,
+              caps: (c._pick && c._pick.caps) || {},
+            }).queue));
       }
     }
     setFlipped(false);
@@ -2461,6 +2528,13 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       onEnd: () => { setHearing(false); recRef.current = null; },
     });
   }, [hearing, checkSpelling]);
+
+  useEffect(() => {
+    if (!CALM || !running || !verdict || !verdict.ok) return undefined;
+    const v = verdict;
+    autoNextRef.current = setTimeout(() => { if (autoNextRef.current) grade(v.ok); }, 750);
+    return () => { clearTimeout(autoNextRef.current); autoNextRef.current = null; };
+  }, [verdict, running]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // keyboard: space/enter flips; when flipped → →/Enter = got it, ←/Backspace = review
   useEffect(() => {
@@ -2560,7 +2634,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             Nothing is offered that today's state cannot finish — the satisfiability rule
             lives in tools/missions.mjs — so a learner with a clean fortnight is never told
             to go and recover two mistakes. Some days that leaves one chip, or none. */}
-        {missions.length > 0 && (
+        {!CALM && missions.length > 0 && (
           <div className="tc-missions">
             <div className="tc-batchhead"><span>Today</span></div>
             <div className="tc-missionrow">
@@ -2618,7 +2692,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             evening is one you stop trusting. Only shown once there is evidence to plan
             from; before that every slice would read "not measured yet", which is true and
             not worth a line on the home screen. */}
-        {smartPool.length > 0 && sessionPlan.slices.length > 0
+        {!CALM && smartPool.length > 0 && sessionPlan.slices.length > 0
           && sessionPlan.slices.some((s) => s.state !== "unknown") && (
           <p className="tc-planline">{describeSkillPlan(sessionPlan)}</p>
         )}
@@ -2747,6 +2821,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           </div>
         )}
 
+        {CALM && (
+          <button type="button" className="tc-optsbtn" aria-expanded={moreWays} onClick={() => setMoreWays((v) => !v)}>
+            {moreWays ? "Hide" : "More ways to study"}
+          </button>
+        )}
+        {(!CALM || moreWays) && (<>
         <div className="tc-batchhead"><span>Sections</span></div>
         <div className="tc-batchgrid">
           {batches.map((b) => {
@@ -2772,6 +2852,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           )}
         </div>
         <p className="tc-hintline tc-kbdtip">Tip: Space flips · → got it · ← missed</p>
+        </>)}
       </div>
     );
   }
@@ -2786,6 +2867,35 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     const answered = new Set([...passed, ...struggled]);
     const asked = answered.size || poolSize;
     const missedCards = cards.filter((c) => struggled.has(c.id));
+    if (CALM) {
+      return (
+        <div className="tc-done">
+          <p className="tc-eyebrow">{stopped ? "Good place to stop" : "Session complete"}</p>
+          <p className="tc-calmscore"><b>{firstTry.size}</b> of {asked} right first time</p>
+          {missedCards.length > 0 && (
+            <div className="tc-calmmissed">
+              <p className="tc-sessumh">To look at again</p>
+              {missedCards.slice(0, 8).map((c) => (
+                <p key={c.id} className="tc-calmmiss">
+                  <span lang="ja">{cleanWord(c.term)}</span>
+                  {c.reading && cleanWord(c.reading) !== cleanWord(c.term) && <span lang="ja" className="tc-calmread">{cleanWord(c.reading)}</span>}
+                  <span className="tc-calmmean">{c.meaning}</span>
+                </p>
+              ))}
+            </div>
+          )}
+          <p className="tc-donenext">
+            {tomorrowDue > 0 ? `${tomorrowDue} words come due tomorrow. ` : ""}Coming back tomorrow does more than another round tonight.
+          </p>
+          <div className="tc-donebtns">
+            {missedCards.length > 0 && (
+              <button className="tc-btn tc-btn-primary" onClick={() => start(missedCards)}>Go over the {missedCards.length} I missed</button>
+            )}
+            <button className="tc-btn" onClick={() => setRunning(false)}>Done</button>
+          </div>
+        </div>
+      );
+    }
     /* ── what the session MOVED (MP-18) ──
        The rules all live in tools/summary.mjs, tested there; this only supplies the two
        sides of the comparison and renders the result. The stability pairs come from the
@@ -3016,11 +3126,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   ) : null;
 
   return (
-    <div className={"tc-study" + (heat > 0 ? " tc-hot" : "")} style={{ "--combo": heat }}>
-      {card && card._redeem && (
+    <div className={"tc-study" + (heat > 0 && !CALM ? " tc-hot" : "")} style={CALM ? undefined : { "--combo": heat }}>
+      {!CALM && card && card._redeem && (
         <p className="tc-offnote tc-redeem">Let us fix the ones you missed.</p>
       )}
-      {card && card._rescue && card._rescue.note && (
+      {!CALM && card && card._rescue && card._rescue.note && (
         <p className="tc-offnote tc-rescuenote" role="note">{card._rescue.note}</p>
       )}
       <div className="tc-progress">
@@ -3036,20 +3146,24 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         {/* Kana, Drill, Kanji and Oral all had a Quit; Study did not, so the only way out of
             a session was to tap a tab — which threw the session away silently. */}
         <button className="tc-fchip" onClick={() => { stopJa(); setRunning(false); }}>Quit</button>
-        {xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
-        {combo >= 2 && (
+        {!CALM && xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
+        {!CALM && combo >= 2 && (
           <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
             {combo}<i>×</i>
           </span>
         )}
-        <button className={"tc-rpill" + (showRomaji ? " is-on" : "")}
-          aria-pressed={showRomaji} onClick={() => setShowRomaji((v) => !v)}>
-          Rōmaji {showRomaji ? "on" : "off"}
-        </button>
-        <button className={"tc-rpill" + (showPitch ? " is-on" : "")}
-          aria-pressed={showPitch} onClick={() => setShowPitch((v) => !v)}>
-          Pitch {showPitch ? "on" : "off"}
-        </button>
+        {!CALM && (
+          <button className={"tc-rpill" + (showRomaji ? " is-on" : "")}
+            aria-pressed={showRomaji} onClick={() => setShowRomaji((v) => !v)}>
+            Rōmaji {showRomaji ? "on" : "off"}
+          </button>
+        )}
+        {!CALM && (
+          <button className={"tc-rpill" + (showPitch ? " is-on" : "")}
+            aria-pressed={showPitch} onClick={() => setShowPitch((v) => !v)}>
+            Pitch {showPitch ? "on" : "off"}
+          </button>
+        )}
         <button className={"tc-rpill" + (voiceOn ? " is-on" : "")}
           aria-pressed={voiceOn} onClick={() => { ttsUnlock(); setVoiceOn((v) => !v); if (voiceOn) stopJa(); }}>
           🔊 Voice {voiceOn ? "on" : "off"}
@@ -3091,7 +3205,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
 
           Suppressed while the previous answer's payoff is still on screen: two memory-check
           messages at once is one too many, and the older one is the one being read. */}
-      {!flipped && !verdict && fmt !== "learn" && !(award && award.memory)
+      {!CALM && !flipped && !verdict && fmt !== "learn" && !(award && award.memory)
         && memoryCheckAhead(live && live.fsrs && live.fsrs.S) && (
         <div className="tc-memahead" key={"ma" + (card ? card.id : "") + pos} role="status">
           <span aria-hidden="true">🧠</span>
@@ -3102,7 +3216,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {/* The moment spacing visibly paid off. The scheduler had left this item alone for
           weeks precisely because it predicted the memory would hold — this is that
           prediction coming true, and it was previously invisible. */}
-      {award && award.memory && (
+      {!CALM && award && award.memory && (
         <div className="tc-memcheck" key={"mc" + award.at} role="status">
           <span aria-hidden="true">🧠</span>
           <span>Memory check — you still had it.</span>
@@ -3112,7 +3226,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {/* What the last answer earned, and why. Showing the reasons is the whole point: the
           number is only motivating if it is legible, and "unaided +8" teaches what the
           system values in a way a bare total never does. */}
-      {award && award.points > 0 && (
+      {!CALM && award && award.points > 0 && (
         <div className="tc-award" key={"aw" + award.at} aria-hidden="true">
           <b>+{award.points}</b>
           {award.reasons.filter((r) => r.label !== "attempt").map((r) => (
@@ -3125,7 +3239,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           moment, and nothing to dismiss — it is replaced by the next answer's and vanishes
           with the session. On most answers there is nothing here at all, which is the point:
           a badge that appears every time is wallpaper. */}
-      {reward && (
+      {!CALM && reward && (
         <div className={"tc-reward is-" + reward.kind} key={"rw" + reward.at} role="status">
           <span className="tc-rewardmark" aria-hidden="true">
             {reward.kind === "comeback" ? "◆" : reward.kind === "speed-pr" ? "⚡" : "✦"}
@@ -3138,7 +3252,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {/* A mission clearing is the quietest of the three. It has already paid into the XP
           counter at the top of the screen; this only says which one, so the learner is not
           left wondering where twenty-five points came from. */}
-      {missionDone && (
+      {!CALM && missionDone && (
         <div className="tc-reward is-mission" key={"md" + missionDone.at} role="status">
           <span className="tc-rewardmark" aria-hidden="true">✓</span>
           <b>Mission complete</b>
@@ -3151,7 +3265,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {/* A rescue reads as help, never as a scolding. It appears only on the first stage;
           the later rungs just get on with it, because by then the framing is established
           and repeating it would turn a two-beat recovery into nagging. */}
-      {intervention && intervention.rescue && intervention.rescue.note && (
+      {!CALM && intervention && intervention.rescue && intervention.rescue.note && (
         <div className="tc-rescue" role="status">
           <span className="tc-rescueicon" aria-hidden="true">◆</span>
           <span>{intervention.rescue.note}</span>
@@ -3565,7 +3679,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
       {/* "Why am I seeing this?" — plain language, no scheduler vocabulary. It earns
           trust, and it makes the algorithm inspectable by the person using it rather
           than only by whoever wrote it. */}
-      {whyThis && (
+      {!CALM && whyThis && (
         <div className="tc-whywrap">
           {showWhy ? (
             <p className="tc-whytext">{whyThis}</p>
@@ -5129,7 +5243,7 @@ function composeQueue(pool, clozeIndex, known, confusion) {
   });
   /* composeSession, not activityFor + arrange: it also caps grids at one per six items,
      which is what stops a session turning into grid after grid. */
-  return composeSession(items, material).map((x) => ({ ...x._card, _activity: x.activity }));
+  return composeSession(items, material, { calm: CALM }).map((x) => ({ ...x._card, _activity: x.activity }));
 }
 
 /* Does this word have a recorded confusion, in either direction? */

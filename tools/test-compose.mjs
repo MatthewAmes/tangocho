@@ -234,5 +234,26 @@ t("the production ladder still needs English, because its cue IS the English", (
   eq(activityFor({ id: "a", format: "type", cue: CUE.STRONG }, mat(withEn, false)), ACTIVITY.ORDER);
 });
 
+console.log("=== calm mode: four ways, one order ===");
+t("calm: every recognition form is the flip card", () => {
+  const rich = { ...withSentence, canMatch: () => true, hasConfusable: () => true, canEmoji: () => true, canSpell: () => true };
+  for (const f of ["mc", "recall", "listen", "emoji", "spell", "match"]) eq(activityFor(pick({ format: f }), rich, { calm: true }), ACTIVITY.RECALL, f);
+});
+t("calm: first contact, typing, then the sentence once production is free", () => {
+  eq(activityFor(pick({ format: "learn" }), withSentence, { calm: true }), ACTIVITY.LEARN);
+  eq(activityFor(pick({ format: "type", cue: CUE.STRONG }), withSentence, { calm: true }), ACTIVITY.TYPE);
+  eq(activityFor(pick({ format: "type", cue: CUE.FREE }), withSentence, { calm: true }), ACTIVITY.BUILD);
+  eq(activityFor(pick({ format: "type", cue: CUE.FREE }), noMaterial, { calm: true }), ACTIVITY.TYPE, "no sentence: type it");
+  eq(activityFor(pick({ format: "cloze", cue: CUE.CONTEXT }), withSentence, { calm: true }), ACTIVITY.CLOZE);
+});
+t("calm: a whole session never shows a grid, a picture or multiple choice", () => {
+  const rich = { ...withSentence, canMatch: () => true, hasConfusable: () => true, canEmoji: () => true };
+  const picks = Array.from({ length: 20 }, (_, i) => pick({ id: "c" + i, format: ["mc", "type", "learn", "recall"][i % 4], cue: [CUE.CHOOSE, CUE.STRONG, CUE.FREE][i % 3] }));
+  const kinds = new Set(composeSession(picks, rich, { calm: true }).map((x) => x.activity));
+  for (const a of [ACTIVITY.MATCH, ACTIVITY.EMOJI, ACTIVITY.MC, ACTIVITY.LISTEN, ACTIVITY.SPELL]) ok(!kinds.has(a), a + " appeared");
+});
+
+
+
 console.log(`\nall ${run} compose tests ${fail ? `— ${fail} FAILED` : "passed"}`);
 process.exitCode = fail ? 1 : 0;

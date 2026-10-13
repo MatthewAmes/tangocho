@@ -9,6 +9,26 @@ secret is set). The last handoff was written 2026-08-27; everything below replac
 
 ---
 
+## Calm mode (2026-10-13) — read this first
+
+Matthew: "I hate the app and the smart review … so clunky, not helpful, nonsensical." The
+answer was a strip-down, behind one switch: `const CALM = true` in `JpnFlashcards.jsx`.
+
+- Smart Review asks every card one of four ways, in one order: see it (LEARN), recall it
+  (RECALL flip), type it (TYPE), use it in a sentence (BUILD / CLOZE when a translated
+  sentence exists). `tools/compose.mjs::calmActivity`. Grids, pictures, multiple choice,
+  listening and spelling still exist in their own tabs, not in Smart Review.
+- No XP, combos, rescue/memory-check banners, badges, "Why this one?", rōmaji/pitch pills.
+- A right answer advances by itself after ~0.75s; a wrong one shows the answer and waits.
+- A miss comes back once, four cards later — no multi-rung recovery ladder.
+- The end screen is: right first time, the words to look at again, tomorrow's count.
+- Tab bar is Study · Tutor · Plan · More; everything else is in the More menu.
+- Cards are shown without the glossary's conjugation notes (通う, not 通う(-u; 通った));
+  `tools/wordform.mjs`. Stored terms are unchanged — merge keys depend on them.
+
+**Do not add features back into Smart Review without asking.** The failure mode that
+caused this was every request being answered by adding something.
+
 ## What the app is now
 
 Tabs, in order: **Study · Tutor · Shadow · Write · Drill · Input · Kanji・Kana · Dates ·

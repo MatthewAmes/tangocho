@@ -130,8 +130,17 @@ export function grammarInventory() {
   }));
 }
 
+/* How a pattern is written for the learner: the form it attaches to, then the ending —
+   〜てみる, 〜たことがある, 〜ないでください, 〜よう. */
+export function patternLabel(p) {
+  const lead = { te: "〜て", ta: "〜た", nai: "〜ない", dict: "〜", stem: "〜", vol: "〜よう／おう", tara: "〜たら" }[p.from] || "〜";
+  return p.from === "vol" || p.from === "tara" ? lead : lead + p.add;
+}
+
 /* ── the grammar deck, for Smart Review ──
-   One card per drillable note, all built on the SAME verb for the day. That is deliberate:
+   One card per drillable note, all built on the SAME verb for the day, its meaning written as
+   "始める + 〜とおもう — I think (someone) will …" so a typing prompt says exactly what to
+   build. The single verb is deliberate:
    Smart Review asks a card either way round — the form, pick what it means; or the
    meaning, produce the form — and if every note used a different verb, the verb alone would
    give the choice away. With one verb, only the grammar distinguishes the options. The verb
@@ -146,6 +155,6 @@ export function grammarDeck(dayKey) {
   const act = (id) => parseInt(id, 10);
   return PATTERNS.map((p) => {
     const item = drillItem(p.id, v);
-    return item && { id: p.id, act: act(p.id), answer: item.answer, meaning: `${p.gloss} (${v.dict})`, how: item.how };
+    return item && { id: p.id, act: act(p.id), answer: item.answer, meaning: `${v.dict} + ${patternLabel(p)} — ${p.gloss}`, how: item.how };
   }).filter(Boolean).sort((a, b) => a.act - b.act || parseFloat(a.id) - parseFloat(b.id));
 }
