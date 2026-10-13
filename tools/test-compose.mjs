@@ -241,10 +241,15 @@ t("calm: no grid unless the learner has really mixed the word up", () => {
   ok(!got.includes(ACTIVITY.MATCH), "a grid appeared with no confusable");
   eq(activityFor(pick({ format: "mc" }), { ...withSentence, canMatch: () => true, hasConfusable: () => true }, { calm: true }), ACTIVITY.MATCH);
 });
-t("calm: recognition still varies — choice, sentence, picture", () => {
+t("calm: recognition still varies — choice and the word in a sentence", () => {
   const rich = { ...withSentence, canEmoji: () => true };
   const got = Array.from({ length: 300 }, (_, i) => activityFor(pick({ id: "r" + i, format: "mc" }), rich, { calm: true }));
-  for (const a of [ACTIVITY.MC, ACTIVITY.CLOZE, ACTIVITY.EMOJI]) ok(got.includes(a), a + " never appeared");
+  for (const a of [ACTIVITY.MC, ACTIVITY.CLOZE]) ok(got.includes(a), a + " never appeared");
+});
+t("calm: no picture questions, even when the card has an emoji", () => {
+  const rich = { ...withSentence, canEmoji: () => true, wantsEmoji: () => true };
+  const got = Array.from({ length: 300 }, (_, i) => activityFor(pick({ id: "p" + i, format: i % 2 ? "mc" : "emoji" }), rich, { calm: true }));
+  ok(!got.includes(ACTIVITY.EMOJI), "a picture question appeared");
 });
 t("calm: production still climbs order -> word bank -> typing", () => {
   eq(activityFor(pick({ format: "type", cue: CUE.STRONG }), withSentence, { calm: true }), ACTIVITY.ORDER);

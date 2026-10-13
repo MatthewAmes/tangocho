@@ -22,7 +22,10 @@ t("particles and fragments glossed from the wrong entry are not cards", () => {
   }
 });
 t("single kanji and mismatched kana readings are left to the textbook deck", () => {
-  for (const t of ["本", "家", "出", "あなた"]) { const w = row(t); ok(!w || !learnable(w), t); }
+  for (const t of ["本", "家", "出"]) { const w = row(t); ok(!w || !learnable(w), t); }
+  // the list itself no longer has the あなた/かなた mismatch (v3 build); the guard stays
+  ok(!learnable({ t: "あなた", r: "かなた", m: "beyond", p: "pn" }), "a kana word stored with another word's reading");
+  ok(learnable(row("あなた")), "あなた is now correctly 'you'");
 });
 t("ordinary words stay", () => {
   for (const t of ["日本", "問題", "必要", "会社", "時々", "意外", "しかし", "ちょっと", "インターネット"]) {

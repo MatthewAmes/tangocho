@@ -115,8 +115,12 @@ export function activityFor(pick, material = {}, opts = {}) {
     return ACTIVITY.TYPE;
   }
 
+  /* No picture questions in calm mode. Matthew: "the emoji exercises don't make sense" —
+     and most of them could not: an emoji stands in for 自転車 well enough, but for "the
+     present", "relation" or a family name it is a guess the learner has to decode before
+     the Japanese is even in play. The same recognition is asked as a plain choice. */
   if (fmt === "emoji") {
-    if (material.canEmoji && !material.canEmoji(pick.id)) return ACTIVITY.MC;
+    if (o.calm || (material.canEmoji && !material.canEmoji(pick.id))) return ACTIVITY.MC;
     return ACTIVITY.EMOJI;
   }
 
@@ -141,7 +145,7 @@ export function activityFor(pick, material = {}, opts = {}) {
     }
     const forms = [ACTIVITY.MC];
     if (sent && sent.en) forms.push(ACTIVITY.CLOZE);
-    if (material.canEmoji && material.canEmoji(pick.id)) forms.push(ACTIVITY.EMOJI);
+    if (!o.calm && material.canEmoji && material.canEmoji(pick.id)) forms.push(ACTIVITY.EMOJI);
     return forms[Math.floor(roll(pick, "recog") * forms.length) % forms.length];
   }
 
