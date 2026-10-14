@@ -14,6 +14,7 @@ import { MASCOT_GIFS } from "./data/mascot.js";
 import Mascot, { mascotState } from "./src/components/Mascot.jsx";
 import SpeakBtn from "./src/components/SpeakBtn.jsx";
 import FeedbackSheet from "./src/components/FeedbackSheet.jsx";
+import PitchReading from "./src/components/PitchReading.jsx";
 import ReadingToggles from "./src/components/ReadingToggles.jsx";
 import { useReadingPrefs } from "./src/lib/readingPrefs.js";
 import { playFeedback } from "./src/lib/sfx.js";
@@ -3357,7 +3358,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           )}
           {card.emoji && <div className="tc-emoji tc-emoji-lg">{card.emoji}</div>}
           <div className={"tc-term" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
-          <div lang="ja" className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>
+          <div lang="ja" className="tc-reading-front"><PitchReading card={card} fallback={card.reading} /> <SpeakBtn text={card.reading || card.term} /></div>
           <div className="tc-romaji">{card.romaji}</div>
           <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>
           <p className="tc-learnnote">Look it over, then tap anywhere — you'll be asked in a moment.</p>
@@ -3537,7 +3538,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                   you end up guessing from the options rather than retrieving anything.
                   Reading practice belongs to the formats that ask for it. */}
               {card.reading && card.reading !== card.term && (
-                <div className="tc-mcfurigana">{card.reading}</div>
+                <div className="tc-mcfurigana"><PitchReading card={card} fallback={card.reading} /></div>
               )}
               <div className={"tc-mcterm" + (card.term.length <= 5 ? " tc-term-" + card.term.length : "")}>{card.term}</div>
               <SpeakBtn text={card.reading || card.term} />
@@ -3639,7 +3640,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 )}
                                 {cueLevel != null && cueLevel >= CUE.PARTIAL && card.reading !== card.term
                   ? <div lang="ja" className="tc-reading-front tc-reading-masked">{cueHint(card.reading, cueLevel)} <SpeakBtn text={card.reading || card.term} /></div>
-                  : <div lang="ja" className="tc-reading-front">{card.reading} <SpeakBtn text={card.reading || card.term} /></div>}
+                  : <div lang="ja" className="tc-reading-front"><PitchReading card={card} fallback={card.reading} /> <SpeakBtn text={card.reading || card.term} /></div>}
                 {showRomaji && <div className="tc-frontromaji">{card.romaji}</div>}
                 <span className="tc-flipcue">tap to flip</span>
               </>
@@ -3665,7 +3666,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               card.emoji && <div className="tc-emoji">{card.emoji}</div>
             )}
             {!isProd && <div className="tc-meaning tc-meaning-lg">{card.meaning}</div>}
-            {isProd && <div lang="ja" className="tc-reading-front">{card.reading}</div>}
+            {isProd && <div lang="ja" className="tc-reading-front"><PitchReading card={card} fallback={card.reading} /></div>}
             <div className="tc-romaji">{showPitch && card.pitch ? card.pitch : card.romaji} <SpeakBtn text={card.reading || card.term} /></div>
             <ExampleLine index={clozeIndex} card={card} />
             {(card.msN || 0) > 0 && <span className="tc-timetag">⏱ avg think {(card.ms / card.msN / 1000).toFixed(1)}s · seen {card.seen || 0}× · {card.seen ? Math.round(((card.correct || 0) / card.seen) * 100) : 0}%</span>}

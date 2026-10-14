@@ -50,3 +50,4 @@ data/private/
 tools/.site-cache/
 tools/.annot-cache/
 tools/.scrape.log
+tools/.accents-cache.txt

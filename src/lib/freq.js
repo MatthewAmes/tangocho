@@ -68,7 +68,7 @@ export function freqCard(w, stat) {
     romaji: "",
     meaning: w.m || "",
     kind: /[一-龯]/.test(term) ? "kanji" : /^[゠-ヿー]+$/.test(term) ? "katakana" : "hiragana",
-    rank: w.k, pos: w.p,
+    rank: w.k, pos: w.p, accent: typeof w.a === "number" ? w.a : undefined,
     seen: 0, correct: 0, ms: 0, msN: 0,
     ...(stat || {}),
   };

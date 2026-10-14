@@ -256,6 +256,13 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* flag a card (Study session) */
 .tc-flagbtn.is-on{color:var(--warn);border-color:var(--warn);}
 .tc-flagbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 2px;font-size:13px;color:var(--mut);}
+/* pitch accent (src/components/PitchReading.jsx): a line over high morae, a hook where it drops */
+.tc-pitch{display:inline-flex;align-items:flex-end;}
+.tc-mora{display:inline-block;padding:3px 0 0;border-top:2px solid transparent;}
+.tc-mora.is-high{border-top-color:var(--info);}
+.tc-mora.is-drop{border-right:2px solid var(--info);padding-right:1px;margin-right:1px;}
+.tc-mora.is-high + .tc-mora.is-high{border-left:0;}
+.tc-mora:not(.is-high) + .tc-mora.is-high{box-shadow:inset 2px 0 0 -0px var(--info);}
 /* Perform a scene (src/tabs/Perform.jsx) */
 .tc-perform .tc-performlist{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
 .tc-performcue{margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);}

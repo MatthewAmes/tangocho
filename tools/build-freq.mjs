@@ -52,6 +52,7 @@ const FREQ_URL = "https://raw.githubusercontent.com/hingston/japanese/master/444
 const DICT_CACHE = resolve(ROOT, "tools", ".jmdict-cache.gz");
 const FREQ_CACHE = resolve(ROOT, "tools", ".freqlist-cache.txt");
 const OUT = resolve(ROOT, "data", "freq.json");
+const ACCENTS = resolve(ROOT, "tools", ".accents-cache.txt");   // Kanjium, optional (tools/build-pitch.mjs)
 const TARGET = 10000;
 
 async function cached(path, url, binary) {
@@ -185,6 +186,15 @@ if (invoked) {
   const ranked = freqText.split("\n").map((s) => s.trim()).filter(Boolean);
   process.stderr.write(`frequency list: ${ranked.length} tokens\n`);
 
+  /* Pitch accents, when the Kanjium cache is present: looked up by word AND reading, as
+     the deck's are (tools/build-pitch.mjs). Absent cache, absent field — never a guess. */
+  let accents = null;
+  try {
+    const { accentIndex, accentFor } = await import("./build-pitch.mjs");
+    const idx = accentIndex(await readFile(ACCENTS, "utf8"));
+    accents = (t, r) => accentFor(idx, t, r || t);
+  } catch (e) { process.stderr.write("no accent cache — building without pitch\n"); }
+
   const words = [];
   const seen = new Set();
   let unmatched = 0, notCards = 0;
@@ -195,13 +205,18 @@ if (invoked) {
     const hit = matchToken(term, index);
     if (!hit) { unmatched++; continue; }
     if (!worthACard(term, hit)) { notCards++; continue; }
-    words.push({
+    const row = {
       t: term,
       r: hit.reading && hit.reading !== term ? hit.reading : "",
       m: hit.e.gloss,
       p: hit.e.pos,
       k: words.length + 1,
-    });
+    };
+    /* the word itself, then its dictionary spellings: Kanjium files いる under 居る */
+    let a = accents ? accents(term, hit.reading) : null;
+    for (const k of (accents && a === null ? hit.e.kele : [])) { if (a !== null) break; a = accents(k.keb, hit.reading || term); }
+    if (a !== null) row.a = a;
+    words.push(row);
   }
 
   await mkdir(dirname(OUT), { recursive: true });
@@ -209,7 +224,7 @@ if (invoked) {
     v: 3,
     builtAt: Date.now(),
     source: "Frequency order from a corpus-derived list (hingston/japanese); each word matched to its JMdict entry by the spelling and reading JMdict marks as common, meaning from the first sense (EDRDG, CC BY-SA 4.0).",
-    fields: "t=term r=reading m=meaning (first sense) p=part of speech k=frequency rank",
+    fields: "t=term r=reading m=meaning (first sense) p=part of speech k=frequency rank a=pitch accent (Kanjium, CC BY-SA 4.0)",
     words,
   };
   const json = JSON.stringify(payload);
