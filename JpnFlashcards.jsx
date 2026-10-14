@@ -34,6 +34,8 @@ import Furigana from "./src/components/Furigana.jsx";
 import Bi from "./src/components/Bi.jsx";
 import ConjDrill from "./src/tabs/ConjDrill.jsx";
 import GrammarDrill from "./src/tabs/GrammarDrill.jsx";
+import Perform from "./src/tabs/Perform.jsx";
+import { performEvidence } from "./tools/perform.mjs";
 import { grammarDeck } from "./tools/grammar-drills.mjs";
 import Write from "./src/tabs/Write.jsx";
 import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
@@ -6888,6 +6890,8 @@ function Scripts({ cards = [] }) {
      The fifth mode, and the one the other four were building towards: read it, drill your
      part, both sides, catch it by ear — then have the conversation. */
   if (view === "dialogue") return <ScriptDialogue scripts={scripts} onExit={() => setView("list")} />;
+  if (view === "perform") return <Perform scripts={scripts} onExit={() => setView("list")}
+                                   onGrade={(rec) => logEvidence(makeEvidence(performEvidence(rec)))} />;
 
   // ── NEW SCRIPT ──
   if (view === "new") {
@@ -7002,6 +7006,12 @@ function Scripts({ cards = [] }) {
           <button className="tc-listenstart is-dialogue" onClick={() => { ttsUnlock(); setView("dialogue"); }}>
             <span className="tc-listenstart-h"><span aria-hidden="true">🎭</span> Dialogue</span>
             <span className="tc-listenstart-s">Take a part and have the conversation — their side speaks, you choose your lines.</span>
+          </button>
+          {/* Performance practice: hear their line, say yours out loud, shadow the model.
+              The shape NihonGO NOW! is graded in. */}
+          <button className="tc-listenstart is-perform" onClick={() => { ttsUnlock(); setView("perform"); }}>
+            <span className="tc-listenstart-h"><span aria-hidden="true">🎤</span> Perform</span>
+            <span className="tc-listenstart-s">Hear their line, say yours out loud before the countdown, then shadow the model.</span>
           </button>
         </div>
       )}

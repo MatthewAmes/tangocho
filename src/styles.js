@@ -256,6 +256,15 @@ body{min-height:100%;overscroll-behavior-y:none;}
 /* flag a card (Study session) */
 .tc-flagbtn.is-on{color:var(--warn);border-color:var(--warn);}
 .tc-flagbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0 2px;font-size:13px;color:var(--mut);}
+/* Perform a scene (src/tabs/Perform.jsx) */
+.tc-perform .tc-performlist{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+.tc-performcue{margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);}
+.tc-perform .is-blurred{filter:blur(7px);cursor:pointer;user-select:none;transition:filter .2s;}
+.tc-performsay{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0;}
+.tc-performring{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:20px;font-weight:700;
+  background:conic-gradient(var(--info) calc(var(--p) * 360deg), var(--surface-3) 0);}
+.tc-performmodel{margin-top:12px;}
+.tc-listenstart.is-perform{}
 .tc-proven{display:flex;flex-direction:column;gap:8px;}
 .tc-provenrow{display:grid;grid-template-columns:56px 1fr 64px;gap:10px;align-items:center;}
 .tc-provenact{font-size:13px;color:var(--mut);}
