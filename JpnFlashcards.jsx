@@ -15,6 +15,8 @@ import Mascot, { mascotState } from "./src/components/Mascot.jsx";
 import SpeakBtn from "./src/components/SpeakBtn.jsx";
 import FeedbackSheet from "./src/components/FeedbackSheet.jsx";
 import PitchReading from "./src/components/PitchReading.jsx";
+import Ruby, { LexContext } from "./src/components/Ruby.jsx";
+import { readingLexicon } from "./tools/furigana.mjs";
 import ReadingToggles from "./src/components/ReadingToggles.jsx";
 import { useReadingPrefs } from "./src/lib/readingPrefs.js";
 import { playFeedback } from "./src/lib/sfx.js";
@@ -543,7 +545,7 @@ function ExampleLine({ index, card }) {
   const whole = ex.before + ex.word + ex.after;
   return (
     <div className="tc-example" onClick={(e) => e.stopPropagation()}>
-      <p lang="ja" className="tc-exja">{ex.before}<b>{ex.word}</b>{ex.after} <SpeakBtn text={whole} /></p>
+      <p lang="ja" className="tc-exja"><Ruby text={ex.before} /><b><Ruby text={ex.word} /></b><Ruby text={ex.after} /> <SpeakBtn text={whole} /></p>
       {ex.en && <p className="tc-exen">{ex.en}</p>}
     </div>
   );
@@ -998,7 +1000,14 @@ export default function JpnFlashcards() {
     });
   }, []);
 
+  /* Readings for sentences that carry none (tools/furigana.mjs): the deck first, then the
+     10,000-word list for the basics Volume 1 taught in kana. */
+  const [freqWords, setFreqWords] = useState([]);
+  useEffect(() => { loadFreqWords().then((d) => { if (d && d.words) setFreqWords(d.words); }).catch(() => {}); }, []);
+  const readingLex = useMemo(() => readingLexicon(cards, freqWords), [cards, freqWords]);
+
   return (
+    <LexContext.Provider value={readingLex}>
     <div className="tc-root">
       <style>{CSS}</style>
       <div className="tc-shell">
@@ -1131,6 +1140,7 @@ export default function JpnFlashcards() {
           from any phone by scrolling down — the number increments with every commit. */}
       <footer className="tc-verfoot">単語帳 {BUILD}</footer>
     </div>
+    </LexContext.Provider>
   );
 }
 
@@ -3377,12 +3387,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         <div className="tc-mcwrap" style={masteryStyle(live || card)}>
           <span className="tc-kindchip tc-clozechip">in context</span>
           <p className="tc-clozeen">{clozeEx.en}</p>
-          <div className="tc-clozesent">
-            {clozeEx.before}
+          <div className="tc-clozesent" lang="ja">
+            <Ruby text={clozeEx.before} />
             <span className={"tc-clozeblank" + (verdict ? (verdict.ok ? " is-right" : " is-wrong") : "")}>
               {verdict ? clozeEx.term : clozeEx.blank}
             </span>
-            {clozeEx.after}
+            <Ruby text={clozeEx.after} />
           </div>
           <div className="tc-mcopts">
             {clozeChoices(card, cards, 3, (card._step || 0) + String(card.id).length,
@@ -3475,7 +3485,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                 setFlipped(true);
               }}>Check</button>
           )}
-          {verdict && !verdict.ok && <p className="tc-prodsent">{sessionDrill.sentence}</p>}
+          {verdict && !verdict.ok && <p className="tc-prodsent" lang="ja"><Ruby text={sessionDrill.sentence} /></p>}
         </div>
       )}
 
@@ -3997,7 +4007,7 @@ function DrillPad({ drill, locked, onReady }) {
 
   return d.type === "fill" ? (
     <>
-      <div className="tc-prodsent">{d.before}<span className="tc-prodblank">＿</span>{d.after}</div>
+      <div className="tc-prodsent" lang="ja"><Ruby text={d.before} /><span className="tc-prodblank">＿</span><Ruby text={d.after} /></div>
       <div className="tc-prodtiles">
         {d.choices.map((c) => (
           <button key={c} type="button" className={"tc-fchip" + (typed === c ? " is-on" : "")}
@@ -4009,7 +4019,7 @@ function DrillPad({ drill, locked, onReady }) {
     <>
       <div className="tc-prodsent">
         {built.length
-          ? built.map((b) => b.split(" ")[0]).join("")
+          ? <Ruby text={built.map((b) => b.split(" ")[0]).join("")} />
           : <span className="tc-prodblank">tap the pieces in order</span>}
       </div>
       <div className="tc-prodtiles">
@@ -4018,7 +4028,7 @@ function DrillPad({ drill, locked, onReady }) {
           const used = built.includes(key);
           return (
             <button key={key} type="button" className={"tc-fchip" + (used ? " is-used" : "")}
-              disabled={used || locked} onClick={() => setBuilt([...built, key])}>{tile}</button>
+              disabled={used || locked} onClick={() => setBuilt([...built, key])} lang="ja"><Ruby text={tile} /></button>
           );
         })}
       </div>
@@ -4062,7 +4072,7 @@ function ProductionBlock({ drills, onDone }) {
 
       {d.type === "fill" ? (
         <>
-          <div className="tc-prodsent">{d.before}<span className="tc-prodblank">＿</span>{d.after}</div>
+          <div className="tc-prodsent" lang="ja"><Ruby text={d.before} /><span className="tc-prodblank">＿</span><Ruby text={d.after} /></div>
           <div className="tc-prodtiles">
             {d.choices.map((c) => (
               <button key={c} className={"tc-fchip" + (typed === c ? " is-on" : "")}
@@ -4074,7 +4084,7 @@ function ProductionBlock({ drills, onDone }) {
         <>
           <div className="tc-prodsent">
             {built.length
-              ? built.map((b) => b.split("\u0000")[0]).join("")
+              ? <Ruby text={built.map((b) => b.split("\u0000")[0]).join("")} />
               : <span className="tc-prodblank">tap the pieces in order</span>}
           </div>
           <div className="tc-prodtiles">
@@ -4083,7 +4093,7 @@ function ProductionBlock({ drills, onDone }) {
               const used = built.includes(key);
               return (
                 <button key={key} className={"tc-fchip" + (used ? " is-used" : "")} disabled={used || !!result}
-                  onClick={() => setBuilt([...built, key])}>{tile}</button>
+                  onClick={() => setBuilt([...built, key])} lang="ja"><Ruby text={tile} /></button>
               );
             })}
           </div>
