@@ -114,5 +114,11 @@ t("a build activity that fell back to multiple choice is explained as a pick", (
 });
 t("no verdict, no explanation", () => eq(explainAnswer({ card: DOG, verdict: null }), null));
 
+t("two lookalike kanji are explained by the part that differs", () => {
+  const idx = new Map([["待", { m: ["wait"] }], ["持", { m: ["hold"] }]]);
+  const why = whyConfusable({ term: "待つ", reading: "まつ" }, { term: "持つ", reading: "もつ" }, idx);
+  ok(/look alike/.test(why) && /彳/.test(why) && /扌/.test(why) && /wait/.test(why), why);
+});
+
 console.log(fail ? `${fail} of ${run} explain tests FAILED` : `all ${run} explain tests passed`);
 process.exit(fail ? 1 : 0);

@@ -17,6 +17,7 @@
      火曜日 is fire-weekday-day is what keeps the seven days from blurring together. */
 
 import { slipOf, slipMarks, confusedWith } from "./nearmiss.mjs";
+import { lookalikeLine } from "./lookalike.mjs";
 import { editDistance } from "./learner.mjs";
 import { inflectionMatch } from "./conjugation.mjs";
 import { normalise, glossOf } from "./benchmark.mjs";
@@ -45,9 +46,13 @@ export function kanjiParts(term, index) {
   return out;
 }
 
-/* Why two words are easy to confuse, when there is a reason that can be stated. */
-export function whyConfusable(a, b) {
+/* Why two words are easy to confuse, when there is a reason that can be stated. Shape
+   first: 待 for 持 is a reading mistake about one part, and saying which part is the fix. */
+export function whyConfusable(a, b, index = null) {
   if (!a || !b) return null;
+  const gloss = (c) => { const k = index && index.get && index.get(c); return k && k.m && k.m[0] ? k.m[0] : ""; };
+  const look = lookalikeLine(a, b, gloss);
+  if (look) return `They look alike. ${look}`;
   const shared = [...new Set([...String(a.term)].filter((ch) => KANJI_RE.test(ch) && String(b.term).includes(ch)))];
   if (shared.length) return `Both are written with ${shared.join("")} — look at the part that differs.`;
   const ra = normalise(a.reading || a.term), rb = normalise(b.reading || b.term);
@@ -107,7 +112,7 @@ export function explainAnswer({ card, verdict, activity = "", cards = [], kanji 
     } else if (other) {
       out.lines.push(`You ${verdict.spoken ? "said" : "wrote"} ${verdict.got} — that's a real word, but a different one: ${describe(other)}.`);
       out.lines.push(`This one is ${describe(card)}.`);
-      const why = whyConfusable(card, other);
+      const why = whyConfusable(card, other, idx);
       if (why) out.lines.push(why);
       out.pair = other;
     } else {
@@ -127,7 +132,7 @@ export function explainAnswer({ card, verdict, activity = "", cards = [], kanji 
     else if (activity === "listen") out.lines.push(`What you heard was ${card.reading || card.term}: ${describe(card)}.`);
     else out.lines.push(describe(card) + ".");
     out.lines.push(`What you picked belongs to ${describe(other)}.`);
-    const why = whyConfusable(card, other);
+    const why = whyConfusable(card, other, idx);
     if (why) out.lines.push(why);
     out.pair = other;
   } else {

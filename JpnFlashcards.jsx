@@ -16,6 +16,8 @@ import SpeakBtn from "./src/components/SpeakBtn.jsx";
 import FeedbackSheet from "./src/components/FeedbackSheet.jsx";
 import PitchReading from "./src/components/PitchReading.jsx";
 import Ruby, { LexContext } from "./src/components/Ruby.jsx";
+import KanjiParts from "./src/components/KanjiParts.jsx";
+import { lookalikeLine, lookalikesOf } from "./tools/lookalike.mjs";
 import { readingLexicon } from "./tools/furigana.mjs";
 import ReadingToggles from "./src/components/ReadingToggles.jsx";
 import { useReadingPrefs } from "./src/lib/readingPrefs.js";
@@ -553,8 +555,11 @@ function ExampleLine({ index, card }) {
 
 /* Two words that were just confused, side by side. Drilling either one harder does not
    separate them; seeing the difference at the moment it mattered does. */
-function ConfusionPair({ want, got }) {
+function ConfusionPair({ want, got, kanji = null }) {
   if (!want || !got) return null;
+  /* When the two are told apart by one part of a kanji (待/持, 休/体), say which part — the
+     side-by-side alone shows two shapes the learner has just shown they cannot tell apart. */
+  const look = lookalikeLine(want, got, (c) => { const k = kanji && kanji.get(c); return k && k.m ? k.m[0] : ""; });
   const side = (c) => (
     <div>
       <span lang="ja">{c.term}</span>
@@ -563,9 +568,12 @@ function ConfusionPair({ want, got }) {
     </div>
   );
   return (
+    <>
     <div className="tc-nmpair" aria-label="The word, and the one you mixed it up with" onClick={(e) => e.stopPropagation()}>
       {side(want)}{side(got)}
     </div>
+    {look && <p className="tc-lknote" lang="ja">{look}</p>}
+    </>
   );
 }
 
@@ -3580,7 +3588,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </div>
           )}
           {verdict && !verdict.ok && verdict.chosenId && (
-            <ConfusionPair want={card} got={choices.find((x) => x.id === verdict.chosenId)} />
+            <ConfusionPair want={card} got={choices.find((x) => x.id === verdict.chosenId)} kanji={kanjiIdx} />
           )}
           {verdict && <ExampleLine index={clozeIndex} card={card} />}
         </div>
@@ -3668,7 +3676,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
                   </div>
                 )}
                 {verdict && !verdict.ok && verdict.chosenId && (
-                  <ConfusionPair want={card} got={cards.find((x) => x.id === verdict.chosenId)} />
+                  <ConfusionPair want={card} got={cards.find((x) => x.id === verdict.chosenId)} kanji={kanjiIdx} />
                 )}
                 <div lang="ja" className="tc-term tc-prodanswer">{card.term}</div>
               </>
@@ -8147,7 +8155,22 @@ function kanjiDistractors(all, target, n, field) {
     }
   }
   pool.sort((a, b) => Math.abs(a.s - target.s) - Math.abs(b.s - target.s));
-  return pool.slice(0, Math.max(n * 3, 9)).sort(() => Math.random() - 0.5).slice(0, n);
+  const rest = pool.slice(0, Math.max(n * 3, 9)).sort(() => Math.random() - 0.5);
+  /* Up to two kanji that LOOK like the target go in first (tools/lookalike.mjs) — 持 among
+     the options for 待 — so a right answer means the shape was read, not just guessed from
+     three shapes that were nothing like it. Same value and clash filters as the rest. */
+  const byC = new Map(all.map((k) => [k.c, k]));
+  const alike = [];
+  for (const c of lookalikesOf(target.c)) {
+    if (alike.length >= Math.min(2, n - 1)) break;
+    const k = byC.get(c);
+    if (!k || k === target) continue;
+    const v = val(k);
+    if (!v || v === val(target) || clashes(v) || alike.some((a) => val(a) === v)) continue;
+    alike.push(k);
+  }
+  const fill = rest.filter((k) => !alike.includes(k) && !alike.some((a) => val(a) === val(k)));
+  return [...alike, ...fill].slice(0, n);
 }
 
 /* Which exercise a character gets, by how well it is already known. Recognition before
@@ -8552,6 +8575,7 @@ function Kanji({ cards }) {
                   <div className="tc-meaning tc-meaning-lg">{cur.m.join(", ")}</div>
                   {cur.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {readingList(cur.on)}</div>}
                   {cur.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {readingList(cur.kun)}</div>}
+                  <KanjiParts c={cur.c} all={all} prefer={deckMap} />
                   {(deckMap.get(cur.c) || {}).words && (
                     <p className="tc-kwords">
                       {deckMap.get(cur.c).words.slice(0, 3).map((w) => (
@@ -8639,6 +8663,10 @@ function Kanji({ cards }) {
                 {(deckMap.get(cur.c) || {}).words ? " — " + deckMap.get(cur.c).words.slice(0, 2).map((w) => w.term).join("、") : ""}
               </p>
             )}
+            {picked && picked.c !== cur.c && (() => {
+              const look = lookalikeLine({ term: cur.c }, { term: picked.c }, (c) => { const k = all.find((x) => x.c === c); return k ? k.m[0] : ""; });
+              return look ? <p className="tc-lknote" lang="ja">{look}</p> : null;
+            })()}
             {picked && (
               <button className="tc-btn tc-btn-primary tc-kcontinue" onClick={advance} autoFocus>
                 Continue
@@ -8779,6 +8807,7 @@ function Kanji({ cards }) {
             <div className="tc-meaning tc-meaning-lg">{inspect.m.join(", ")}</div>
             {inspect.on.length > 0 && <div className="tc-kanjiread"><b>音</b> {readingList(inspect.on)}</div>}
             {inspect.kun.length > 0 && <div className="tc-kanjiread"><b>訓</b> {readingList(inspect.kun)}</div>}
+            <KanjiParts c={inspect.c} all={all} prefer={deckMap} />
             {(deckMap.get(inspect.c) || {}).words && (
               <p className="tc-kwords">
                 {deckMap.get(inspect.c).words.slice(0, 5).map((w) => (
@@ -8815,7 +8844,7 @@ function Kanji({ cards }) {
         </div>
       )}
       <p className="tc-kanjicredit">
-        Kanji data: KANJIDIC2 · Electronic Dictionary Research and Development Group · CC BY-SA 4.0
+        Kanji data: KANJIDIC2 and KRADFILE (parts) · Electronic Dictionary Research and Development Group · CC BY-SA 4.0
       </p>
     </div>
   );

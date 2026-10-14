@@ -182,5 +182,31 @@ t("asking for more than the deck holds returns what there is", () => {
   eq(pickDistractors(byId("kaisha"), DECK, 50, { seed: 1 }).length, DECK.length - 1);
 });
 
+console.log("\n=== tier 1b: kanji that look alike ===");
+const KANJI_DECK = [
+  { id: "k:待", term: "待", meaning: "wait", kind: "kanji" }, { id: "k:持", term: "持", meaning: "hold", kind: "kanji" },
+  { id: "k:時", term: "時", meaning: "time", kind: "kanji" }, { id: "k:魚", term: "魚", meaning: "fish", kind: "kanji" },
+  { id: "k:山", term: "山", meaning: "mountain", kind: "kanji" }, { id: "k:川", term: "川", meaning: "river", kind: "kanji" },
+];
+t("a kanji question offers the kanji that look like it", () => {
+  const picks = pickDistractors(KANJI_DECK[0], KANJI_DECK, 3, { seed: 3 });
+  eq(tierOf(picks, "k:持"), TIER.LOOKALIKE);
+  ok(picks.filter((p) => p.tier === TIER.LOOKALIKE).length <= 2, "at most two lookalikes");
+});
+t("a word question offers at most one lookalike word", () => {
+  const words = [{ id: "matsu", term: "待つ", meaning: "to wait", kind: "kanji" }, { id: "motsu", term: "持つ", meaning: "to hold", kind: "kanji" }, ...DECK];
+  const picks = pickDistractors(words[0], words, 3, { seed: 2 });
+  eq(tierOf(picks, "motsu"), TIER.LOOKALIKE);
+  eq(picks.filter((p) => p.tier === TIER.LOOKALIKE).length, 1);
+});
+t("the learner's own confusions still come first", () => {
+  const picks = pickDistractors(KANJI_DECK[0], KANJI_DECK, 3, { seed: 3, confusedWith: ["k:魚"] });
+  eq(picks[0].card.id, "k:魚");
+});
+t("lookalikes can be turned off", () => {
+  const picks = pickDistractors(KANJI_DECK[0], KANJI_DECK, 3, { seed: 3, lookalike: false });
+  ok(!picks.some((p) => p.tier === TIER.LOOKALIKE));
+});
+
 console.log(fail ? "\n" + fail + "/" + run + " FAILED" : "\nall " + run + " distractor tests passed");
 process.exit(fail ? 1 : 0);

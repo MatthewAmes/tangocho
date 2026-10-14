@@ -714,6 +714,12 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-nmpair>div>span:first-child{font-size:20px}
 .tc-nmpair>div>span:last-child{font-size:13px;color:var(--mut)}
 .tc-nmpair>div:first-child{border-color:var(--ok)}
+.tc-lknote{margin:8px 0 0;padding:8px 12px;border-left:3px solid var(--info);background:var(--surface);border-radius:8px;font-size:14px;line-height:1.5}
+.tc-kparts{margin:10px 0 4px;font-size:14px;text-align:left}
+.tc-kparts>p{margin:4px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.tc-kparts b{font-size:12px;color:var(--mut);font-weight:600;min-width:72px}
+.tc-kpart{padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:15px}
+.tc-kpart i{font-style:normal;font-size:12px;color:var(--mut)}
 .tc-checkgot.is-near{opacity:.85}
 .tc-planfield{display:flex;flex-direction:column;gap:5px;}
 .tc-planfield span{font-size:13px;color:rgba(255,255,255,.75);}

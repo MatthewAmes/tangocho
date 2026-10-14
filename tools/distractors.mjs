@@ -21,9 +21,11 @@
    re-render mid-answer cannot reshuffle the question under the learner. */
 import { editDistance } from "./learner.mjs";
 import { SECTION_MAP } from "../src/data/sections.js";
+import { lookalikeScore } from "./lookalike.mjs";
 
 export const TIER = {
   CONFUSION: "confusion",
+  LOOKALIKE: "lookalike",
   SCENE: "scene",
   NEARBY: "nearby",
   SIMILAR: "similar",
@@ -158,6 +160,20 @@ export function pickDistractors(card, cards, n = 3, opts = {}) {
   const confused = (opts.confusedWith || []).map((id) => byId.get(id)).filter(Boolean);
   take(confused, TIER.CONFUSION, Math.max(1, want - 1));
   if (out.length >= want) return out;
+
+  /* 1b. Looks alike (tools/lookalike.mjs): 持 offered for 待, 持つ for 待つ. The wrong answer
+        a reader who has not yet SEEN the difference will actually pick, so it goes ahead
+        of the curriculum tiers — but capped, two for a single kanji and one for a word, so
+        a question is a test of the difference rather than a wall of near-identical shapes.
+        Like confusion, it ignores `restrict`: a lookalike is plausible because of how it
+        looks, whatever its part of speech. opts.lookalike: false turns it off. */
+  if (opts.lookalike !== false) {
+    const alike = pool.map((c) => ({ c, s: lookalikeScore(card, c) })).filter((x) => x.s > 0);
+    const sOf = new Map(alike.map((x) => [x.c.id, x.s]));
+    const cap = [...String(card.term)].length === 1 ? 2 : 1;
+    take(rankTier(alike.map((x) => x.c), seed, (c) => -sOf.get(c.id)), TIER.LOOKALIKE, cap);
+    if (out.length >= want) return out;
+  }
 
   const plausible = restrict ? pool.filter(restrict) : pool;
 
