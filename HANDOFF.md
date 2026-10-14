@@ -31,6 +31,18 @@ answer was a strip-down, behind one switch: `const CALM = true` in `JpnFlashcard
 - Cards are shown without the glossary's conjugation notes (通う, not 通う(-u; 通った));
   `tools/wordform.mjs`. Stored terms are unchanged — merge keys depend on them.
 
+**Flagged cards (2026-10-14).** Matthew taps ⚑ on a card that is wrong; it lands in
+`jpn101:flags` (tools/flags.mjs), which syncs inside his record in the SYNC KV namespace
+(key `g:<google sub>`). To read them: `cd cf && npx wrangler kv key list --namespace-id
+ba175d82f8fb41e4b60d5dad6d2d4543 --remote` to find the `g:` key, then `kv key get` it and
+parse `snapshot["jpn101:flags"]`. Each flag has the card id, term, reading, meaning,
+section, exercise, what was answered/expected, his reason and the build. Fix the source
+(seed, glossary import, freq build), then tell him which ones were fixed.
+
+Also this day: helped answers can't push a review past 3 days (`capHelpedInterval`);
+Scripts → Perform (hear their line, say yours, shadow, self-grade); pitch accent contours
+from Kanjium (`tools/build-pitch.mjs`, cache `tools/.accents-cache.txt`, git-ignored).
+
 **Do not add features back into Smart Review without asking.** The failure mode that
 caused this was every request being answered by adding something.
 
