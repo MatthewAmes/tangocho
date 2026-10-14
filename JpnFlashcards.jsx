@@ -20,6 +20,7 @@ import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
 import { cleanWord, sessionCard } from "./tools/wordform.mjs";
 import { orderIntake } from "./tools/intake.mjs";
+import { addFlag, setReason, FLAGS_KEY, FLAG_REASONS } from "./tools/flags.mjs";
 import { normalise as normaliseKana } from "./tools/benchmark.mjs";
 import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
 import { bookOrdered, unlockedFrom, bookKanjiStatus, bookKanjiSummary, BOOK_ORDER } from "./tools/bookkanji.mjs";
@@ -1200,6 +1201,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const [hearing, setHearing] = useState(false);
   const recRef = useRef(null);
   const [moreWays, setMoreWays] = useState(false);   // calm mode: the sections grid, folded away
+  /* "Something's wrong with this card" (tools/flags.mjs): one tap saves the card as shown,
+     a second optional tap says what kind of wrong. The session does not stop. */
+  const [flagged, setFlagged] = useState(null);       // { at, pos, reason } for the card on screen
+  const saveFlags = useCallback(async (fn) => {
+    try { const r = await sGet(FLAGS_KEY); await sSet(FLAGS_KEY, JSON.stringify(fn(r ? JSON.parse(r) : []))); } catch (e) {}
+  }, []);
   /* The kanji dictionary, for taking a word apart in an explanation. Fetched the first time
      Explain is pressed, not on mount: most sessions never open one, and kanji.json is the
      largest file the app loads. */
@@ -3168,6 +3175,21 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
         {/* Kana, Drill, Kanji and Oral all had a Quit; Study did not, so the only way out of
             a session was to tap a tab — which threw the session away silently. */}
         <button className="tc-fchip" onClick={() => { stopJa(); setRunning(false); }}>Quit</button>
+        <button type="button" className={"tc-fchip tc-flagbtn" + (flagged && flagged.pos === pos ? " is-on" : "")}
+          aria-label="Something's wrong with this card" title="Something's wrong with this card"
+          disabled={!!(flagged && flagged.pos === pos)}
+          onClick={() => {
+            const at = Date.now();
+            const shown = card ? {
+              id: card.id, src: card.src || "vocab", term: card.term, reading: card.reading, meaning: card.meaning,
+              sec: card.sec || null, activity: renderActivity, at, build: BUILD,
+              answered: verdict ? (verdict.got || verdict.chose || null) : null,
+              expected: verdict ? (verdict.want || null) : null,
+            } : null;
+            if (!shown) return;
+            setFlagged({ at, pos, reason: null });
+            saveFlags((l) => addFlag(l, shown));
+          }}>⚑</button>
         {!CALM && xp > 0 && <span className="tc-xp" key={"xp" + xp}>{xp}<i>xp</i></span>}
         {!CALM && combo >= 2 && (
           <span key={flash} className={"tc-combo" + (combo >= 10 ? " is-hot" : combo >= 5 ? " is-warm" : "")}>
@@ -3191,6 +3213,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           🔊 Voice {voiceOn ? "on" : "off"}
         </button>
       </div>
+
+      {flagged && flagged.pos === pos && (
+        <div className="tc-flagbar" role="status">
+          <span>{flagged.reason ? `Flagged as "${flagged.reason}" — thanks, it'll be checked.` : "Flagged — thanks. What's wrong with it?"}</span>
+          {!flagged.reason && FLAG_REASONS.map((r) => (
+            <button key={r} type="button" className="tc-fchip" onClick={() => {
+              setFlagged({ ...flagged, reason: r });
+              saveFlags((l) => setReason(l, flagged.at, r));
+            }}>{r}</button>
+          ))}
+        </div>
+      )}
 
       {/* ── a good place to stop (spec §38, §39) ──
           An OFFER, never an ending. The three things that raise it — answers turning into

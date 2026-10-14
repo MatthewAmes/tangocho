@@ -123,5 +123,23 @@ t("a multiple-choice success grows the memory less than a free recall", () => {
   ok(chose.s1 < free.s1, `choice ${chose.s1} should be below free ${free.s1}`);
   ok(chose.s1 > card.fsrs.S, "but it still counts for something");
 });
+console.log("=== help never pushes a review past three days ===");
+t("a helped success is due within three days, however strong the memory", () => {
+  const now = Date.UTC(2026, 9, 14);
+  const card = { seen: 9, correct: 9, streak: 9, fsrs: { S: 40, D: 4, last: now - 40 * 86400000, due: now } };
+  const helped = reviewOutcome(card, { got: true, ms: 1500, area: "vocab", cue: CUE.CHOOSE, now });
+  const free = reviewOutcome(card, { got: true, ms: 1500, area: "vocab", cue: CUE.FREE, now });
+  ok(helped.next.due <= now + 3 * 86400000, "helped answer pushed past 3 days");
+  ok(free.next.due > now + 3 * 86400000, "an unhelped answer should still move the word out");
+  ok(helped.next.S > 0, "stability still computed");
+});
+t("a partial hint counts as help too; a miss is untouched", () => {
+  const now = Date.UTC(2026, 9, 14);
+  const card = { seen: 9, correct: 9, streak: 9, fsrs: { S: 40, D: 4, last: now - 40 * 86400000, due: now } };
+  ok(reviewOutcome(card, { got: true, ms: 1500, area: "vocab", cue: CUE.PARTIAL, now }).next.due <= now + 3 * 86400000);
+  const miss = reviewOutcome(card, { got: false, ms: 1500, area: "vocab", cue: CUE.CHOOSE, now });
+  ok(miss.next.due <= now + 3 * 86400000, "a miss comes back soon anyway");
+});
+
 console.log(`\nall ${run} relearning tests ${fail ? `— ${fail} FAILED` : "passed"}`);
 process.exitCode = fail ? 1 : 0;

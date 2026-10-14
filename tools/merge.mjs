@@ -1,3 +1,4 @@
+import { mergeFlags } from "./flags.mjs";
 // Sync merge rules: how a local snapshot and the cloud snapshot combine after a pull.
 // This is the highest data-loss-risk code in the app (a wrong rule here silently drops a
 // study session), so it lives in its own pure, testable module rather than inline in the
@@ -198,6 +199,7 @@ export function mergeSnapshots(localSnap, cloudSnap, cloudUpdatedAt, localLastPu
     if (k === "jpn101:evidence") { out[k] = mergeEvidence(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:freq") { out[k] = mergeDeck(localSnap[k], cloudSnap[k]); return; }
     if (k === "jpn101:hooks") { out[k] = mergeHooks(localSnap[k], cloudSnap[k]); return; }
+    if (k === "jpn101:flags") { out[k] = mergeFlags(localSnap[k], cloudSnap[k]); return; }   // a flag raised on one device must survive the other
     if (k === "jpn101:deckVersion" || k === "jpn101:freqVersion") { out[k] = String(Math.max(Number(localSnap[k] || 0), Number(cloudSnap[k] || 0))); return; }
     if (!(k in localSnap)) { out[k] = cloudSnap[k]; return; }   // new key we don't have locally yet
     if (k in cloudSnap && cloudUpdatedAt && cloudUpdatedAt > (localLastPulled || 0)) out[k] = cloudSnap[k];   // secondary keys: newer whole snapshot wins

@@ -78,9 +78,11 @@ export function dueness(c, now) {
 
 export function statReview(st, ok, ms, now = Date.now(), cue = null) {
   const prior = st && st.fsrs ? st.fsrs : (st && (st.seen || 0) > 0 ? seedFromHistory(st) : null);
-  // Same support cap as the vocabulary path (capForSupport, below): a kana or kanji picked
-  // from options has not been recalled, whichever deck it lives in.
-  return fsrsReview(prior, capForSupport(gradeFromLatency(ok, ms, { streak: st && st.streak }), cue), now, retention.target);
+  // Same support caps as the vocabulary path (capForSupport, capHelpedInterval, below): a
+  // kana or kanji picked from options has not been recalled, whichever deck it lives in.
+  return capHelpedInterval(
+    fsrsReview(prior, capForSupport(gradeFromLatency(ok, ms, { streak: st && st.streak }), cue), now, retention.target),
+    ok, cue, now);
 }
 
 export function boundMs(ms) { return ms && ms > 250 && ms < 180000 ? Math.round(ms) : 0; }
@@ -130,6 +132,21 @@ export function capForSupport(grade, cue) {
   return grade;
 }
 
+/* ── and caps how far it can push the next review ──
+   The grade cap above slows growth; it does not stop a run of hinted successes from
+   walking a word out to a fortnight that was never earned by recalling it cold. Matthew
+   asked for the stricter rule: an answer that had ANY help — the answer shown, options to
+   choose from, か＿＿び, かよう＿＿ — can never put the next review more than three days
+   away. Only answering with no help moves a word further out. Stability itself is left as
+   computed, so the first unhelped success afterwards is credited properly. */
+export const HELPED_MAX_DAYS = 3;
+export function capHelpedInterval(next, got, cue, now = Date.now()) {
+  if (!next || !got || typeof cue !== "number" || cue >= CUE.FREE) return next;
+  const latest = now + HELPED_MAX_DAYS * DAY;
+  if (!(next.due > latest)) return next;
+  return { ...next, due: latest, ivl: Math.min(next.ivl || HELPED_MAX_DAYS, HELPED_MAX_DAYS) };
+}
+
 /* The support an answer ACTUALLY had, from the activity on screen — which is not always
    the cue the intervention model asked for: the composer can turn a production ask into a
    word bank, or a failed build into multiple choice. Activity names are the strings from
@@ -165,7 +182,7 @@ export function reviewOutcome(card, { got, ms, dir, area, foreign, firstPass = t
   const grade = capForSupport(gradeAgainstNorm(got, t, area === "writing" ? "production" : "recognition",
     isProd ? "type" : "recall", latencyNormsRef.current, (card && card.streak) || 0), cue);
   const prior = isProd ? ((card && card.rfsrs) || null) : ((card && card.fsrs) || seedFromHistory(card || {}));
-  const next = fsrsReview(prior, grade, now, retention.target);
+  const next = capHelpedInterval(fsrsReview(prior, grade, now, retention.target), got, cue, now);
   return { grade, prior, next, t, isProd, s0: (prior && prior.S) || 0, s1: (next && next.S) || 0 };
 }
 
