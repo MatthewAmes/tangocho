@@ -51,3 +51,7 @@ tools/.site-cache/
 tools/.annot-cache/
 tools/.scrape.log
 tools/.accents-cache.txt
+
+# Whole-repo text dumps for pasting into another AI window (npx repomix); regenerated on demand.
+repomix-output.*
+tangocho-slim.txt

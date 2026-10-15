@@ -4009,7 +4009,7 @@ function DrillPad({ drill, locked, onReady }) {
      come off first — passing the keyed strings made every build/order drill grade as wrong
      no matter what was assembled, while the display (which does strip the key) showed a
      perfectly correct sentence. */
-  const answer = d && d.type === "fill" ? typed : built.map((b) => b.split(" ")[0]);
+  const answer = d && d.type === "fill" ? typed : built.map((b) => b.split("\u0000")[0]);
   useEffect(() => { if (onReady) onReady(answer); }, [built, typed]);   // eslint-disable-line
   if (!d) return null;
 
@@ -4027,12 +4027,12 @@ function DrillPad({ drill, locked, onReady }) {
     <>
       <div className="tc-prodsent">
         {built.length
-          ? <Ruby text={built.map((b) => b.split(" ")[0]).join("")} />
+          ? <Ruby text={built.map((b) => b.split("\u0000")[0]).join("")} />
           : <span className="tc-prodblank">tap the pieces in order</span>}
       </div>
       <div className="tc-prodtiles">
         {d.tiles.map((tile, i) => {
-          const key = tile + " " + i;
+          const key = tile + "\u0000" + i;
           const used = built.includes(key);
           return (
             <button key={key} type="button" className={"tc-fchip" + (used ? " is-used" : "")}

@@ -575,7 +575,7 @@ export function candidates(sources, opts = {}) {
 /* Insert an element at a target index without letting it land past the end. */
 function insertAt(list, at, el) { list.splice(Math.min(at, list.length), 0, el); }
 
-const keyOf = (c) => c.deck + " " + c.item.id;
+const keyOf = (c) => c.deck + "\u0000" + c.item.id;
 
 /* Learning-step gaps have to FIT. Blindly walking a cursor forward by [3, 8] on a short
    session overshoots the end of the array, every overshoot clamps to the last index, and
