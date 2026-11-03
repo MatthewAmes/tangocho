@@ -31,8 +31,22 @@ So Study now defaults to **Book order** (`plan.book`, `tools/bookorder.mjs`):
   move a word's question ahead of its first showing.
 
 The plan agreed with him: Acts 7→ before class starts in January, 10–15 min a day, and
-playing Pokémon in Japanese for fun. He also asked for a Pokémon-style turn-based RPG for
-vocabulary — **must be original** (own creatures/names/art, not Pokémon's); not built yet.
+playing Pokémon in Japanese for fun.
+
+**Quest tab — Kotoba Quest (2026-11-03).** He asked for a monster-battle RPG with a map.
+It is **original** and must stay that way: our own creatures (names are Japanese word
+mash-ups, 寒い+猫 = Samuneko), no Pokémon names, art or music. One region per act (7–12),
+16×11 tile maps in `src/data/quest-world.js`; rules in `tools/quest.mjs` (tested in
+`tools/test-quest.mjs`, which walks every map); screen in `src/tabs/Quest.jsx`.
+- An attack is a typed production answer (English → Japanese). Right = hit, fast and
+  unhinted = critical, wrong = the creature hits back. Weak creatures can be caught with a
+  right answer. Each act's guardian opens the road east and quotes the act's proverb.
+- Answers go through `recordQuest` in the App: the same card update and evidence row as a
+  typed Study card, cue STRONG when hinted. Only the first answer per word per visit is
+  recorded, so a battle can't drill a word into a false memory.
+- Word power: +1 attack per five words he can say (production S ≥ 7).
+- Save is `jpn101:quest`. Emoji are single code points on purpose: Windows 10 split
+  ZWJ emoji (🧑‍🎓) and had no glyph for 🪧/🫧/🫘.
 
 ## Calm mode (2026-10-13)
 

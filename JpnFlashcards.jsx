@@ -44,6 +44,7 @@ import Perform from "./src/tabs/Perform.jsx";
 import { performEvidence } from "./tools/perform.mjs";
 import { grammarDeck } from "./tools/grammar-drills.mjs";
 import Write from "./src/tabs/Write.jsx";
+import Quest from "./src/tabs/Quest.jsx";
 import Dates, { DATE_ITEMS } from "./src/tabs/Dates.jsx";
 import Quizzes from "./src/tabs/Quizzes.jsx";
 import Tutor from "./src/tabs/Tutor.jsx";
@@ -664,7 +665,7 @@ function isEmoji(s) {
    opens each section — a screen reader's rotor lists headings to navigate by, and before
    this the entire app offered exactly two: the brand, and "Conjugation". */
 const TABS = [
-  ["study", "Study"], ["tutor", "Tutor"], ["shadow", "Shadow"], ["write", "Write"], ["drill", "Drill"],
+  ["study", "Study"], ["quest", "Quest"], ["tutor", "Tutor"], ["shadow", "Shadow"], ["write", "Write"], ["drill", "Drill"],
   ["input", "Input"], ["chars", "Kanji・Kana"], ["dates", "Dates"],
   ["scripts", "Scripts"], ["quizzes", "Quizzes"], ["browse", "Browse"], ["plan", "Plan"],
 ];
@@ -685,7 +686,9 @@ const tabLabel = (id) => (id === "more" ? "More" : (TABS.find((t) => t[0] === id
 
    One switch so the whole change can be undone in one line; nothing was deleted. */
 const CALM = true;
-const PRIMARY_TABS = ["study", "tutor", "plan"];
+/* Quest joined the bar 2026-11-03: Matthew asked for a monster-battle adventure to make
+   the vocabulary fun, and a game hidden under More is a game nobody finds. */
+const PRIMARY_TABS = ["study", "quest", "tutor", "plan"];
 const MORE_TABS = [
   ["drill", "Drill", "Volume 2 grammar and verb conjugation"],
   ["chars", "Kanji・Kana", "The textbook's kanji, and kana practice"],
@@ -1009,6 +1012,19 @@ export default function JpnFlashcards() {
     });
   }, []);
 
+  /* Kotoba Quest's answers (src/tabs/Quest.jsx). An attack is a typed production answer, so
+     it is recorded as one: the same card update and evidence row a typed Study card makes,
+     with the hint counted as help. */
+  const recordQuest = useCallback((card, ok, ms, { hinted, kana } = {}) => {
+    const cue = hinted ? CUE.STRONG : CUE.FREE;
+    const failure = ok ? null : classifyFailure({ format: "type", expected: card.reading, got: kana || "" });
+    recordResult(card.id, ok, "prod", ms, areaForDeck("class"), { failure, skill: "production", cue });
+    logEvidence(makeEvidence({
+      id: card.id, deck: "vocab", format: "type", skill: "production", cue, ok, ms, at: Date.now(), failure,
+      got: ok ? null : (kana || null), want: ok ? null : card.reading,
+    }));
+  }, [recordResult]);
+
   /* Readings for sentences that carry none (tools/furigana.mjs): the deck first, then the
      10,000-word list for the basics Volume 1 taught in kana. */
   const [freqWords, setFreqWords] = useState([]);
@@ -1098,6 +1114,8 @@ export default function JpnFlashcards() {
           <MoreMenu go={go} />
         ) : tab === "study" ? (
           <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
+        ) : tab === "quest" ? (
+          <Quest cards={cards} onAnswer={recordQuest} />
         ) : tab === "drill" ? (
           <DrillTab />
         ) : tab === "input" ? (
