@@ -686,8 +686,7 @@ const tabLabel = (id) => (id === "more" ? "More" : (TABS.find((t) => t[0] === id
 
    One switch so the whole change can be undone in one line; nothing was deleted. */
 const CALM = true;
-/* Quest joined the bar 2026-11-03: Matthew asked for a monster-battle adventure to make
-   the vocabulary fun, and a game hidden under More is a game nobody finds. */
+/* Quest joined the bar 2026-11-03: a game hidden under More is a game nobody finds. */
 const PRIMARY_TABS = ["study", "quest", "tutor", "plan"];
 const MORE_TABS = [
   ["drill", "Drill", "Volume 2 grammar and verb conjugation"],
@@ -1012,19 +1011,6 @@ export default function JpnFlashcards() {
     });
   }, []);
 
-  /* Kotoba Quest's answers (src/tabs/Quest.jsx). An attack is a typed production answer, so
-     it is recorded as one: the same card update and evidence row a typed Study card makes,
-     with the hint counted as help. */
-  const recordQuest = useCallback((card, ok, ms, { hinted, kana } = {}) => {
-    const cue = hinted ? CUE.STRONG : CUE.FREE;
-    const failure = ok ? null : classifyFailure({ format: "type", expected: card.reading, got: kana || "" });
-    recordResult(card.id, ok, "prod", ms, areaForDeck("class"), { failure, skill: "production", cue });
-    logEvidence(makeEvidence({
-      id: card.id, deck: "vocab", format: "type", skill: "production", cue, ok, ms, at: Date.now(), failure,
-      got: ok ? null : (kana || null), want: ok ? null : card.reading,
-    }));
-  }, [recordResult]);
-
   /* Readings for sentences that carry none (tools/furigana.mjs): the deck first, then the
      10,000-word list for the basics Volume 1 taught in kana. */
   const [freqWords, setFreqWords] = useState([]);
@@ -1115,7 +1101,7 @@ export default function JpnFlashcards() {
         ) : tab === "study" ? (
           <Study cards={cards} onResult={recordResult} goAdd={() => setTab("browse")} onMnemonic={setMnemonic} />
         ) : tab === "quest" ? (
-          <Quest cards={cards} onAnswer={recordQuest} />
+          <Quest />
         ) : tab === "drill" ? (
           <DrillTab />
         ) : tab === "input" ? (

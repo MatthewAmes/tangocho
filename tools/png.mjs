@@ -56,15 +56,34 @@ export function decodePng(buf) {
   return { width: w, height: h, data };
 }
 
+/* Pixel art has few colours, so it is written with a palette whenever it fits in one: a
+   fraction of the size, which matters because every image ships inside the page. */
 export function encodePng({ width, height, data }) {
-  const raw = Buffer.alloc(height * (width * 4 + 1));
-  for (let y = 0; y < height; y++) Buffer.from(data.buffer, data.byteOffset + y * width * 4, width * 4).copy(raw, y * (width * 4 + 1) + 1);
   const chunk = (kind, body) => {
     const len = Buffer.alloc(4); len.writeUInt32BE(body.length);
     const kb = Buffer.from(kind, "latin1"), crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([kb, body])));
     return Buffer.concat([len, kb, body, crc]);
   };
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 6;
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8;
+  const seen = new Map(), N = width * height;
+  for (let i = 0; i < N && seen.size <= 256; i++) {
+    const p = i * 4, a = data[p + 3], k = a === 0 ? 0 : ((data[p] << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) | a) >>> 0;
+    if (!seen.has(k)) seen.set(k, seen.size);
+  }
+  if (seen.size <= 256) {
+    ihdr[9] = 3;
+    const raw = Buffer.alloc(height * (width + 1));
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const p = (y * width + x) * 4, a = data[p + 3], k = a === 0 ? 0 : ((data[p] << 24) | (data[p + 1] << 16) | (data[p + 2] << 8) | a) >>> 0;
+      raw[y * (width + 1) + 1 + x] = seen.get(k);
+    }
+    const plte = Buffer.alloc(seen.size * 3), trns = Buffer.alloc(seen.size);
+    for (const [k, i] of seen) { plte[i * 3] = k >>> 24; plte[i * 3 + 1] = (k >>> 16) & 255; plte[i * 3 + 2] = (k >>> 8) & 255; trns[i] = k & 255; }
+    return Buffer.concat([SIG, chunk("IHDR", ihdr), chunk("PLTE", plte), chunk("tRNS", trns), chunk("IDAT", zlib.deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
+  }
+  ihdr[9] = 6;
+  const raw = Buffer.alloc(height * (width * 4 + 1));
+  for (let y = 0; y < height; y++) Buffer.from(data.buffer, data.byteOffset + y * width * 4, width * 4).copy(raw, y * (width * 4 + 1) + 1);
   return Buffer.concat([SIG, chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
 }

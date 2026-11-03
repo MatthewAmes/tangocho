@@ -1,19 +1,14 @@
 /* ── Kotoba Quest: the rules ──
-   The pure half of the adventure (src/tabs/Quest.jsx draws it; src/data/quest-world.js
-   holds the maps and creatures). Nothing here touches storage, React or the clock except
-   through its arguments, so every rule is testable — tools/test-quest.mjs.
-
-   The one idea: an attack IS a word. You see the English, you type the Japanese, and a
-   right answer is a hit. Every answer goes through the same memory as Study, so playing
-   moves the same "words you can say" count the home screen shows. */
-import { actOf } from "./intake.mjs";
-import { canSay } from "./bookorder.mjs";
+   The pure half of the adventure (src/tabs/Quest.jsx draws it; src/data/quest-world.js holds
+   the maps and creatures, src/data/quest-story.js the story). Nothing here touches storage,
+   React or the clock except through its arguments, so every rule is testable —
+   tools/test-quest.mjs. */
+import { SPECIES } from "../src/data/quest-world.js";
 
 export const MAP_W = 16, MAP_H = 11;
 export const BLOCKING = new Set(["#", "~", "H", "S", "G", "n"]);
 export const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 export const ENCOUNTER_RATE = 0.16;
-export const WORDS_PER_BATTLE = 8;
 
 /* ── the map ── */
 export function parseMap(rows) {
@@ -39,7 +34,7 @@ export function arrival(map, from) {
 
 /* One step. Returns the new position and what happened, if anything:
      encounter — tall grass, and the dice said so
-     guardian / shrine / sign — you bumped into it
+     guardian / building / shrine / sign — you bumped into it
      region — you walked through a gate
    A beaten guardian is gone: its tile is path, and the gate behind it opens. */
 export function step(state, dir, map, opts = {}) {
@@ -53,6 +48,7 @@ export function step(state, dir, map, opts = {}) {
                                 : { x: state.x, y: state.y, event: { type: "locked" } };
   if (t === "<") return { x: state.x, y: state.y, event: { type: "region", to: -1 } };
   if (t === "G") return { x: state.x, y: state.y, event: { type: "guardian" } };
+  if (t === "H") return { x: state.x, y: state.y, event: { type: "building" } };
   if (t === "S") return { x: state.x, y: state.y, event: { type: "shrine" } };
   if (t === "n") return { x: state.x, y: state.y, event: { type: "sign" } };
   if (BLOCKING.has(t)) return { x: state.x, y: state.y, event: null };
@@ -60,8 +56,9 @@ export function step(state, dir, map, opts = {}) {
   return { x, y, event };
 }
 
-/* Every walkable tile reachable from a start, for the playability tests. */
-export function reachable(map, from, cleared = false) {
+/* Every walkable tile reachable from a start, for the playability tests. `blocked` holds
+   "x,y" spots people are standing on. */
+export function reachable(map, from, cleared = false, blocked = new Set()) {
   const seen = new Set([from.x + "," + from.y]);
   const queue = [from];
   while (queue.length) {
@@ -70,7 +67,7 @@ export function reachable(map, from, cleared = false) {
       const x = p.x + dx, y = p.y + dy, k = x + "," + y;
       let t = tileAt(map, x, y);
       if (t === "G" && cleared) t = "=";
-      if (seen.has(k) || BLOCKING.has(t) || t === "<" || t === ">") continue;
+      if (seen.has(k) || blocked.has(k) || BLOCKING.has(t) || t === "<" || t === ">") continue;
       seen.add(k); queue.push({ x, y });
     }
   }
@@ -78,8 +75,8 @@ export function reachable(map, from, cleared = false) {
 }
 
 /* ── creatures ── */
-export function statsOf(level, bonus = 0) {
-  return { maxHp: 18 + level * 4, atk: 6 + level * 2 + bonus };
+export function statsOf(level) {
+  return { maxHp: 18 + level * 4, atk: 6 + level * 2 };
 }
 export const xpToNext = (level) => level * 15;
 
@@ -88,7 +85,7 @@ export function newMon(species, level) {
 }
 
 export function wildLevel(regionIndex, rng = Math.random) {
-  return 2 + regionIndex * 3 + Math.floor(rng() * 3) - 1;
+  return 3 + regionIndex * 3 + Math.floor(rng() * 3);
 }
 
 /* Experience after a win. Several levels at once if earned; each level heals what it adds. */
@@ -105,26 +102,33 @@ export function gainXp(mon, xp) {
   return { mon: m, levelled };
 }
 
-/* Your words are your power: +1 attack for every five words you can say (production that
-   is expected to hold for a week — the same count Study's home screen shows). */
-export function wordPower(cards = []) {
-  return Math.floor(cards.filter((c) => !c.parked && canSay(c)).length / 5);
+/* ── moves ──
+   Knowing the words is the strategy: 熱い beats what is 寒い, 冷たい beats 明るい, 明るい beats
+   熱い. A strong move has a few uses per battle (`uses`); an ordinary one never runs out. */
+const BEATS = { hot: "cold", cold: "bright", bright: "hot" };
+const PLAIN_MOVES = [{ j: "ぶつかる", e: "Slam", kind: "plain", power: 1 }];
+export const movesOf = (species) => (SPECIES[species] && SPECIES[species].moves) || PLAIN_MOVES;
+export const kindOf = (species) => (SPECIES[species] && SPECIES[species].kind) || "plain";
+
+export function matchup(moveKind, foeKind) {
+  if (BEATS[moveKind] === foeKind) return 1.5;
+  if (BEATS[foeKind] === moveKind) return 0.7;
+  return 1;
 }
 
-/* A hit. Typing it without the hint is a full blow; a quick answer is a critical. */
-export function damageFor({ atk, hinted = false, fast = false, rng = Math.random }) {
-  const roll = 0.9 + rng() * 0.2;
-  return Math.max(1, Math.round(atk * (hinted ? 0.6 : 1) * (fast ? 1.5 : 1) * roll));
-}
-export const FAST_MS = 6000;
-
-/* A miss lets the foe hit back, a little softer than you would hit it. */
-export function counterFor(foe, rng = Math.random) {
-  return Math.max(1, Math.round(statsOf(foe.level).atk * 0.75 * (0.9 + rng() * 0.2)));
+export function hitFor({ level, move, foeSpecies, rng = Math.random }) {
+  const mult = matchup(move.kind, kindOf(foeSpecies));
+  const dmg = Math.max(1, Math.round(statsOf(level).atk * 0.7 * move.power * mult * (0.9 + rng() * 0.2)));
+  return { dmg, mult };
 }
 
-/* Catching takes a right answer, and it is likelier the weaker the creature: certain at a
-   quarter health or below, a coin flip at half. Only offered at half health or below. */
+export const foeMove = (species, rng = Math.random) => {
+  const ms = movesOf(species);
+  return ms[Math.floor(rng() * ms.length) % ms.length];
+};
+
+/* Catching is likelier the weaker the creature: certain at a quarter health or below, a coin
+   flip at about 40%, impossible above half. */
 export const CATCH_AT = 0.5;
 export function catchChance(hp, maxHp) {
   const f = maxHp > 0 ? hp / maxHp : 1;
@@ -132,52 +136,12 @@ export function catchChance(hp, maxHp) {
   return f <= 0.25 ? 1 : 1 - (f - 0.25) * 2;
 }
 
-/* ── which words a battle asks ──
-   The region's act only. Words he is already producing and are due come first (that is a
-   real review), then started-but-weak, then words he can read but has never produced,
-   then words never met — those are shown before they are asked. Recently asked words are
-   held back so a battle is not the same three words again. */
-export function battleWords(cards = [], act, n = WORDS_PER_BATTLE, opts = {}) {
-  const now = opts.now || Date.now();
-  const recent = opts.recent || new Set();
-  const pool = cards.filter((c) => c && !c.parked && c.reading && actOf(c) === act && !recent.has(c.id));
-  const rank = (c) => {
-    const started = (c.rseen || 0) > 0;
-    if (started && c.rfsrs && c.rfsrs.due <= now) return 0;
-    if (started && !canSay(c)) return 1;
-    if ((c.seen || 0) > 0 && !started) return 2;
-    if (!started) return 3;
-    return 4;                                   // solid and not due: least useful to ask
-  };
-  const tie = (c) => ((opts.seed || 0) * 31 + String(c.id).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0)) % 97;
-  const sorted = pool.slice().sort((a, b) => (rank(a) - rank(b)) || (tie(a) - tie(b)));
-  /* At most three never-met words a battle: a fight is not the place to meet ten. */
-  const out = [];
-  let fresh = 0;
-  for (const c of sorted) {
-    if (out.length >= n) break;
-    const isNew = !((c.seen || 0) > 0) && !((c.rseen || 0) > 0);
-    if (isNew && fresh >= 3) continue;
-    if (isNew) fresh++;
-    out.push(c);
-  }
-  return out;
-}
-
-export const isNewWord = (c) => !!c && !((c.seen || 0) > 0) && !((c.rseen || 0) > 0);
-
-/* The か＿＿び hint: the first kana, then a blank per remaining kana. */
-export function hintFor(reading) {
-  const r = Array.from(String(reading || "").replace(/[\s（）()]/g, ""));
-  return r.length ? r[0] + "＿".repeat(r.length - 1) : "";
-}
-
 /* ── the save ──
    Whatever was stored, a playable game comes back: unknown regions clamp, a missing team
    gets the partner, positions that landed in a wall return to the region's arrival. */
 export function freshSave() {
-  return { region: 0, x: null, y: null, team: [newMon("kotodama", 3)], lead: 0, cleared: [], caught: ["kotodama"],
-           rest: { region: 0 }, wins: 0 };
+  return { region: 0, x: null, y: null, name: "", team: [newMon("kotodama", 5)], lead: 0, caught: ["kotodama"],
+           rest: { region: 0 }, flags: {}, met: {} };
 }
 
 export function normaliseSave(raw, regions) {
@@ -188,8 +152,10 @@ export function normaliseSave(raw, regions) {
   s.team = Array.isArray(s.team) && s.team.length ? s.team.filter((m) => m && m.species && m.level > 0).slice(0, 6) : base.team;
   if (!s.team.length) s.team = base.team;
   s.lead = Number.isInteger(s.lead) && s.lead >= 0 && s.lead < s.team.length ? s.lead : 0;
-  s.cleared = Array.isArray(s.cleared) ? s.cleared.filter(Number.isInteger) : [];
   s.caught = Array.isArray(s.caught) ? s.caught : ["kotodama"];
+  s.flags = s.flags && typeof s.flags === "object" ? s.flags : {};
+  s.met = s.met && typeof s.met === "object" ? s.met : {};
+  s.name = typeof s.name === "string" ? s.name : "";
   s.rest = s.rest && Number.isInteger(s.rest.region) && s.rest.region < regions.length ? s.rest : { region: 0 };
   const map = parseMap(regions[s.region].map);
   const t = tileAt(map, s.x, s.y);

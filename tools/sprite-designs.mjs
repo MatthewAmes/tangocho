@@ -80,6 +80,18 @@ export const DESIGNS = {
     s.sparkle(40, 10, "#fff2a0", 1).sparkle(9, 9, "#fff2a0", 1);
   },
 
+  reibouzu(s) {
+    const BODY = ramp(["#6a7a9a", "#a8b4cc", "#dce4f0", "#f0f4fa", "#ffffff"]), ICE = ramp("#58c8f0");
+    s.part(BODY, { round: 6 }, P([[10, 12], [13, 8], [34, 8], [37, 12], [37, 34], [39, 42], [33, 38], [28, 44], [23, 38], [18, 44], [13, 38], [8, 42], [10, 34]]));
+    s.part(ramp("#5f6c84"), { flat: true, tone: 2 }, R(14, 28, 20, 1), R(14, 31, 20, 1), R(14, 34, 20, 1));
+    s.part(ICE, { round: 2 }, E(24, 7, 11, 2.2));
+    s.part(ICE, { round: 1 }, C(5, 18, 2), C(43, 15, 2), C(44, 27, 1.6));
+    s.eye(16, 15, { w: 4, h: 5, iris: "#58c8f0" }).eye(28, 15, { w: 4, h: 5, iris: "#58c8f0" });
+    s.line(15, 13, 20, 14, INK).line(32, 13, 27, 14, INK);
+    s.pxs([[21, 23], [22, 24], [23, 23], [24, 24], [25, 23], [26, 24]], INK);
+    s.pxs([[39, 20], [40, 21], [41, 20], [6, 25], [7, 26], [8, 25]], "#a8e0ff");
+  },
+
   mezamashi(s) {
     const RED = ramp("#e0463a"), GOLD = ramp("#f2c14a"), STEEL = ramp("#9aa6b8"), COMB = ramp("#ff3b4b");
     s.part(ramp("#2f8a5a"), {}, K(14, 28, 5, 13, 3, 1.4), K(13, 31, 3, 22, 3, 1.4), K(13, 34, 3, 31, 2.6, 1.2));

@@ -1,9 +1,8 @@
 // Tests for tools/quest.mjs and the world in src/data/quest-world.js.
 //
 //   node tools/test-quest.mjs
-import { parseMap, tileAt, step, reachable, arrival, statsOf, gainXp, xpToNext, damageFor, counterFor,
-         catchChance, battleWords, hintFor, normaliseSave, freshSave, wakeAtShrine, wordPower, newMon,
-         MAP_W, MAP_H, BLOCKING } from "./quest.mjs";
+import { parseMap, tileAt, step, reachable, arrival, statsOf, gainXp, xpToNext, hitFor, matchup, movesOf, foeMove,
+         catchChance, normaliseSave, freshSave, wakeAtShrine, newMon, MAP_W, MAP_H, BLOCKING } from "./quest.mjs";
 import { SPECIES, REGIONS } from "../src/data/quest-world.js";
 
 let fail = 0, run = 0;
@@ -63,6 +62,7 @@ t("walls block, grass can start a fight, bumps are events", () => {
   eq(step({ x: 1, y: 1 }, "right", M, { rng: never }), { x: 2, y: 1, event: null });
   eq(step({ x: 2, y: 1 }, "right", M).event, { type: "guardian" });
   eq(step({ x: 1, y: 1 }, "down", M).event, { type: "shrine" });
+  eq(step({ x: 1, y: 1 }, "up", parseMap(["#H#", "#.#", "###"])).event, { type: "building" });
   eq(step({ x: 2, y: 2 }, "right", M).event, { type: "sign" });
   eq(step({ x: 1, y: 3 }, "left", M).event, { type: "region", to: -1 });
 });
@@ -76,61 +76,44 @@ t("the east gate is locked until the guardian is beaten, then the guardian's til
 t("stats grow with level; a level needs more experience each time", () => {
   ok(statsOf(4).maxHp > statsOf(3).maxHp && statsOf(4).atk > statsOf(3).atk);
   ok(xpToNext(5) > xpToNext(4));
-  eq(statsOf(3, 2).atk, statsOf(3).atk + 2, "word power adds attack");
 });
 t("experience can carry several levels, and each level heals what it adds", () => {
   const { mon, levelled } = gainXp({ ...newMon("kotodama", 3), hp: 10 }, xpToNext(3) + xpToNext(4) + 1);
   eq([mon.level, mon.xp, levelled], [5, 1, 2]);
   eq(mon.hp, 10 + (statsOf(5).maxHp - statsOf(3).maxHp));
 });
-t("an unhinted answer hits harder than a hinted one; a fast one is a critical", () => {
+t("knowing the words is the strategy: hot beats cold, cold beats bright, bright beats hot", () => {
+  eq(matchup("hot", "cold"), 1.5); eq(matchup("cold", "hot"), 0.7);
+  eq(matchup("cold", "bright"), 1.5); eq(matchup("bright", "hot"), 1.5);
+  eq(matchup("plain", "cold"), 1);
   const mid = () => 0.5;
-  const plain = damageFor({ atk: 20, rng: mid });
-  ok(damageFor({ atk: 20, hinted: true, rng: mid }) < plain);
-  ok(damageFor({ atk: 20, fast: true, rng: mid }) > plain);
-  ok(counterFor({ level: 3 }, mid) > 0);
+  const fire = movesOf("atsuinu")[0], wind = movesOf("samuneko")[0];
+  ok(hitFor({ level: 5, move: fire, foeSpecies: "samuneko", rng: mid }).dmg > hitFor({ level: 5, move: wind, foeSpecies: "atsuinu", rng: mid }).dmg);
 });
-t("a battle against a same-level wild creature takes a few right answers, not one or ten", () => {
-  const foe = statsOf(3).maxHp, hit = damageFor({ atk: statsOf(3).atk, rng: () => 0.5 });
-  const n = Math.ceil(foe / hit);
-  ok(n >= 2 && n <= 4, n + " answers");
-  const misses = Math.ceil(statsOf(3).maxHp / counterFor({ level: 3 }, () => 0.5));
-  ok(misses >= 3, "you survive at least two misses, took " + misses);
+t("every creature can fight, and a creature with no moves listed still has one", () => {
+  for (const id of Object.keys(SPECIES)) ok(movesOf(id).length > 0, id);
+  ok(foeMove("mezamashi", () => 0.5).power > 0);
+});
+t("a wild fight lasts a few turns, and you survive a few hits", () => {
+  const mid = () => 0.5;
+  const hit = hitFor({ level: 5, move: movesOf("kotodama")[0], foeSpecies: "haredori", rng: mid }).dmg;
+  const n = Math.ceil(statsOf(4).maxHp / hit);
+  ok(n >= 2 && n <= 4, n + " hits to win");
+  const back = hitFor({ level: 4, move: movesOf("samuneko")[0], foeSpecies: "kotodama", rng: mid }).dmg;
+  ok(Math.ceil(statsOf(5).maxHp / back) >= 3, "you take at least three hits");
+});
+t("the boss can be beaten by a partner who has barely fought, if you use the strong move", () => {
+  const mid = () => 0.5, boss = statsOf(6).maxHp;
+  const big = hitFor({ level: 5, move: movesOf("kotodama")[1], foeSpecies: "reibouzu", rng: mid }).dmg;
+  const turns = Math.ceil(boss / big);
+  const worst = hitFor({ level: 6, move: movesOf("reibouzu")[1], foeSpecies: "kotodama", rng: mid }).dmg;
+  ok((turns - 1) * worst < statsOf(5).maxHp, turns + " turns against " + worst + " a hit");
+  ok(turns <= movesOf("kotodama")[1].uses, "enough uses of the strong move");
 });
 t("catching: impossible above half health, certain at a quarter", () => {
   eq(catchChance(30, 40), 0);
   eq(catchChance(10, 40), 1);
   ok(catchChance(15, 40) > 0 && catchChance(15, 40) < 1);
-});
-
-/* ── words ── */
-const NOW = Date.UTC(2026, 10, 3);
-const w = (id, sec, extra = {}) => ({ id, sec, term: id, reading: "よみ", meaning: "m", ...extra });
-t("battle words: the region's act only, due production first, never-met last and at most three", () => {
-  const cards = [
-    w("new1", "7-1"), w("new2", "7-1"), w("new3", "7-2"), w("new4", "7-3"),
-    w("read", "7-1", { seen: 3, correct: 3 }),
-    w("due", "7-2", { seen: 3, rseen: 2, rcorrect: 1, rfsrs: { S: 2, due: NOW - 1 } }),
-    w("other", "8-1", { seen: 3, rseen: 2, rfsrs: { S: 2, due: NOW - 1 } }),
-    w("noread", "7-1", { reading: "" }),
-  ];
-  const got = battleWords(cards, 7, 8, { now: NOW }).map((c) => c.id);
-  eq(got[0], "due"); eq(got[1], "read");
-  ok(!got.includes("other") && !got.includes("noread"));
-  eq(got.filter((id) => id.startsWith("new")).length, 3);
-});
-t("battle words: recently asked words are held back", () => {
-  const cards = [w("a", "7-1", { seen: 1 }), w("b", "7-1", { seen: 1 })];
-  eq(battleWords(cards, 7, 8, { now: NOW, recent: new Set(["a"]) }).map((c) => c.id), ["b"]);
-});
-t("hint: first kana, then a blank per kana", () => {
-  eq(hintFor("かんしゃ"), "か＿＿＿");
-  eq(hintFor(""), "");
-});
-t("word power: one attack for every five words he can say", () => {
-  const can = { rfsrs: { S: 10 } };
-  eq(wordPower([...Array(11)].map(() => ({ ...can }))), 2);
-  eq(wordPower([{ fsrs: { S: 99 } }]), 0, "recognising is not saying");
 });
 
 /* ── saving ── */

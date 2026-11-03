@@ -33,26 +33,35 @@ So Study now defaults to **Book order** (`plan.book`, `tools/bookorder.mjs`):
 The plan agreed with him: Acts 7→ before class starts in January, 10–15 min a day, and
 playing Pokémon in Japanese for fun.
 
-**Quest tab — Kotoba Quest (2026-11-03).** He asked for a monster-battle RPG with a map.
-It is **original** and must stay that way: our own creatures (names are Japanese word
-mash-ups, 寒い+猫 = Samuneko), no Pokémon names, art or music. One region per act (7–12),
-16×11 tile maps in `src/data/quest-world.js`; rules in `tools/quest.mjs` (tested in
-`tools/test-quest.mjs`, which walks every map); screen in `src/tabs/Quest.jsx`.
-- An attack is a typed production answer (English → Japanese). Right = hit, fast and
-  unhinted = critical, wrong = the creature hits back. Weak creatures can be caught with a
-  right answer. Each act's guardian opens the road east and quotes the act's proverb.
-- Answers go through `recordQuest` in the App: the same card update and evidence row as a
-  typed Study card, cue STRONG when hinted. Only the first answer per word per visit is
-  recorded, so a battle can't drill a word into a false memory.
-- Word power: +1 attack per five words he can say (production S ≥ 7).
-- Save is `jpn101:quest`. Emoji are single code points on purpose: Windows 10 split
-  ZWJ emoji (🧑‍🎓) and had no glyph for 🪧/🫧/🫘.
-- Creatures are 48×48 pixel art drawn in code: `tools/sprite-designs.mjs` lists each one's
-  shapes, `tools/pixel-art.mjs` shades and outlines them, `node tools/make-sprites.mjs`
-  writes `src/data/quest-sprites.js` (and `art/sprite-sheet.png` to look at).
-  `tools/test-sprites.mjs` fails if the module drifts from the designs. Show them only at
-  whole-number scales (48/96/144) or the pixels go uneven. Gemini was tried first and
-  dropped: its API has no free image tier and he won't pay beyond his subscription.
+**Quest tab — Kotoba Quest (2026-11-03).** A mystery RPG with monster battles, played in
+Japanese. He rejected the first version (type a word to attack): "i wanted it to be like an
+earnest game thats purely japanese that i can binge and learn", then "mix of mystery rpg and
+monster rpg so i can get real dialogue and conversations in context". **Do not bring typing
+or quizzes back into it.** It is **original** and must stay that way: our own creatures,
+story and art; no Pokémon names, characters or music.
+- The Japanese is the game. You understand people to solve the case: talk to everyone, fill
+  the notebook, name the culprit, show the right clue at each step. Wrong answers get a reply
+  and another try, never a penalty. Tap any word for its meaning, ？ for a line's English,
+  🔊 to hear it. Every kanji has furigana.
+- Chapter 1 only so far (Act 7, Campus Meadows), written to check the idea before writing
+  the rest. Its story uses Act 7's words where they mean something. Next chapters: one per
+  act, same format; add the region to `PLAYABLE` in `tools/make-sprites.mjs` for its map.
+- Story and every line: `src/data/quest-story.js` (its header explains the format; to add a
+  chapter, `PEOPLE`, `PLACES`, `CLUES` and `SCENES` need to become per-chapter). Runner helpers:
+  `tools/quest-story.mjs`. Rules: `tools/quest.mjs`. Screen: `src/tabs/Quest.jsx`.
+  `tools/test-quest-story.mjs` checks every word has a gloss and every kanji a reading, and
+  plays the mystery through from the first step.
+- Battles are menus in Japanese. Words are the strategy: 熱い beats cold, 冷たい beats bright,
+  明るい beats hot.
+- **It does not feed Study's memory.** Nothing here is graded, so nothing is written to FSRS or
+  the evidence log; tapped words are only kept in the save. Whether to connect them is open.
+- Save is `jpn101:quest2`; the old attack-game save (`jpn101:quest`) is ignored.
+- Art is drawn in code: creatures in `tools/sprite-designs.mjs`, maps and people in
+  `tools/world-art.mjs` (themes for all six regions already exist), painter
+  `tools/pixel-art.mjs`. `node tools/make-sprites.mjs` regenerates `src/data/quest-sprites.js`
+  and `src/data/quest-world-art.js`, and `art/*.png` to look at; `tools/test-sprites.mjs` fails if
+  they drift. Gemini was tried first and dropped: its API has no free image tier and he won't
+  pay beyond his subscription.
 
 ## Calm mode (2026-10-13)
 
