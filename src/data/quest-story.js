@@ -15,6 +15,7 @@
      { choose: [{ j, e, then, right, retry }] }   then runs next; retry comes back and asks again
      { present: { right, wrong } }   show a clue from the notebook; wrong lines, then ask again
      { clue: id } { flag: id } { heal: true }
+     { join: species, j, e }   a creature joins you, unless it already has
      { fight: { team, win, lose, flee } }   win/lose/flee name the scene that follows
    tools/test-quest-story.mjs checks all of it: every word glossed, every reference real, and
    the whole mystery solvable from the first step. */
@@ -45,13 +46,19 @@ export const CLUES = {
   c_taro: { j: "タロウさんの {話|はなし}：{夜|よる}は ずっと {家|うち}に いた。", e: "What Taro says: he was at home all night." },
   c_machine: { j: "{売店|ばいてん}の {裏|うら}に {大きい|おおきい} {冷房|れいぼう}が ある。{冷たい|つめたい} {風|かぜ}が {出て|でて|出る} いる。", e: "Behind the kiosk there's a huge air conditioner. Cold wind is coming out of it." },
 };
+/* Kotodama's six lost words: one comes back at the end of each chapter. */
+export const LOST_WORDS = [
+  { flag: "word1", j: "{住めば都|すめばみやこ}", e: "Home is where you make it" },
+];
+export const LOST_WORD_COUNT = 6;
+
 export const CASE_CLUES = ["c_wind", "c_soup", "c_night", "c_taro", "c_machine"];
 
 /* What to do next, in the notebook and under the map: the first whose `until` isn't done. */
 export const GOALS = [
   { until: "ready", j: "みんなに {話|はなし}を {聞きましょう|ききましょう|聞く}。", e: "Let's ask everyone what they know." },
   { until: "solved", j: "ハナさんの {所|ところ}へ {行きましょう|いきましょう|行く}。みんなを {集めます|あつめます|集める}。", e: "Let's go to Hana. We'll gather everyone." },
-  { until: "never", j: "{第一章|だいいっしょう}、おわり。{草|くさ}の {中|なか}で なかまを {探しましょう|さがしましょう|探す}。", e: "That's the end of Chapter 1. Let's look for companions in the grass." },
+  { until: "never", j: "{第二章|だいにしょう}は もうすぐ！ {草|くさ}の {中|なか}で なかまを {探しましょう|さがしましょう|探す}。", e: "Chapter 2 is coming soon! Let's look for companions in the grass." },
 ];
 
 /* Who stands where on Campus Meadows. `talk`: the first entry whose need/not fit is what they say. */
@@ -138,7 +145,15 @@ export const SCENES = {
     ] },
     { s: K, j: "{先週|せんしゅう}は {暖かかった|あたたかかった|暖かい}です。でも、{今週|こんしゅう}は {急に|きゅうに} {寒く|さむく|寒い} なりました。", e: "Last week it was warm. But this week it suddenly got cold." },
     { s: K, j: "{変|へん}ですね。どうしてでしょう？", e: "That's strange, isn't it? I wonder why." },
-    { s: K, j: "みんな {困って|こまって|困る} います。{一緒に|いっしょに} {調べましょう|しらべましょう|調べる}！", e: "Everyone's having trouble. Let's investigate together!" },
+    { s: K, j: "じつは、ぼくも {困って|こまって|困る} います。", e: "Actually, I'm in trouble too." },
+    { s: K, j: "{大切|たいせつ}な {言葉|ことば}を {六つ|むっつ} {忘れました|わすれました|忘れる}。", e: "I've forgotten six important words." },
+    { s: K, j: "{言葉|ことば}の {精霊|せいれい}なのに……。どうしてでしょう？", e: "And I'm a spirit of words... I wonder why." },
+    { s: K, j: "@さん、{手伝って|てつだって|手伝う} くれますか。", e: "@, will you help me?" },
+    { choose: [
+      { j: "はい、いいですよ。", e: "Sure, okay.", then: [{ s: K, j: "ありがとう！ うれしいです！", e: "Thank you! I'm so happy!" }] },
+      { j: "いやです。", e: "No way.", then: [{ s: K, j: "ええっ！ ……でも、ぼくは {一緒に|いっしょに} {行きます|いきます|行く}よ。", e: "What?! ...Well, I'm coming with you anyway." }] },
+    ] },
+    { s: K, j: "まず、この {寒さ|さむさ}です。みんな {困って|こまって|困る} います。{一緒に|いっしょに} {調べましょう|しらべましょう|調べる}！", e: "First, this cold. Everyone's having trouble. Let's investigate together!" },
     { s: K, j: "{人|ひと}に {話|はなし}を {聞きましょう|ききましょう|聞く}。わかった ことは ノートに {書きます|かきます|書く}。", e: "Let's ask people what they know. I'll write what we find out in the notebook." },
     { s: K, j: "{草|くさ}の {中|なか}には {生き物|いきもの}が います。{気をつけて|きをつけて|気をつける}！", e: "There are creatures in the grass. Be careful!" },
     { flag: "intro" },
@@ -364,8 +379,15 @@ export const SCENES = {
   solved: [
     { j: "{冷房|れいぼう}が {止まりました|とまりました|止まる}。", e: "The air conditioner stopped." },
     { s: "taro", j: "すみませんでした。みなさんに ご{迷惑|めいわく}を かけました。", e: "I'm sorry. I caused you all a lot of trouble." },
-    { s: "mika", j: "コーヒーは {百円|ひゃくえん}に {戻して|もどして|戻す} くださいね。", e: "Put the coffee back to 100 yen, okay?" },
-    { s: "taro", j: "はい……。", e: "Yes..." },
+    { s: "taro", j: "{売店|ばいてん}に お{金|かね}が なかったんです。もうすぐ {閉まる|しまる}と {言われました|いわれました|言う}。", e: "The kiosk had no money. I was told it would close soon." },
+    { s: "mika", j: "そうだったんですか……。", e: "So that's what it was..." },
+    { s: "mika", j: "コーヒーは {百円|ひゃくえん}に {戻して|もどして|戻す} くださいね。{一緒に|いっしょに} がんばりましょう。", e: "Put the coffee back to 100 yen, okay? Let's work hard together." },
+    { s: "taro", j: "はい……。ありがとうございます。", e: "Yes... Thank you." },
+    { s: K, j: "タロウさん、あの {大きい|おおきい} {冷房|れいぼう}は どこで {買いました|かいました|買う}か。", e: "Taro, where did you buy that huge air conditioner?" },
+    { s: "taro", j: "{買って|かって|買う} いません。{黒い|くろい} コートの {人|ひと}が くれました。", e: "I didn't buy it. A person in a black coat gave it to me." },
+    { s: "taro", j: "「{寒く|さむく|寒い} すると、よく {売れます|うれます|売れる}よ」と {言いました|いいました|言う}。", e: "They said, \"If you make it cold, you'll sell a lot.\"" },
+    { s: K, j: "{黒い|くろい} コートの {人|ひと}……？ だれですか。", e: "A person in a black coat...? Who was it?" },
+    { s: "taro", j: "わかりません。{名前|なまえ}は {言いませんでした|いいませんでした|言う}。", e: "I don't know. They didn't give a name." },
     { j: "キャンパスが {暖かく|あたたかく|暖かい} なりました。", e: "The campus grew warm." },
     { s: "ken", j: "{暖かくて|あたたかくて|暖かい} {気持ち|きもち}が いい！", e: "It's warm and feels great!" },
     { s: "samuneko", j: "ニャー！", e: "Nyaa!" },
@@ -381,9 +403,23 @@ export const SCENES = {
     ] },
     { s: "hana", j: "「{住めば都|すめばみやこ}」と {言います|いいます|言う}。", e: "There's a saying: \"Sumeba miyako.\"" },
     { s: "hana", j: "どんな {所|ところ}でも、{住むと|すむと|住む} いい {所|ところ}に なります。", e: "Wherever it is, once you live there it becomes a good place." },
+    { j: "そのとき、コトダマが {光りました|ひかりました|光る}！", e: "Just then, Kotodama lit up!" },
+    { s: K, j: "あっ……！ {思い出しました|おもいだしました|思い出す}！", e: "Ah...! I remember!" },
+    { s: K, j: "「{住めば都|すめばみやこ}」！ ぼくの {大切|たいせつ}な {言葉|ことば}です！", e: "\"Sumeba miyako\"! It's one of my important words!" },
+    { flag: "word1" },
+    { s: K, j: "{一つ|ひとつ} {戻りました|もどりました|戻る}！ あと {五つ|いつつ}です！", e: "One's back! Five to go!" },
     { s: K, j: "@さん、{一緒に|いっしょに} {調べて|しらべて|調べる}、{楽しかった|たのしかった|楽しい}です！", e: "@, investigating together was fun!" },
+    { s: "samuneko", j: "ニャー！", e: "Nyaa!" },
+    { join: "samuneko", j: "サムネコが なかまに なった！", e: "Samuneko joined your team!" },
+    { join: "reibouzu", j: "レイボウズも {静か|しずか}に なって、なかまに なった！", e: "Reibouzu calmed down and joined your team too!" },
     { flag: "solved" },
-    { j: "{第一章|だいいっしょう}、おわり。", e: "End of Chapter 1." },
+    { j: "その {夜|よる}……。", e: "That night..." },
+    { j: "{看板|かんばん}に {手紙|てがみ}が ありました。", e: "There was a letter on the sign." },
+    { j: "「よく わかったね。{次|つぎ}は {時計台|とけいだい}の {町|まち}だ。」", e: "\"Well figured out. Next is the clock tower town.\"" },
+    { j: "「——{黒い|くろい} コート」", e: "\"— Black Coat\"" },
+    { s: K, j: "{次|つぎ}……？ {町|まち}で {何|なに}が あるんでしょう？", e: "Next...? What's going to happen in town?" },
+    { s: K, j: "@さん、{行きましょう|いきましょう|行く}！", e: "@, let's go!" },
+    { j: "{第一章|だいいっしょう}、おわり。{第二章|だいにしょう}に つづく。", e: "End of Chapter 1. To be continued in Chapter 2." },
   ],
   hana_end: [
     { s: "hana", j: "{花|はな}が {咲きました|さきました|咲く}よ。きれいでしょう？", e: "The flowers have bloomed. Pretty, aren't they?" },
@@ -451,6 +487,10 @@ export const MENU = {
   pickClue: { j: "どの {手がかり|てがかり}を {見せます|みせます|見せる}か。", e: "Which clue will you show?" },
   nameAsk: { j: "{名前|なまえ}を {入れて|いれて|入れる} ください。", e: "Enter your name, in rōmaji or kana." },
   nameOk: { j: "{決定|けってい}", e: "OK" },
+  lostWords: { j: "{大切|たいせつ}な {言葉|ことば}", e: "Important words" },
+  dex: { j: "{図鑑|ずかん}", e: "Creature book" },
+  dexCaught: { j: "つかまえた", e: "Caught" },
+  saved: { j: "{自動|じどう}で セーブします。", e: "The game saves itself as you play." },
   noWords: { j: "{言葉|ことば}を タップすると、ここに {入ります|はいります|入る}。", e: "Words you tap show up here." },
   found: { j: "{手がかり|てがかり}を {見つけた|みつけた|見つける}！", e: "You found a clue!" },
 };
@@ -485,6 +525,9 @@ export const GLOSS = {
   "住む": "to live (somewhere)", "楽しい": "fun", "咲く": "to bloom", "先": "ahead", "町": "town", "会う": "to meet",
   "神社": "shrine", "休む": "to rest", "目": "eye", "覚める": "to wake (目が覚める)", "現れる": "to appear", "倒れる": "to fall, go down",
   "勝つ": "to win", "経験値": "experience points", "帰る": "to go home", "弱い": "weak", "手がかり": "clue", "地図": "map",
-  "先頭": "the front", "入れる": "to put in, enter", "決定": "decision", "入る": "to enter", "出す": "to bring out (元気を出す: cheer up)", "光": "light", "声": "voice",
+  "先頭": "the front", "入れる": "to put in, enter", "決定": "decision", "入る": "to enter", "大切": "important, precious", "六つ": "six (things)", "忘れる": "to forget", "手伝う": "to help",
+  "寒さ": "the cold", "金": "money", "閉まる": "to close (by itself)", "黒い": "black", "光る": "to shine", "思い出す": "to remember",
+  "一つ": "one (thing)", "五つ": "five (things)", "手紙": "letter", "次": "next", "時計台": "clock tower", "図鑑": "illustrated guide",
+  "自動": "automatic", "出す": "to bring out (元気を出す: cheer up)", "光": "light", "声": "voice",
   "息": "breath", "歌": "song", "晴れ": "sunny weather", "爪": "claw", "牙": "fang", "羽": "feather, wing", "雪": "snow", "氷": "ice",
 };

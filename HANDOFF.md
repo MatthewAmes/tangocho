@@ -51,6 +51,14 @@ story and art; no Pokémon names, characters or music.
   `tools/quest-story.mjs`. Rules: `tools/quest.mjs`. Screen: `src/tabs/Quest.jsx`.
   `tools/test-quest-story.mjs` checks every word has a gloss and every kanji a reading, and
   plays the mystery through from the first step.
+- What pulls him through is written into the story on purpose: Kotodama has lost six important
+  words and one (the act's proverb) returns each chapter, a person in a black coat is behind
+  each case and leaves a cliffhanger, a creature or two joins at the end, and the creature book
+  shows silhouettes to fill. No streaks, timers or guilt: he asked for "addictive", and this app
+  has already been stripped once of exactly that kind of noise.
+- Saving: anything that matters writes at once. Plain steps wait 15 seconds or until you leave,
+  because every write also pushes to the cloud and KV has a daily write limit. `jpn101:quest2`
+  syncs like the deck when signed in.
 - Battles are menus in Japanese. Words are the strategy: 熱い beats cold, 冷たい beats bright,
   明るい beats hot.
 - **It does not feed Study's memory.** Nothing here is graded, so nothing is written to FSRS or

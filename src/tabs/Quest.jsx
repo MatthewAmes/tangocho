@@ -5,7 +5,7 @@ import { setSessionBusy } from "../lib/session.js";
 import { SPECIES, REGIONS } from "../data/quest-world.js";
 import { SPRITES } from "../data/quest-sprites.js";
 import { MAPS, HERO, WALKERS, PORTRAITS, OBJECTS } from "../data/quest-world-art.js";
-import { CHAPTER, CAST, CLUES, CASE_CLUES, GOALS, PEOPLE, PLACES, SCENES, START_SCENE, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../data/quest-story.js";
+import { CHAPTER, CAST, CLUES, CASE_CLUES, LOST_WORDS, LOST_WORD_COUNT, GOALS, PEOPLE, PLACES, SCENES, START_SCENE, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../data/quest-story.js";
 import { parseMap, step, statsOf, newMon, wildLevel, gainXp, movesOf, hitFor, foeMove, catchChance, normaliseSave, wakeAtShrine, healAll } from "../../tools/quest.mjs";
 import { parseJa, plainJa, rubyParts, pickEntry, goalNow, nameFromInput, afterChoice } from "../../tools/quest-story.mjs";
 import { toKana } from "../../tools/romaji.mjs";
@@ -18,6 +18,7 @@ import { toKana } from "../../tools/romaji.mjs";
 const SAVE_KEY = "jpn101:quest2";
 const MAX_TEAM = 6;
 const W = 256, H = 176;             // the map in its own pixels
+const POSITION_SAVE_MS = 15000;     // walking saves gently: each write also goes to the cloud
 const DEFAULT_NAME = "トモ";
 
 const sp = (id) => SPECIES[id] || SPECIES.kotodama;
@@ -108,7 +109,27 @@ export default function Quest() {
   const [nameDraft, setNameDraft] = useState("");
   const [resetArmed, setResetArmed] = useState(false);
 
-  const persist = useCallback((s) => { setSave(s); sSet(SAVE_KEY, JSON.stringify(s)); }, []);
+  /* Anything that matters saves at once. Plain steps wait a little and save when you stop or
+     leave, because every write also goes up to the cloud, and that has a daily limit. */
+  const pendingWalk = useRef(null), walkTimer = useRef(null);
+  const persist = useCallback((s) => {
+    pendingWalk.current = null; clearTimeout(walkTimer.current);
+    setSave(s); sSet(SAVE_KEY, JSON.stringify(s));
+  }, []);
+  const flushWalk = useCallback(() => {
+    clearTimeout(walkTimer.current);
+    if (pendingWalk.current) { sSet(SAVE_KEY, JSON.stringify(pendingWalk.current)); pendingWalk.current = null; }
+  }, []);
+  const walked = useCallback((s) => {
+    setSave(s); pendingWalk.current = s;
+    clearTimeout(walkTimer.current); walkTimer.current = setTimeout(flushWalk, POSITION_SAVE_MS);
+  }, [flushWalk]);
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") flushWalk(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flushWalk);
+    return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", flushWalk); flushWalk(); };
+  }, [flushWalk]);
   const region = save ? REGIONS[save.region] : REGIONS[0];
   const map = useMemo(() => parseMap(region.map), [region]);
   const playerName = (save && save.name) || DEFAULT_NAME;
@@ -132,6 +153,11 @@ export default function Quest() {
         if (ready) s = { ...s, flags: { ...s.flags, ready: true } };
         q = [{ found: n.clue }, ...(ready ? SCENES.ready : []), ...q];
         continue;
+      }
+      if (n.join) {
+        if (s.team.some((m) => m.species === n.join) || s.team.length >= MAX_TEAM) continue;
+        s = { ...s, team: [...s.team, newMon(n.join, 4)], caught: s.caught.includes(n.join) ? s.caught : [...s.caught, n.join], seen: s.seen.includes(n.join) ? s.seen : [...s.seen, n.join] };
+        changed = true;
       }
       if (n.fight) { fight = n.fight; break; }
       node = n; break;
@@ -185,7 +211,7 @@ export default function Quest() {
     const r = step({ x: save.x, y: save.y }, dir, map, { cleared: false });
     const s = { ...save, x: r.x, y: r.y };
     const ev = r.event;
-    if (!ev) { setSave(s); return; }
+    if (!ev) { walked(s); return; }
     if (ev.type === "encounter") {
       setSave(s);
       const pool = region.wild;
@@ -218,7 +244,8 @@ export default function Quest() {
     const lead = s.team[s.lead] && s.team[s.lead].hp > 0 ? s.lead : s.team.findIndex((m) => m.hp > 0);
     const first = lead < 0 ? 0 : lead;
     const team = lead < 0 ? healAll(s.team) : s.team;
-    const next = { ...s, lead: first, team };
+    const met = foes.map((f) => f.species).filter((id) => !s.seen.includes(id));
+    const next = { ...s, lead: first, team, seen: met.length ? [...s.seen, ...met] : s.seen };
     persist(next);
     const opening = say(def.boss ? "boss" : "appear", { a: nameOf(foes[0].species) });
     setMenu("main");
@@ -349,6 +376,8 @@ export default function Quest() {
   if (view === "note") {
     const clues = Object.keys(CLUES).filter((c) => flags[c]);
     const met = Object.keys(save.met).sort();
+    const lost = LOST_WORDS.filter((w) => flags[w.flag]);
+    const dex = Object.keys(SPECIES);
     const tab = (id, label) => (
       <button type="button" className={"tc-btn tc-btn-sm" + (noteTab === id ? " tc-btn-primary" : "")} aria-pressed={noteTab === id} onClick={() => setNoteTab(id)}><Ja src={label.j} plain /></button>
     );
@@ -358,7 +387,13 @@ export default function Quest() {
           <b><Ja src={MENU.notebook.j} plain /></b>
           <button type="button" className="tc-btn tc-btn-sm" onClick={() => setView("map")}><Ja src={MENU.map.j} plain /></button>
         </div>
-        <div className="tc-qtabs">{tab("clues", MENU.clues)}{tab("words", MENU.words)}{tab("team", MENU.team)}</div>
+        <div className="tc-qtabs">{tab("clues", MENU.clues)}{tab("words", MENU.words)}{tab("team", MENU.team)}{tab("dex", MENU.dex)}</div>
+        {noteTab === "clues" && (
+          <div className="tc-qclue tc-qlost">
+            <p className="tc-qsay"><Ja src={MENU.lostWords.j} onWord={openWord} /> {lost.length} / {LOST_WORD_COUNT}</p>
+            {lost.map((w) => <div key={w.flag} className="tc-qlostword"><p className="tc-qsay"><Ja src={w.j} onWord={openWord} /></p><HelpLine e={w.e} /></div>)}
+          </div>
+        )}
         {noteTab === "clues" && clues.map((c) => (
           <div key={c} className="tc-qclue"><p className="tc-qsay"><Ja src={CLUES[c].j} onWord={openWord} /></p><HelpLine e={CLUES[c].e} /></div>
         ))}
@@ -376,6 +411,23 @@ export default function Quest() {
             {i !== save.lead && m.hp > 0 && <button type="button" className="tc-btn tc-btn-sm" onClick={() => persist({ ...save, lead: i })}><Ja src={MENU.lead.j} plain /></button>}
           </div>
         ))}
+        {noteTab === "dex" && (
+          <>
+            <p className="tc-qnote"><Ja src={MENU.dexCaught.j} plain /> {save.caught.length} / {dex.length}</p>
+            <div className="tc-qdex">
+              {dex.map((id) => {
+                const seen = save.seen.includes(id), caught = save.caught.includes(id);
+                return (
+                  <div key={id} className={"tc-qdexcell" + (seen ? "" : " is-unknown")}>
+                    <img src={SPRITES[id]} alt="" draggable={false} />
+                    <span lang="ja">{seen ? sp(id).ja : "？？？"}{caught ? " ★" : ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+        <div className="tc-qclue tc-qsaved"><p className="tc-qsay"><Ja src={MENU.saved.j} onWord={openWord} /></p><HelpLine e={MENU.saved.e} /></div>
         <button type="button" className="tc-qrestart" onClick={() => {
           if (!resetArmed) { setResetArmed(true); return; }
           const s = normaliseSave(null, REGIONS);

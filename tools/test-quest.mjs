@@ -126,6 +126,9 @@ t("a missing or broken save becomes a playable new game", () => {
   eq([odd.region, odd.lead, odd.team.length], [0, 0, 1]);
   ok(!BLOCKING.has(tileAt(parseMap(REGIONS[0].map), odd.x, odd.y)), "not inside a wall");
 });
+t("an older save still works: what you've seen starts from what you've caught", () => {
+  eq(normaliseSave({ caught: ["kotodama", "samuneko"] }, REGIONS).seen, ["kotodama", "samuneko"]);
+});
 t("losing wakes you beside the last shrine with everyone healed", () => {
   const save = { ...freshSave(), region: 2, rest: { region: 1 }, team: [{ ...newMon("kotodama", 4), hp: 0 }] };
   const woke = wakeAtShrine(save, REGIONS);

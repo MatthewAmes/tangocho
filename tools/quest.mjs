@@ -140,7 +140,7 @@ export function catchChance(hp, maxHp) {
    Whatever was stored, a playable game comes back: unknown regions clamp, a missing team
    gets the partner, positions that landed in a wall return to the region's arrival. */
 export function freshSave() {
-  return { region: 0, x: null, y: null, name: "", team: [newMon("kotodama", 5)], lead: 0, caught: ["kotodama"],
+  return { region: 0, x: null, y: null, name: "", team: [newMon("kotodama", 5)], lead: 0, caught: ["kotodama"], seen: ["kotodama"],
            rest: { region: 0 }, flags: {}, met: {} };
 }
 
@@ -153,6 +153,7 @@ export function normaliseSave(raw, regions) {
   if (!s.team.length) s.team = base.team;
   s.lead = Number.isInteger(s.lead) && s.lead >= 0 && s.lead < s.team.length ? s.lead : 0;
   s.caught = Array.isArray(s.caught) ? s.caught : ["kotodama"];
+  s.seen = Array.isArray(raw.seen) ? raw.seen : s.caught.slice();
   s.flags = s.flags && typeof s.flags === "object" ? s.flags : {};
   s.met = s.met && typeof s.met === "object" ? s.met : {};
   s.name = typeof s.name === "string" ? s.name : "";

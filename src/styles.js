@@ -736,8 +736,9 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-qface{width:96px;height:96px;flex:none;image-rendering:pixelated;background:#262b48;border-radius:8px}
 .tc-qtalk{flex:1;min-width:0}
 .tc-qwho{margin:0 0 2px;font-size:13px;font-weight:700;color:#ffd98a}
-.tc-qsay{margin:0;font-size:20px;line-height:2;word-break:keep-all;overflow-wrap:anywhere}
-.tc-qsay ruby rt,.tc-btn ruby rt{font-size:.5em;color:#aeb8e0}
+.tc-qsay{margin:0;font-size:22px;line-height:2.4;word-break:keep-all;overflow-wrap:anywhere}
+.tc-quest ruby{ruby-position:over;ruby-align:center}
+.tc-quest rt{font-size:max(13px,.62em);font-weight:500;line-height:1.1;color:#f2f4ff}
 .tc-qw{all:unset;cursor:pointer;border-bottom:1px dotted rgba(255,255,255,.4)}
 .tc-qw:hover{background:rgba(255,255,255,.1)}
 .tc-qw:focus-visible{outline:2px solid #ffd98a}
@@ -748,17 +749,25 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-qgo{align-self:flex-end;min-width:110px}
 .tc-qchoices{display:flex;flex-direction:column;gap:8px}
 .tc-qchoice{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.tc-qchoice>.tc-btn{flex:1;min-width:0;font-size:17px;line-height:1.9;text-transform:none;letter-spacing:0}
-.tc-qcluebtn{font-size:15px!important;text-align:left}
+.tc-qchoice>.tc-btn{flex:1;min-width:0;font-size:18px;line-height:2.3;text-transform:none;letter-spacing:0}
+.tc-qcluebtn{font-size:16px!important;text-align:left}
 .tc-qname{display:flex;flex-direction:column;gap:8px}
 .tc-qmenu{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.tc-qmenu>.tc-btn{min-height:52px;font-size:17px;text-transform:none;letter-spacing:0;line-height:1.7}
+.tc-qmenu>.tc-btn{min-height:56px;font-size:18px;text-transform:none;letter-spacing:0;line-height:2.2}
 .tc-qmenuhelp{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .tc-qgoal{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px}
-.tc-qgoal .tc-qsay{font-size:15px;color:var(--mut)}
+.tc-qgoal .tc-qsay{font-size:16px;color:var(--mut)}
 .tc-qtabs{display:flex;gap:8px;flex-wrap:wrap}
 .tc-qclue{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;border-radius:10px;background:var(--surface)}
-.tc-qclue .tc-qsay{font-size:16px;flex:1;min-width:200px}
+.tc-qclue .tc-qsay{font-size:17px;flex:1;min-width:200px}
+.tc-qlost{flex-direction:column;align-items:stretch;border:1px solid #ffd98a}
+.tc-qlostword{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tc-qsaved .tc-qsay{font-size:14px;color:var(--mut-2)}
+.tc-qdex{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
+.tc-qdexcell{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px;border-radius:10px;background:var(--surface);font-size:12px;text-align:center}
+.tc-qdexcell img{width:48px;height:48px;image-rendering:pixelated}
+.tc-qdexcell.is-unknown img{filter:brightness(0);opacity:.55}
+.tc-qdexcell.is-unknown span{color:var(--mut-2)}
 .tc-qwords{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
 .tc-qwords li{padding:8px 12px;border-radius:8px;background:var(--surface);font-size:15px}
 .tc-qrestart{align-self:center;margin-top:16px;background:none;border:none;color:var(--mut-2);font-size:12px;text-decoration:underline;cursor:pointer}

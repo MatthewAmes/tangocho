@@ -8,7 +8,7 @@ import { toKana } from "./romaji.mjs";
 import { SPECIES, REGIONS } from "../src/data/quest-world.js";
 import { SPRITES } from "../src/data/quest-sprites.js";
 import { MAPS, WALKERS, PORTRAITS, OBJECTS, HERO } from "../src/data/quest-world-art.js";
-import { CHAPTER, CAST, CLUES, CASE_CLUES, GOALS, PEOPLE, PLACES, SCENES, START_SCENE, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../src/data/quest-story.js";
+import { CHAPTER, CAST, CLUES, CASE_CLUES, LOST_WORDS, GOALS, PEOPLE, PLACES, SCENES, START_SCENE, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../src/data/quest-story.js";
 
 let fail = 0, run = 0;
 const t = (name, fn) => {
@@ -34,6 +34,7 @@ const allLines = () => {
   for (const g of GOALS) out.push({ where: "goal", ...g });
   for (const [id, m] of Object.entries(MENU)) out.push({ where: id, ...m });
   for (const [id, l] of Object.entries(BATTLE_TEXT)) out.push({ where: id, ...l });
+  for (const w of LOST_WORDS) out.push({ where: w.flag, ...w });
   out.push({ where: "chapter", ...CHAPTER }, { where: "chapter", ...CHAPTER.number });
   for (const s of Object.values(SPECIES)) for (const m of s.moves || []) out.push({ where: s.name, ...m });
   return out;
@@ -80,6 +81,7 @@ t("every reference is real: scenes, clues, people, art", () => {
     if (n.s) ok(CAST[n.s], `${id}: nobody called ${n.s}`);
     if (n.clue) ok(CLUES[n.clue], `${id}: no clue ${n.clue}`);
     if (n.present) ok(CLUES[n.present.right], `${id}: no clue ${n.present.right}`);
+    if (n.join) ok(SPECIES[n.join] && SPRITES[n.join], `${id}: no creature ${n.join}`);
     if (n.fight) {
       for (const [s] of n.fight.team) ok(SPECIES[s], `${id}: no creature ${s}`);
       for (const k of ["win", "lose", "flee", "caught"]) if (n.fight[k]) scene(n.fight[k], `${id} ${k}`);
@@ -145,6 +147,7 @@ t("the mystery can be solved from the first step, and ends with the campus warm"
   eq(finale.scene, "finale");
   talk("finale", flags);
   ok(flags.solved, "beating the spirit solves the case");
+  ok(flags.word1, "and Kotodama gets a word back");
   eq(pickEntry(PLACES.guardian, flags).scene, "hana_end");
   eq(goalNow(GOALS, flags).until, "never");
 });
