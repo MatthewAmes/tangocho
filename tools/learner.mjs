@@ -828,6 +828,29 @@ export function chooseIntervention(pick, opts = {}) {
   };
 }
 
+/* ── book order: production first ──
+   Matthew's data, 2026-11-03: 3 answers in 4 were "pick the meaning from four", and of
+   1,346 textbook words he could produce 15. A class quiz asks for the Japanese. So in book
+   order every card asks for it: a word never met is shown once, and from then on it is
+   always English → Japanese. The cue is the only thing that moves — か＿＿び while the
+   word is new, less as it holds, none once it is solid — never a fall back to recognition. */
+export function productionFirstIntervention(pick) {
+  const caps = (pick && pick.caps) || {};
+  const rec = pick.recognition || {};
+  const prod = pick.production || {};
+  const step = pick.step || 0;
+  if (((pick.fresh || !rec.tried) && step === 0) || !caps.type) {
+    return { skill: "recognition", direction: directionFor("recognition"), cue: CUE.SHOWN,
+             format: "learn", expected: 1 };
+  }
+  let cue = cueFor({ ...prod, lastFailed: !!pick.lastFailure });
+  if (cue > CUE.FREE) cue = CUE.FREE;
+  // A repeat asks a little more — but the very first time it is asked for, the hint stays.
+  if (step > 0 && prod.tried && !pick.lastFailure) cue = Math.min(CUE.FREE, cue + 1);
+  return { skill: "production", direction: directionFor("production"), cue,
+           format: "type", expected: predictSuccess(prod, cue) };
+}
+
 /* ── uncertainty-aware ability estimates ──
    The previous model reported a bare rate and gated any claim behind invented constants:
    eight observations, a twelve-point spread. Those numbers were not derived from anything,

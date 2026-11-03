@@ -9,7 +9,32 @@ secret is set). The last handoff was written 2026-08-27; everything below replac
 
 ---
 
-## Calm mode (2026-10-13) — read this first
+## Book order (2026-11-03) — read this first
+
+Matthew: "my app sucks i dont learn anything and its not fun". His synced record said why:
+since September he studied ~once a week; 3 answers in 4 were "pick the meaning from four";
+415 of 682 studied words were overdue; of 1,346 textbook words he could PRODUCE 15. His
+goal: ace JPN 102 at BYU (winter semester, NihonGO NOW! Volume 2 = Acts 7–12), and long
+term fluency (he'd like to work somewhere like The Pokémon Company International).
+
+So Study now defaults to **Book order** (`plan.book`, `tools/bookorder.mjs`):
+- New words from ONE act, in book order, from `plan.bookFrom` (default: the first act of the
+  newest volume in `VOLUME_ACTS`, i.e. 7). ~10 new a day; a word he already reads costs half.
+- Every card asks for the Japanese (`productionFirstIntervention` in learner.mjs): a word
+  never met is shown once, then English → Japanese with か＿＿び hints that thin out.
+- Reviews are due *production* memories only, capped at 15. The recognition backlog, the
+  10k list, kanji/grammar decks are untouched — the options panel's "Smart Mix" switch
+  brings the old session back exactly as it was.
+- Home screen: "Act N — X of Y words you can say" (production stability ≥ 7 days) and a
+  bar per act. "Done for today" once a session is finished (`jpn101:bookDone`).
+- The composer's variety pass is skipped for these sessions (`keepOrder`) — it used to
+  move a word's question ahead of its first showing.
+
+The plan agreed with him: Acts 7→ before class starts in January, 10–15 min a day, and
+playing Pokémon in Japanese for fun. He also asked for a Pokémon-style turn-based RPG for
+vocabulary — **must be original** (own creatures/names/art, not Pokémon's); not built yet.
+
+## Calm mode (2026-10-13)
 
 Matthew: "I hate the app and the smart review … so clunky, not helpful, nonsensical." The
 answer was a strip-down, behind one switch: `const CALM = true` in `JpnFlashcards.jsx`.

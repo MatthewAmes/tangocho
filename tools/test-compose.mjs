@@ -262,6 +262,14 @@ t("calm: at most one grid per eight cards", () => {
   ok(composeSession(picks, conf, { calm: true }).filter((x) => x.activity === ACTIVITY.MATCH).length <= 2);
 });
 
+t("keepOrder: a word is shown before it is asked for (book order)", () => {
+  const picks = [pick({ id: "a", format: "learn", cue: CUE.SHOWN }), pick({ id: "b", format: "learn", cue: CUE.SHOWN }),
+                 pick({ id: "c", format: "learn", cue: CUE.SHOWN }), pick({ id: "a", format: "type", cue: CUE.STRONG }),
+                 pick({ id: "b", format: "type", cue: CUE.STRONG })];
+  eq(composeSession(picks, {}, { calm: true, keepOrder: true }).map((x) => x.id + ":" + x.format).join(),
+     "a:learn,b:learn,c:learn,a:type,b:type");
+});
+
 
 
 console.log(`\nall ${run} compose tests ${fail ? `— ${fail} FAILED` : "passed"}`);

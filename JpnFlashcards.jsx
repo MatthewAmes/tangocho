@@ -25,6 +25,7 @@ import { playFeedback } from "./src/lib/sfx.js";
 import { explainAnswer, kanjiIndex } from "./tools/explain.mjs";
 import { cleanWord, sessionCard } from "./tools/wordform.mjs";
 import { orderIntake } from "./tools/intake.mjs";
+import { bookSession, actProgress as bookProgress, focusAct, BOOK_DEFAULTS } from "./tools/bookorder.mjs";
 import { addFlag, setReason, FLAGS_KEY, FLAG_REASONS } from "./tools/flags.mjs";
 import { normalise as normaliseKana } from "./tools/benchmark.mjs";
 import { levelsFor, tally, LEVEL, LEVEL_ORDER, PROVEN } from "./tools/proven.mjs";
@@ -1348,7 +1349,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const weakest = useMemo(() => ranked.slice(0, 3), [ranked]);
   const focusPool = useMemo(() => ranked.slice(0, 12), [ranked]);  // weakest STUDIED words only — matches the Weakest list
   const newCount = useMemo(() => cards.filter((c) => !((c.seen || 0) > 0)).length, [cards]);
-  const coverage = newCount > 12;                            // coverage phase: plenty of untouched words left
+  /* Book order's scoreboard: per act, how many words he can say. */
+  const bookActs = useMemo(() => bookProgress(cards), [cards]);
+  const coverage = newCount > 12;                           // coverage phase: plenty of untouched words left
   /* Session mix.
      The old rule was `newCount > 12` → half the session is brand-new words. With 332
      untouched cards that condition is permanently true, so every session was 8 new words
@@ -1501,6 +1504,12 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
   const followUp = useMemo(() => followUpFor(benchRuns, cards), [benchRuns, cards]);
 
   const smartPicks = useMemo(() => {
+    /* Book order (tools/bookorder.mjs): one act at a time, every card asking for the
+       Japanese. Its own small session — none of the mix below applies to it. */
+    if (plan.book) {
+      return bookSession(cards, { now: Date.now(), exclude: heldOut, from: plan.bookFrom,
+                                  capsFor: (it) => ({ type: !!it.reading, listen: !!(it.reading || it.term) }) });
+    }
     /* Parked words are out of circulation, not deleted. Every mined word displaced one, so
        the number of things competing for attention stays fixed — which is the only reason
        mining makes this deck better rather than longer. */
@@ -1622,6 +1631,8 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     [smartPicks],
   );
   const smartInfo = useMemo(() => describeSession(smartPicks), [smartPicks]);
+  /* In book order "new" means never asked for the Japanese, whether or not he can read it. */
+  const bookNew = useMemo(() => smartPicks.filter((p) => p.step === 0 && !((p.item.rseen || 0) > 0)).length, [smartPicks]);
   /* Cards whose repeats are deliberate. A correct answer normally drops a card's later
      copies from the queue — that rule exists for the miss-requeue, and it would silently
      delete every learning step the moment you got the first showing right, which is
@@ -2264,6 +2275,18 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
     setFlipped(true);
   }, [queue, pos, verdict]);
 
+  /* Book order says "done for today" once a whole session has been finished today — not
+     after a single answer, and not after quitting halfway. */
+  const [bookDoneDay, setBookDoneDay] = useState(null);
+  useEffect(() => { sGet(BOOK_DONE_KEY).then((d) => setBookDoneDay(d || null)).catch(() => {}); }, [running]);
+  useEffect(() => {
+    if (!plan.book || !running || queue.length === 0 || pos < queue.length) return;
+    const today = localDayKey();
+    sSet(BOOK_DONE_KEY, today);
+    setBookDoneDay(today);
+  }, [plan.book, running, pos, queue.length]);
+  const bookDone = bookDoneDay === localDayKey();
+
   useEffect(() => {                                   // auto-debrief when a session ends with misses
     if (!AI_ENABLED || !loadSession()) return;         // not signed in: skip silently, keep the "Missed: …" fallback line
     if (!running || queue.length === 0 || pos < queue.length || debrief !== null) return;
@@ -2636,6 +2659,49 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </div>
           </div>
         </div>
+        {plan.book ? (() => {
+          /* Book order's home screen: where he is in the book and how many words in it he
+             can say — the one number a class quiz cares about. Once today's session is done
+             it says so; another round is still there, but as the quiet option. */
+          const act = focusAct(cards, plan.bookFrom);
+          const shown = bookActs.filter((x) => x.act >= plan.bookFrom);
+          const cur = shown.find((x) => x.act === act);
+          return (
+            <div className="tc-hero">
+              {bookDone ? (
+                <>
+                  <div className="tc-heronum">✓</div>
+                  <p className="tc-herolabel">done for today</p>
+                  <p className="tc-herosub">Sleep is what sets today's words. See you tomorrow.</p>
+                </>
+              ) : cur ? (
+                <>
+                  <div className="tc-heronum tc-bookact">Act {cur.act}</div>
+                  <p className="tc-herolabel">{cur.say} of {cur.total} words you can say</p>
+                  <p className="tc-herosub">English in, Japanese out. About ten minutes.</p>
+                </>
+              ) : (
+                <>
+                  <div className="tc-heronum">✓</div>
+                  <p className="tc-herolabel">every act started</p>
+                  <p className="tc-herosub">Reviews keep them. Nothing new until you pick an earlier act.</p>
+                </>
+              )}
+              <div className="tc-bookacts" role="list" aria-label="Words you can say, by act">
+                {shown.map((x) => (
+                  <div key={x.act} role="listitem" className={"tc-bookrow" + (x.act === act ? " is-on" : "")}>
+                    <span className="tc-booklabel">Act {x.act}</span>
+                    <span className="tc-bookbar" aria-hidden="true">
+                      <i className="tc-booktried" style={{ width: Math.round(100 * x.started / x.total) + "%" }} />
+                      <i className="tc-booksay" style={{ width: Math.round(100 * x.say / x.total) + "%" }} />
+                    </span>
+                    <span className="tc-bookcount">{x.say}/{x.total}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })() : (
         <div className="tc-hero">
           {dueCount > 0 ? (
             <>
@@ -2659,6 +2725,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </>
           )}
         </div>
+        )}
         {/* ── today's missions (spec §§34–35) ──
             Two or three goals rolled from the learner model and the curriculum, not from a
             list of things an app would like you to do. They are READ-ONLY: none of them is
@@ -2704,7 +2771,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           <button className="tc-btn tc-start tc-smart-btn" onClick={() => start(smartPool, true)}>
             {/* Say what is actually in the session. "16 cards" was true and told you
                 nothing; "3 new · 2 fading" is the reason to press the button. */}
-            🧠 Smart Review · {smartPool.length} cards{smartInfo.fresh > 0 ? ` · ${smartInfo.fresh} new` : ""}{smartInfo.stale > 0 ? ` · ${smartInfo.stale} fading` : ""}
+            {plan.book
+              ? [bookDone ? "One more round" : "📖 Start",
+                 bookNew > 0 ? `${bookNew} new` : null,
+                 smartInfo.unique - bookNew > 0 ? `${smartInfo.unique - bookNew} to keep` : null].filter(Boolean).join(" · ")
+              : <>🧠 Smart Review · {smartPool.length} cards{smartInfo.fresh > 0 ? ` · ${smartInfo.fresh} new` : ""}{smartInfo.stale > 0 ? ` · ${smartInfo.stale} fading` : ""}</>}
           </button>
         )}
         {smartPool.length > 0 && (
@@ -2712,7 +2783,9 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             /* The mode lines say "mostly" and "steps back" on purpose. It is a lean, not a
                wall — a word from Act 3 that has started to fade still comes through, and
                the hint should not promise a filter the scheduler correctly refuses. */
-            plan.practice === "current" && actNow !== null
+            plan.book
+              ? "You'll see the English and type the Japanese. New words are shown once first."
+              : plan.practice === "current" && actNow !== null
               ? `Mostly Act ${actNow} — anything due from earlier still comes through.`
               : plan.practice === "review" && actNow !== null
                 ? `Older material that's due or shaky. Act ${actNow} steps back for now.`
@@ -2748,11 +2821,11 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
           </button>
         )}
 
-        {smartPool.length > 0 && (
+        {(smartPool.length > 0 || plan.book) && (
           <>
             <button className={"tc-optsbtn" + (showOpts ? " is-open" : "")}
                     aria-expanded={showOpts} onClick={() => setShowOpts((v) => !v)}>
-              {showOpts ? "Hide options" : [
+              {showOpts ? "Hide options" : plan.book ? `Book order · from Act ${plan.bookFrom}` : [
                 actNow !== null ? (PRACTICE_MODES.find((m) => m[0] === plan.practice) || [])[1] : null,
                 (() => { const p = PACES.find((x) => x[0] === plan.pace); return p ? p[1] + " min" : null; })(),
                 catchUp ? "reviews only" : newQuota + " new/day",
@@ -2760,6 +2833,29 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
             </button>
             {showOpts && (
               <div className="tc-optspanel">
+          <div className="tc-modeseg" role="group" aria-label="How to study">
+            {[[true, "Book order", "One act at a time. You produce the Japanese."],
+              [false, "Smart Mix", "Everything: reviews, the 10,000-word list, kanji, grammar."]].map(([on, label, note]) => (
+              <button key={label} className={"tc-segbtn" + (!!plan.book === on ? " is-on" : "")}
+                      aria-pressed={!!plan.book === on} title={note}
+                      onClick={() => { const next = { ...plan, book: on }; setPlan(next); savePlan(next); }}>{label}</button>
+            ))}
+          </div>
+          {plan.book && (
+            <>
+              <div className="tc-modeseg" role="group" aria-label="Start from act">
+                {bookActs.map((x) => (
+                  <button key={x.act} className={"tc-segbtn" + (plan.bookFrom === x.act ? " is-on" : "")}
+                          aria-pressed={plan.bookFrom === x.act}
+                          onClick={() => { const next = { ...plan, bookFrom: x.act }; setPlan(next); savePlan(next); }}>
+                    {x.act}
+                  </button>
+                ))}
+              </div>
+              <p className="tc-planhint">New words start from Act {plan.bookFrom}. {VOLUME_ACTS.map((v) => `Volume ${v.volume} is Acts ${v.from}–${v.to}`).join("; ")}. Smart Mix keeps everything else exactly as it was.</p>
+            </>
+          )}
+          {!plan.book && (<>
           {/* The learner picks the scope; the engine still picks every exercise inside it
               (spec §14). Offered only once there IS an act to point at — before the first
               session "This lesson" would be a button that does nothing, and the honest
@@ -2830,6 +2926,7 @@ function Study({ cards, onResult, goAdd, onMnemonic }) {
               </p>
             </div>
           )}
+          </>)}
               </div>
             )}
           </>
@@ -5337,7 +5434,9 @@ function composeQueue(pool, clozeIndex, known, confusion) {
   });
   /* composeSession, not activityFor + arrange: it also caps grids at one per six items,
      which is what stops a session turning into grid after grid. */
-  return composeSession(items, material, { calm: CALM }).map((x) => ({ ...x._card, _activity: x.activity }));
+  /* A book-order session arrives in the order it must be asked: shown first, then produced. */
+  const keepOrder = pool.length > 0 && pool.every((c) => c && c._pick && c._pick.productionFirst);
+  return composeSession(items, material, { calm: CALM, keepOrder }).map((x) => ({ ...x._card, _activity: x.activity }));
 }
 
 /* Does this word have a recorded confusion, in either direction? */
@@ -5497,6 +5596,11 @@ const PLAN_DEFAULT = {
      number is here for the case where it is not, because "latest act with any evidence"
      moves on a single curious answer and he should be able to say otherwise. */
   actOverride: null,
+  /* Book order (tools/bookorder.mjs), on by default from 2026-11-03: one act at a time,
+     producing the Japanese, from Act 7 — the start of Volume 2, which JPN 102 covers.
+     Off is the old Smart Mix, with everything it held left exactly as it was. */
+  book: true,
+  bookFrom: BOOK_DEFAULTS.from,
 };
 
 async function loadPlan() {
@@ -5516,6 +5620,8 @@ async function loadPlan() {
       // opinion, and the seam above — not whatever JSON coerces — decides for it.
       enrichment: typeof p.enrichment === "boolean" ? p.enrichment : PLAN_DEFAULT.enrichment,
       actOverride: Number.isFinite(p.actOverride) ? p.actOverride : null,
+      book: typeof p.book === "boolean" ? p.book : PLAN_DEFAULT.book,
+      bookFrom: Number.isFinite(p.bookFrom) ? p.bookFrom : PLAN_DEFAULT.bookFrom,
     };
   } catch (e) { return { ...PLAN_DEFAULT }; }
 }
@@ -5646,6 +5752,7 @@ const JP_TEXT = /[ぁ-んァ-ン一-龯]/;
 const QUIZ_ANSWER_MAX = 40;
 
 const NEW_QUOTA_KEY = "jpn101:newQuota";
+const BOOK_DONE_KEY = "jpn101:bookDone";       // the local day a book-order session was last finished
 const NEW_QUOTAS = [3, 6, 10, 15];
 const NEW_QUOTA_DEFAULT = 6;
 

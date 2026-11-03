@@ -22,11 +22,11 @@ export const PRIORITY_ACTS = [7, 12];
 
 /* A textbook scene is "7-1" or "12-9R". The supplemental lists that share an act number —
    class notes, dates ("7/20"), dry runs — are not Volume 2 textbook vocabulary. */
-const actOf = (item) => {
+export const actOf = (item) => {
   const m = String((item && item.sec) || "").match(/^(\d+)-/);
   return m ? +m[1] : null;
 };
-const sceneOf = (item) => {
+export const sceneOf = (item) => {
   const m = String((item && item.sec) || "").match(/^\d+-(\d+)/);
   return m ? +m[1] : 0;
 };

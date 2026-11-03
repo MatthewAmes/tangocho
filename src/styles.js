@@ -719,6 +719,17 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-kparts>p{margin:4px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
 .tc-kparts b{font-size:12px;color:var(--mut);font-weight:600;min-width:72px}
 .tc-kpart{padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:15px}
+.tc-bookact{font-size:64px}
+.tc-bookacts{margin:18px auto 0;max-width:360px;display:flex;flex-direction:column;gap:6px}
+.tc-bookrow{display:grid;grid-template-columns:52px 1fr 64px;align-items:center;gap:10px;font-size:13px;color:var(--mut-2)}
+.tc-bookrow.is-on{color:var(--mut)}
+.tc-booklabel{text-align:left}
+.tc-bookcount{text-align:right;font-variant-numeric:tabular-nums}
+.tc-bookbar{position:relative;height:6px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden}
+.tc-bookbar>i{position:absolute;left:0;top:0;bottom:0;border-radius:999px;transition:width .3s ease}
+.tc-booktried{background:rgba(59,130,246,.35)}
+.tc-booksay{background:var(--ok)}
+@media (prefers-reduced-motion:reduce){ .tc-bookbar>i{transition:none;} }
 .tc-kpart i{font-style:normal;font-size:12px;color:var(--mut)}
 .tc-checkgot.is-near{opacity:.85}
 .tc-planfield{display:flex;flex-direction:column;gap:5px;}

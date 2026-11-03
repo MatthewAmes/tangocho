@@ -42,7 +42,7 @@
       rather than by good intentions. See varietyPenalty. */
 
 import { retrievability, seedFromHistory } from "./fsrs.mjs";
-import { chooseIntervention, modesForFormat, TARGET_SUCCESS } from "./learner.mjs";
+import { chooseIntervention, productionFirstIntervention, modesForFormat, TARGET_SUCCESS } from "./learner.mjs";
 import { biasFor } from "./planner.mjs";
 import { actDistance, provenanceOf } from "./curriculum.mjs";
 
@@ -853,6 +853,16 @@ export function formatFor(pick, opts = {}) {
 export function interventionFor(pick, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const st = pick.st;
+  if (opts.productionFirst || pick.productionFirst) {
+    return productionFirstIntervention({
+      fresh: pick.fresh || !((st && st.seen) || 0),
+      step: pick.step || 0,
+      caps: pick.caps || { type: pick.canType },
+      recognition: pick.recognition || skillOf(st, "fsrs"),
+      production: pick.production || skillOf(st, "rfsrs"),
+      lastFailure: pick.lastFailure || (st && st.lastFailure) || null,
+    });
+  }
   return chooseIntervention({
     fresh: pick.fresh || !((st && st.seen) || 0),
     step: pick.step || 0,

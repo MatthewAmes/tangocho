@@ -245,7 +245,9 @@ export function composeSession(picks, material = {}, opts = {}) {
     if (++grids <= maxGrids) return x;
     return { ...x, activity: activityFor(x, material, { ...o, noGrid: true }) };
   });
-  return arrange(capped, o);
+  /* keepOrder: the order IS the lesson (book order shows a word before asking for it), so
+     the variety pass must not move a word's question ahead of its first showing. */
+  return o.keepOrder ? capped : arrange(capped, o);
 }
 
 /* What the session turned out to be, for the screen that says what is coming. Counts the
