@@ -55,3 +55,6 @@ tools/.accents-cache.txt
 # Whole-repo text dumps for pasting into another AI window (npx repomix); regenerated on demand.
 repomix-output.*
 tangocho-slim.txt
+
+# Gemini sprite answers before processing (tools/make-sprites.mjs) — re-derivable, large
+art/sprites-raw/

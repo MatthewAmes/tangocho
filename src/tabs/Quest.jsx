@@ -4,6 +4,7 @@ import { sGet, sSet } from "../lib/storage.js";
 import { setSessionBusy } from "../lib/session.js";
 import { playFeedback } from "../lib/sfx.js";
 import { SPECIES, REGIONS } from "../data/quest-world.js";
+import { SPRITES } from "../data/quest-sprites.js";
 import { parseMap, tileAt, step, arrival, statsOf, newMon, wildLevel, gainXp, wordPower, damageFor,
          counterFor, catchChance, CATCH_AT, FAST_MS, battleWords, isNewWord, hintFor, normaliseSave,
          wakeAtShrine, healAll } from "../../tools/quest.mjs";
@@ -33,11 +34,14 @@ const kanaOf = (v) => { try { return toKana(String(v || "").trim()); } catch (e)
 const sp = (id) => SPECIES[id] || SPECIES.kotodama;
 const shown = (t) => cleanWord(t).replace(/[↓↑]/g, "");   // no glossary notes or pitch arrows on screen
 
-function Sprite({ species, big }) {
+/* The drawn sprite when there is one (tools/make-sprites.mjs), the emoji pair when not.
+   Drawn creatures face right; `flip` turns your own side around to face its opponent. */
+function Sprite({ species, big, flip }) {
   const s = sp(species);
+  const art = SPRITES[species] || (SPECIES[species] ? null : SPRITES.kotodama);
   return (
-    <span className={"tc-qsprite" + (big ? " is-big" : "")} aria-hidden="true">
-      {s.emoji}<i>{s.badge}</i>
+    <span className={"tc-qsprite" + (big ? " is-big" : "") + (art ? " is-art" : "") + (art && flip ? " is-flip" : "")} aria-hidden="true">
+      {art ? <img src={art} alt="" draggable={false} /> : <>{s.emoji}<i>{s.badge}</i></>}
     </span>
   );
 }
@@ -287,7 +291,7 @@ export default function Quest({ cards = [], onAnswer }) {
           </div>
         </div>
         <div className="tc-qlead">
-          <Sprite species={lead.species} />
+          <Sprite species={lead.species} flip />
           <div>
             <p><b>{sp(lead.species).name}</b> · Lv {lead.level}</p>
             <HpBar hp={lead.hp} max={leadStats.maxHp} />

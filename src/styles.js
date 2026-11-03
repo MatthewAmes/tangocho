@@ -744,6 +744,10 @@ body{min-height:100%;overscroll-behavior-y:none;}
 .tc-qsprite{position:relative;display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;font-size:34px;line-height:1;flex:none}
 .tc-qsprite.is-big{width:84px;height:84px;font-size:64px;animation:tc-qbob 1.6s ease-in-out infinite}
 .tc-qsprite i{position:absolute;right:-4px;bottom:-2px;font-size:.45em;font-style:normal}
+.tc-qsprite.is-art{width:64px;height:64px}
+.tc-qsprite.is-art.is-big{width:120px;height:120px}
+.tc-qsprite img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 4px 6px rgba(0,0,0,.35))}
+.tc-qsprite.is-flip img{transform:scaleX(-1)}
 .tc-qfoe,.tc-qlead{display:flex;align-items:center;gap:12px}
 .tc-qfoe>div,.tc-qlead>div{flex:1;min-width:0}
 .tc-qfoe p,.tc-qlead p{margin:0 0 4px;font-size:14px}
