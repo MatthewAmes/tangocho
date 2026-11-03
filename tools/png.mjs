@@ -1,7 +1,7 @@
-/* ── a small PNG codec, and the two edits sprites need ──
+/* ── a small PNG codec ──
    Node ships zlib, which is all PNG needs, so the sprite pipeline has no dependency to
-   install. Handles 8-bit RGB, RGBA, grey, grey+alpha and palette images, non-interlaced —
-   what image models return. Everything works on {width, height, data: RGBA Uint8Array}. */
+   install. Handles 8-bit RGB, RGBA, grey, grey+alpha and palette images, non-interlaced.
+   Everything works on {width, height, data: RGBA Uint8Array}. */
 import zlib from "node:zlib";
 
 const SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -67,64 +67,4 @@ export function encodePng({ width, height, data }) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 6;
   return Buffer.concat([SIG, chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
-}
-
-/* Remove a flat background. The colour is read from the image's border (the most common
-   edge colour), then flood-filled inward from every edge pixel that matches — so a white
-   belly inside a white-background sprite survives, because the outline walls it off.
-   Pixels just past the threshold get partial alpha, which keeps the edge from looking cut. */
-export function removeBackground(img, tol = 60, soft = 40) {
-  const { width: w, height: h, data } = img;
-  const out = new Uint8Array(data);
-  const counts = new Map();
-  const key = (i) => (data[i] >> 4) + "," + (data[i + 1] >> 4) + "," + (data[i + 2] >> 4);
-  for (let x = 0; x < w; x++) for (const y of [0, h - 1]) { const k = key((y * w + x) * 4); counts.set(k, (counts.get(k) || 0) + 1); }
-  for (let y = 0; y < h; y++) for (const x of [0, w - 1]) { const k = key((y * w + x) * 4); counts.set(k, (counts.get(k) || 0) + 1); }
-  const bgc = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0].split(",").map((v) => +v * 16 + 8);
-  const dist = (i) => Math.hypot(data[i] - bgc[0], data[i + 1] - bgc[1], data[i + 2] - bgc[2]);
-  const seen = new Uint8Array(w * h);
-  const stack = [];
-  for (let x = 0; x < w; x++) { stack.push(x, (h - 1) * w + x); }
-  for (let y = 0; y < h; y++) { stack.push(y * w, y * w + w - 1); }
-  while (stack.length) {
-    const p = stack.pop();
-    if (seen[p]) continue;
-    const d = dist(p * 4);
-    if (d > tol + soft) continue;
-    seen[p] = 1;
-    out[p * 4 + 3] = d <= tol ? 0 : Math.round(255 * (d - tol) / soft);
-    if (d > tol) continue;                                   // a soft edge pixel: do not spread past it
-    const x = p % w, y = (p / w) | 0;
-    if (x > 0) stack.push(p - 1); if (x < w - 1) stack.push(p + 1);
-    if (y > 0) stack.push(p - w); if (y < h - 1) stack.push(p + w);
-  }
-  return { width: w, height: h, data: out, background: bgc };
-}
-
-/* Crop to what is visible, then scale into a size×size square (aspect kept, centred) by
-   averaging — premultiplied, so transparent pixels do not bleed a dark fringe. */
-export function fitSquare(img, size, pad = 0.06) {
-  const { width: w, height: h, data } = img;
-  let x0 = w, y0 = h, x1 = -1, y1 = -1;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (data[(y * w + x) * 4 + 3] > 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-  if (x1 < 0) throw new Error("nothing left after removing the background");
-  const cw = x1 - x0 + 1, chh = y1 - y0 + 1;
-  const inner = Math.round(size * (1 - 2 * pad));
-  const scale = inner / Math.max(cw, chh);
-  const tw = Math.max(1, Math.round(cw * scale)), th = Math.max(1, Math.round(chh * scale));
-  const ox = Math.floor((size - tw) / 2), oy = size - Math.round(size * pad) - th;   // standing on the bottom
-  const out = new Uint8Array(size * size * 4);
-  for (let ty = 0; ty < th; ty++) for (let tx = 0; tx < tw; tx++) {
-    const sx0 = x0 + tx / scale, sy0 = y0 + ty / scale, sx1 = x0 + (tx + 1) / scale, sy1 = y0 + (ty + 1) / scale;
-    let r = 0, g = 0, b = 0, a = 0, n = 0;
-    for (let sy = Math.floor(sy0); sy < Math.ceil(sy1); sy++) for (let sx = Math.floor(sx0); sx < Math.ceil(sx1); sx++) {
-      if (sx < 0 || sy < 0 || sx >= w || sy >= h) continue;
-      const i = (sy * w + sx) * 4, al = data[i + 3] / 255;
-      r += data[i] * al; g += data[i + 1] * al; b += data[i + 2] * al; a += al; n++;
-    }
-    const d = ((oy + ty) * size + ox + tx) * 4;
-    if (a > 0) { out[d] = r / a; out[d + 1] = g / a; out[d + 2] = b / a; }
-    out[d + 3] = n ? Math.round((a / n) * 255) : 0;
-  }
-  return { width: size, height: size, data: out };
 }

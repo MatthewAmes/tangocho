@@ -47,6 +47,12 @@ mash-ups, 寒い+猫 = Samuneko), no Pokémon names, art or music. One region pe
 - Word power: +1 attack per five words he can say (production S ≥ 7).
 - Save is `jpn101:quest`. Emoji are single code points on purpose: Windows 10 split
   ZWJ emoji (🧑‍🎓) and had no glyph for 🪧/🫧/🫘.
+- Creatures are 48×48 pixel art drawn in code: `tools/sprite-designs.mjs` lists each one's
+  shapes, `tools/pixel-art.mjs` shades and outlines them, `node tools/make-sprites.mjs`
+  writes `src/data/quest-sprites.js` (and `art/sprite-sheet.png` to look at).
+  `tools/test-sprites.mjs` fails if the module drifts from the designs. Show them only at
+  whole-number scales (48/96/144) or the pixels go uneven. Gemini was tried first and
+  dropped: its API has no free image tier and he won't pay beyond his subscription.
 
 ## Calm mode (2026-10-13)
 

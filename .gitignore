@@ -56,5 +56,3 @@ tools/.accents-cache.txt
 repomix-output.*
 tangocho-slim.txt
 
-# Gemini sprite answers before processing (tools/make-sprites.mjs) — re-derivable, large
-art/sprites-raw/
