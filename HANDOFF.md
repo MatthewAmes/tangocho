@@ -43,11 +43,13 @@ story and art; no Pokémon names, characters or music.
   the notebook, name the culprit, show the right clue at each step. Wrong answers get a reply
   and another try, never a penalty. Tap any word for its meaning, ？ for a line's English,
   🔊 to hear it. Every kanji has furigana.
-- Chapter 1 only so far (Act 7, Campus Meadows), written to check the idea before writing
-  the rest. Its story uses Act 7's words where they mean something. Next chapters: one per
-  act, same format; add the region to `PLAYABLE` in `tools/make-sprites.mjs` for its map.
-- Story and every line: `src/data/quest-story.js` (its header explains the format; to add a
-  chapter, `PEOPLE`, `PLACES`, `CLUES` and `SCENES` need to become per-chapter). Runner helpers:
+- Chapters 1 and 2 so far (Acts 7 and 8). Each uses its act's words where they mean something
+  and ends on its proverb. Next chapters: one per act, a new `src/data/quest-chN.js` added to
+  `CHAPTERS` in `quest-story.js`. The road to it opens by itself, and its map, walkers and
+  portraits are generated from that entry. Copy `quest-ch2.js` for the shape; check slang
+  before naming things (Chapter 2's bell part is a 棒 because 金の玉 is rude).
+- Story and every line: `src/data/quest-story.js` and `quest-ch2.js` (the header of the first
+  explains the format). Runner helpers:
   `tools/quest-story.mjs`. Rules: `tools/quest.mjs`. Screen: `src/tabs/Quest.jsx`.
   `tools/test-quest-story.mjs` checks every word has a gloss and every kanji a reading, and
   plays the mystery through from the first step.

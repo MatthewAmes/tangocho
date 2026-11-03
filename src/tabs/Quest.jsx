@@ -5,8 +5,8 @@ import { setSessionBusy } from "../lib/session.js";
 import { SPECIES, REGIONS } from "../data/quest-world.js";
 import { SPRITES } from "../data/quest-sprites.js";
 import { MAPS, HERO, WALKERS, PORTRAITS, OBJECTS } from "../data/quest-world-art.js";
-import { CHAPTER, CAST, CLUES, CASE_CLUES, LOST_WORDS, LOST_WORD_COUNT, GOALS, PEOPLE, PLACES, SCENES, START_SCENE, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../data/quest-story.js";
-import { parseMap, step, statsOf, newMon, wildLevel, gainXp, movesOf, hitFor, foeMove, catchChance, normaliseSave, wakeAtShrine, healAll } from "../../tools/quest.mjs";
+import { CHAPTERS, chapterFor, CAST, LOST_WORDS, LOST_WORD_COUNT, SCENES, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../data/quest-story.js";
+import { parseMap, arrival, step, statsOf, newMon, wildLevel, gainXp, movesOf, hitFor, foeMove, catchChance, normaliseSave, wakeAtShrine, healAll } from "../../tools/quest.mjs";
 import { parseJa, plainJa, rubyParts, pickEntry, goalNow, nameFromInput, afterChoice } from "../../tools/quest-story.mjs";
 import { toKana } from "../../tools/romaji.mjs";
 
@@ -131,9 +131,12 @@ export default function Quest() {
     return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", flushWalk); flushWalk(); };
   }, [flushWalk]);
   const region = save ? REGIONS[save.region] : REGIONS[0];
+  const chapter = chapterFor(save ? save.region : 0);
   const map = useMemo(() => parseMap(region.map), [region]);
   const playerName = (save && save.name) || DEFAULT_NAME;
   const flags = (save && save.flags) || {};
+  const cleared = !!flags[chapter.solved];
+  const roadOpen = cleared && CHAPTERS.some((c) => c.region === save.region + 1);
 
   useEffect(() => { setSessionBusy(!!battle || !!scene); return () => setSessionBusy(false); }, [battle, scene]);
 
@@ -149,14 +152,15 @@ export default function Quest() {
       if (n.clue) {
         if (s.flags[n.clue]) continue;
         s = { ...s, flags: { ...s.flags, [n.clue]: true } }; changed = true;
-        const ready = CASE_CLUES.every((c) => s.flags[c]) && !s.flags.ready;
-        if (ready) s = { ...s, flags: { ...s.flags, ready: true } };
-        q = [{ found: n.clue }, ...(ready ? SCENES.ready : []), ...q];
+        const ch = CHAPTERS.find((c) => c.caseClues.includes(n.clue));
+        const ready = !!ch && ch.caseClues.every((c) => s.flags[c]) && !s.flags[ch.ready];
+        if (ready) s = { ...s, flags: { ...s.flags, [ch.ready]: true } };
+        q = [{ found: n.clue }, ...(ready ? SCENES[ch.readyScene] : []), ...q];
         continue;
       }
       if (n.join) {
         if (s.team.some((m) => m.species === n.join) || s.team.length >= MAX_TEAM) continue;
-        s = { ...s, team: [...s.team, newMon(n.join, 4)], caught: s.caught.includes(n.join) ? s.caught : [...s.caught, n.join], seen: s.seen.includes(n.join) ? s.seen : [...s.seen, n.join] };
+        s = { ...s, team: [...s.team, newMon(n.join, Math.max(4, s.team[s.lead].level - 2))], caught: s.caught.includes(n.join) ? s.caught : [...s.caught, n.join], seen: s.seen.includes(n.join) ? s.seen : [...s.seen, n.join] };
         changed = true;
       }
       if (n.fight) { fight = n.fight; break; }
@@ -175,8 +179,9 @@ export default function Quest() {
       try { parsed = raw ? JSON.parse(raw) : null; } catch (e) {}
       const s = normaliseSave(parsed, REGIONS);
       setSave(s);
-      if (!s.flags.intro) play(START_SCENE, s);
-    }).catch(() => { const s = normaliseSave(null, REGIONS); setSave(s); play(START_SCENE, s); });
+      const ch = chapterFor(s.region);
+      if (!s.flags[ch.introFlag]) play(ch.start, s);
+    }).catch(() => { const s = normaliseSave(null, REGIONS); setSave(s); play(CHAPTERS[0].start, s); });
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const nextLine = () => run(scene.queue, save);
@@ -201,14 +206,14 @@ export default function Quest() {
   };
 
   /* ── walking ── */
-  const people = useMemo(() => PEOPLE.filter((p) => !(p.hide || []).some((f) => flags[f])), [flags]);
+  const people = useMemo(() => chapter.people.filter((p) => (p.show || []).every((f) => flags[f]) && !(p.hide || []).some((f) => flags[f])), [chapter, flags]);
   const move = useCallback((dir) => {
     if (!save || view !== "map" || scene || battle) return;
     setFacing((f) => ({ dir, step: f.step + 1 }));
     const [dx, dy] = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
     const person = people.find((p) => p.x === save.x + dx && p.y === save.y + dy);
     if (person) { const e = pickEntry(person.talk, flags); if (e) play(e.scene, save); return; }
-    const r = step({ x: save.x, y: save.y }, dir, map, { cleared: false });
+    const r = step({ x: save.x, y: save.y }, dir, map, { cleared, open: roadOpen });
     const s = { ...save, x: r.x, y: r.y };
     const ev = r.event;
     if (!ev) { walked(s); return; }
@@ -218,10 +223,23 @@ export default function Quest() {
       startFight({ team: [[pool[Math.floor(Math.random() * pool.length)], wildLevel(save.region)]], wild: true }, s);
       return;
     }
-    const list = PLACES[ev.type];
+    if (ev.type === "region") {
+      const to = save.region + ev.to;
+      const ch = chapterFor(to);
+      if (ch.region !== to) return;
+      const p = arrival(parseMap(REGIONS[to].map), ev.to > 0 ? "west" : "east");
+      const moved = { ...s, region: to, x: p.x, y: p.y, rest: ev.to > 0 ? { region: to } : s.rest };
+      persist(moved);
+      if (!moved.flags[ch.introFlag]) play(ch.start, moved);
+      return;
+    }
+    const tx = save.x + dx, ty = save.y + dy;
+    const list = ev.type === "building"
+      ? (chapter.buildings.find((b) => tx >= b.x && tx < b.x + b.w && ty >= b.y && ty < b.y + b.h) || {}).talk
+      : chapter.places[ev.type];
     const e = list && pickEntry(list, flags);
     if (e) play(e.scene, s);
-  }, [save, view, scene, battle, map, people, flags, region, play]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [save, view, scene, battle, map, people, flags, region, chapter, cleared, roadOpen, persist, walked, play]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (view !== "map" || scene || battle) return undefined;
@@ -247,7 +265,7 @@ export default function Quest() {
     const met = foes.map((f) => f.species).filter((id) => !s.seen.includes(id));
     const next = { ...s, lead: first, team, seen: met.length ? [...s.seen, ...met] : s.seen };
     persist(next);
-    const opening = say(def.boss ? "boss" : "appear", { a: nameOf(foes[0].species) });
+    const opening = say(def.open || (def.boss ? "boss" : "appear"), { a: nameOf(foes[0].species) });
     setMenu("main");
     setBattle({ def, foes, fi: 0, uses: {}, log: [{ ...opening, fh: foes[0].hp, lh: team[first].hp, li: first, fi: 0 }], i: 0, end: null });
   }
@@ -374,7 +392,7 @@ export default function Quest() {
 
   /* ── the notebook ── */
   if (view === "note") {
-    const clues = Object.keys(CLUES).filter((c) => flags[c]);
+    const clues = Object.keys(chapter.clues).filter((c) => flags[c]);
     const met = Object.keys(save.met).sort();
     const lost = LOST_WORDS.filter((w) => flags[w.flag]);
     const dex = Object.keys(SPECIES);
@@ -395,7 +413,7 @@ export default function Quest() {
           </div>
         )}
         {noteTab === "clues" && clues.map((c) => (
-          <div key={c} className="tc-qclue"><p className="tc-qsay"><Ja src={CLUES[c].j} onWord={openWord} /></p><HelpLine e={CLUES[c].e} /></div>
+          <div key={c} className="tc-qclue"><p className="tc-qsay"><Ja src={chapter.clues[c].j} onWord={openWord} /></p><HelpLine e={chapter.clues[c].e} /></div>
         ))}
         {noteTab === "words" && (met.length
           ? <ul className="tc-qwords">{met.map((w) => <li key={w}><b lang="ja">{w}</b> <span>{GLOSS[w]}</span></li>)}</ul>
@@ -431,7 +449,7 @@ export default function Quest() {
         <button type="button" className="tc-qrestart" onClick={() => {
           if (!resetArmed) { setResetArmed(true); return; }
           const s = normaliseSave(null, REGIONS);
-          persist(s); setResetArmed(false); setView("map"); play(START_SCENE, s);
+          persist(s); setResetArmed(false); setView("map"); play(CHAPTERS[0].start, s);
         }}>{resetArmed ? "Press again to erase this adventure and start over" : "Start over"}</button>
         {wordCard}
       </div>
@@ -509,7 +527,7 @@ export default function Quest() {
 
   /* ── the map, and whatever is being said on it ── */
   const node = scene && scene.node;
-  const goal = goalNow(GOALS, flags);
+  const goal = goalNow(chapter.goals, flags);
   const heroPic = HERO[facing.dir === "left" ? "right" : facing.dir][facing.step % 2];
   const onGrass = map.rows[save.y] && map.rows[save.y][save.x] === ",";
   const speaker = node && node.s;
@@ -517,7 +535,7 @@ export default function Quest() {
     <div className="tc-quest">
       <div className="tc-qhead">
         <div>
-          <b><Ja src={CHAPTER.number.j} plain /> <Ja src={CHAPTER.j} plain /></b>
+          <b><Ja src={chapter.number.j} plain /> <Ja src={chapter.title.j} plain /></b>
           {!scene && <div className="tc-qgoal"><p className="tc-qsay"><Ja src={goal.j} onWord={openWord} /></p><HelpLine key={goal.until} e={goal.e} /></div>}
         </div>
         {!scene && <button type="button" className="tc-btn tc-btn-sm" onClick={() => setView("note")}><Ja src={MENU.notebook.j} plain /></button>}
@@ -525,14 +543,14 @@ export default function Quest() {
 
       <div className="tc-qmap" role="img" aria-label={`Map of ${region.name}. You are at column ${save.x + 1}, row ${save.y + 1}.`}>
         <img className="tc-qmapbg" src={MAPS[region.theme]} alt="" draggable={false} />
-        <img className="tc-qactor" src={OBJECTS.locked} style={onMap(map.east.x, map.east.y, 16, 16)} alt="" draggable={false} />
-        <img className="tc-qactor" src={WALKERS[region.guardian.look]} style={onMap(map.guardian.x, map.guardian.y, 16, 20)} alt="" draggable={false} />
+        {map.east && <img className="tc-qactor" src={roadOpen ? OBJECTS.open : OBJECTS.locked} style={onMap(map.east.x, map.east.y, 16, 16)} alt="" draggable={false} />}
+        {!cleared && <img className="tc-qactor" src={WALKERS[region.guardian.look]} style={onMap(map.guardian.x, map.guardian.y, 16, 20)} alt="" draggable={false} />}
         {people.map((p) => (
           p.sprite ? <img key={p.id} className="tc-qactor" src={SPRITES[p.sprite]} style={onMap(p.x, p.y, 24, 24)} alt="" draggable={false} />
           : p.object ? <img key={p.id} className="tc-qactor" src={OBJECTS[p.object]} style={onMap(p.x, p.y, 16, 20)} alt="" draggable={false} />
           : <img key={p.id} className="tc-qactor" src={WALKERS[p.walker]} style={onMap(p.x, p.y, 16, 20)} alt="" draggable={false} />
         ))}
-        <img className={"tc-qactor tc-qhero" + (facing.dir === "left" ? " is-left" : "") + (onGrass ? " is-grass" : "")} src={heroPic}
+        <img key={save.region} className={"tc-qactor tc-qhero" + (facing.dir === "left" ? " is-left" : "") + (onGrass ? " is-grass" : "")} src={heroPic}
              style={onMap(save.x, save.y, 16, 20)} alt="" draggable={false} />
       </div>
 
@@ -558,18 +576,18 @@ export default function Quest() {
           ) : node.present ? (
             <div className="tc-qchoices">
               <p className="tc-qsay"><Ja src={MENU.pickClue.j} onWord={openWord} /></p><HelpLine e={MENU.pickClue.e} />
-              {Object.keys(CLUES).filter((c) => flags[c]).map((c) => (
+              {Object.keys(chapter.clues).filter((c) => flags[c]).map((c) => (
                 <div key={c} className="tc-qchoice">
-                  <button type="button" className="tc-btn tc-qcluebtn" onClick={() => present(c)}><Ja src={CLUES[c].j} plain /></button>
-                  <HelpLine e={CLUES[c].e} />
+                  <button type="button" className="tc-btn tc-qcluebtn" onClick={() => present(c)}><Ja src={chapter.clues[c].j} plain /></button>
+                  <HelpLine e={chapter.clues[c].e} />
                 </div>
               ))}
             </div>
           ) : node.found ? (
             <>
               <p className="tc-qeyebrow"><Ja src={MENU.found.j} plain /></p>
-              <p className="tc-qsay"><Ja src={CLUES[node.found].j} onWord={openWord} /></p>
-              <HelpLine key={node.found} e={CLUES[node.found].e} />
+              <p className="tc-qsay"><Ja src={chapter.clues[node.found].j} onWord={openWord} /></p>
+              <HelpLine key={node.found} e={chapter.clues[node.found].e} />
               <NextBtn onClick={nextLine} />
             </>
           ) : (
@@ -577,7 +595,7 @@ export default function Quest() {
               <div className="tc-qline2">
                 {speaker && <Face who={speaker} />}
                 <div className="tc-qtalk">
-                  {speaker && CAST[speaker] && <p className="tc-qwho" lang="ja">{CAST[speaker].name}</p>}
+                  {speaker && CAST[speaker] && <p className="tc-qwho"><Ja src={CAST[speaker].name} plain /></p>}
                   <p className="tc-qsay"><Ja key={node.j} src={node.j} name={playerName} onWord={openWord} /></p>
                 </div>
               </div>
@@ -599,7 +617,7 @@ export default function Quest() {
           <button type="button" className="tc-btn tc-qdown" aria-label="Move down" onClick={() => move("down")}>▼</button>
         </div>
       )}
-      {!flags.intro && <p className="tc-qnote tc-qkeys">Tap any word for its meaning. ？ shows the English. 🔊 reads it aloud.</p>}
+      {!flags[CHAPTERS[0].introFlag] && <p className="tc-qnote tc-qkeys">Tap any word for its meaning. ？ shows the English. 🔊 reads it aloud.</p>}
       {wordCard}
     </div>
   );

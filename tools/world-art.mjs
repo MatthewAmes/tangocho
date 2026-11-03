@@ -360,7 +360,7 @@ function coolingUnit() {
   c.set(5, 2, "#a8e0ff"); c.set(6, 1, "#a8e0ff"); c.set(9, 3, "#d8f0ff"); c.set(10, 2, "#a8e0ff");
   return c;
 }
-export const objects = () => ({ locked: barrier(), machine: coolingUnit() });
+export const objects = () => ({ locked: barrier(), open: arrow(false), machine: coolingUnit() });
 
 /* ── people on the map: 16×20, feet on the bottom row ──
    o outline · h/H hair · s/S skin · e eye · t/T top · l/L legs · b boots · others are per-person */
@@ -468,6 +468,35 @@ const GUARDIANS = {
       3: ".....oooooo.....", 4: "....oaaaaaAo....", 5: "...oaaaaaaaAo...", 6: "...oaaaaaaAAo...",
       8: "..hossessesSoh..", 9: "..hossessesSoh..", 10: "..o.osssssSo.o..",
       12: "...ostwtttwTso..", 13: "...osttwtwtTso..", 14: "...oottwtttoo...",
+    },
+  },
+  yui: {
+    colors: { ...SKIN, o: "#241a34", h: "#7a4a2a", H: "#5a3620", t: "#f2c14a", T: "#d8a02f", l: "#f4ece0", L: "#d8cdbb", b: "#7a4a2a", a: "#f4ece0", A: "#d0c6b4", w: "#ffffff" },
+    patch: {
+      4: "....oaaaaaAo....", 5: "...oaaaaaaaAo...", 6: "...ohhhhhhHHo...",
+      13: "...oswwwwwwso...", 14: "...oowwwwwwoo...",
+    },
+  },
+  sota: {
+    colors: { ...SKIN, o: "#241a34", h: "#3a2a4a", H: "#2a1f38", t: "#8fb4d8", T: "#6f94b8", l: "#8fb4d8", L: "#6f94b8", b: "#d8d0c0", w: "#ffffff" },
+    patch: {
+      3: "...o.oooo.o.....", 4: "...ohhhhhhhho...",
+      12: "...ostwttwtTso..", 13: "...osttwttwTso..", 15: "....olwlllwLo...",
+    },
+  },
+  fumi: {
+    colors: { ...SKIN, o: "#241a34", h: "#c8c0d4", H: "#a49cb4", t: "#8f5f6f", T: "#704a58", l: "#8f5f6f", L: "#704a58", b: "#d8d0c0", w: "#f4ece0" },
+    patch: {
+      1: "......oooo......", 2: ".....ohhHHo.....",
+      12: "...ostwwwwwTso..", 13: "...ostwwwwwTso..", 14: "...oowwwwwwoo...",
+      15: "....olllllLo....", 16: "....olllllLo....", 17: "....olllllLo....",
+    },
+  },
+  haru: {
+    colors: { ...SKIN, o: "#241a34", h: "#2a2a3a", H: "#1a1a28", t: "#58b86a", T: "#3f9a54", l: "#3a5a9a", L: "#2a4478", b: "#d5413f", a: "#d5413f", A: "#a82f30", w: "#ffffff" },
+    patch: {
+      4: "....oaaaaaAo....", 5: "...oaaaaaaaAo...", 6: "...oaaaaaaAAaao.",
+      12: "...ostwwwttTso..",
     },
   },
   mika: {
@@ -587,6 +616,52 @@ const PORTRAITS = {
     s.pxs([[19, 9], [24, 8], [29, 9], [22, 11], [27, 11]], "#ffffff");
     s.part(ramp("#fbf8f0"), { decal: true }, K(12, 38, 34, 47, 1.3), K(36, 38, 14, 47, 1.3));
     face(s, { iris: "#4a6fd0", lashes: true });
+  },
+  yui(s) {   // a baker in a headscarf, flour on her cheek, getting married tomorrow
+    const HAIR = ramp("#7a4a2a"), TOP = ramp("#f2c14a"), SCARF = ramp(["#b0a48c", "#d8cdbb", "#f4ece0", "#fbf6ec", "#ffffff"]);
+    s.part(HAIR, {}, E(24, 28, 14, 11));
+    bust(s, { top: TOP, hair: () => s.part(HAIR, {}, P([[13, 22], [15, 15], [33, 15], [35, 22], [30, 18], [18, 18]])) });
+    s.part(SCARF, {}, P([[13, 16], [16, 8], [24, 6], [32, 8], [35, 16], [24, 14]]));
+    s.part(SCARF, { round: 2 }, R(15, 40, 18, 8));
+    face(s, { iris: "#7a4a2a", mouth: "grin", lashes: true });
+    s.pxs([[33, 27], [34, 27], [33, 28]], "#ffffff");
+  },
+  sota(s) {   // bed hair and striped pajamas: he was asleep, and you woke him
+    const HAIR = ramp("#3a2a4a"), PJ = ramp("#8fb4d8");
+    bust(s, { top: PJ, hair: () => s.part(HAIR, {}, P([[13, 22], [12, 13], [15, 14], [15, 7], [20, 10], [23, 4], [27, 9], [33, 6], [33, 13], [36, 12], [35, 22], [31, 16], [24, 18], [17, 15]])) });
+    for (const x of [14, 20, 26, 32]) s.line(x, 39, x, 47, "#f4f8ff");
+    s.line(16, 22, 20, 22, "#1c1430").line(16, 23, 20, 23, "#1c1430").line(28, 22, 32, 22, "#1c1430").line(28, 23, 32, 23, "#1c1430");
+    s.pxs([[17, 24], [18, 24], [19, 24], [29, 24], [30, 24], [31, 24]], "#d8a888");
+    s.px(24, 26, "#d09070");
+    s.line(21, 30, 26, 30, "#a04a3a");
+  },
+  fumi(s) {   // white bun, a soft cardigan, the kindest face in town
+    const HAIR = ramp(["#7a7490", "#a49cb4", "#c8c0d4", "#e0dae8", "#f4f0f8"]), TOP = ramp("#8f5f6f");
+    s.part(HAIR, {}, C(24, 7, 4.5));
+    bust(s, { top: TOP, skin: OLD_SKIN, hairBack: () => s.part(HAIR, {}, E(24, 21, 13, 12)), hair: () => {
+      s.part(HAIR, {}, P([[13, 21], [15, 12], [24, 10], [33, 12], [35, 21], [30, 15], [24, 18], [18, 15]]));
+    } });
+    s.part(ramp("#f4ece0"), { decal: true }, P([[20, 38], [28, 38], [24, 46]]));
+    face(s, { iris: "#6a4a3a" });
+    s.pxs([[14, 27], [33, 27], [15, 29], [32, 29]], "#d8a888");
+  },
+  haru(s) {   // seven years old and unable to stand still
+    const HAIR = ramp("#2a2a3a"), CAP = ramp("#d5413f"), TOP = ramp("#58b86a");
+    bust(s, { top: TOP, hair: () => s.part(HAIR, {}, P([[13, 23], [13, 15], [35, 15], [35, 23], [31, 19], [17, 19]])) });
+    s.part(CAP, { shine: 1 }, E(24, 12, 12, 6));
+    s.part(CAP, { bias: -1 }, E(33, 16, 9, 1.8));
+    face(s, { iris: "#5a4a7a", mouth: "grin" });
+    s.pxs([[20, 28], [22, 29], [27, 28], [29, 29]], "#e8a888");
+  },
+  coat(s) {   // a hood, and two dim lights where a face should be
+    const COAT = ramp("#2a2a3a", { spread: 0.05 }), DEEP = ramp(["#07070e", "#0c0c16", "#12121e", "#181826", "#20202e"]);
+    s.part(COAT, {}, E(24, 50, 21, 17));
+    s.part(COAT, {}, P([[9, 40], [11, 16], [18, 6], [30, 6], [37, 16], [39, 40], [31, 42], [17, 42]]));
+    s.part(DEEP, { flat: true, tone: 1, edge: false }, E(24, 24, 10, 12));
+    s.rect(18, 22, 3, 2, "#c8d0f0").rect(27, 22, 3, 2, "#c8d0f0");
+    s.px(19, 22, "#ffffff").px(28, 22, "#ffffff");
+    s.line(24, 42, 24, 47, "#12121e");
+    s.part(ramp("#c8a040"), { round: 1, shine: 1 }, C(24, 40, 1.8));
   },
   mika(s) {   // cafeteria cap, red apron, a big soup-ladle smile
     const HAIR = ramp("#6a3a2a"), CAP = ramp(["#9aa4c8", "#d8def0", "#f6f8ff", "#ffffff", "#ffffff"]), COAT = ramp("#f2f0e8");

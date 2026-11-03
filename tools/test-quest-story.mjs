@@ -3,12 +3,12 @@
 //
 //   node tools/test-quest-story.mjs
 import { parseJa, plainJa, rubyParts, pickEntry, goalNow, nameFromInput, afterChoice } from "./quest-story.mjs";
-import { parseMap, tileAt, reachable, BLOCKING } from "./quest.mjs";
+import { parseMap, tileAt, reachable, arrival, step, BLOCKING } from "./quest.mjs";
 import { toKana } from "./romaji.mjs";
 import { SPECIES, REGIONS } from "../src/data/quest-world.js";
 import { SPRITES } from "../src/data/quest-sprites.js";
 import { MAPS, WALKERS, PORTRAITS, OBJECTS, HERO } from "../src/data/quest-world-art.js";
-import { CHAPTER, CAST, CLUES, CASE_CLUES, LOST_WORDS, GOALS, PEOPLE, PLACES, SCENES, START_SCENE, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../src/data/quest-story.js";
+import { CHAPTERS, CAST, LOST_WORDS, SCENES, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../src/data/quest-story.js";
 
 let fail = 0, run = 0;
 const t = (name, fn) => {
@@ -30,12 +30,14 @@ function walk(nodes, fn) {
 const allLines = () => {
   const out = [];
   for (const [id, nodes] of Object.entries(SCENES)) walk(nodes, (n) => { if (n.j) out.push({ where: id, ...n }); });
-  for (const [id, c] of Object.entries(CLUES)) out.push({ where: id, ...c });
-  for (const g of GOALS) out.push({ where: "goal", ...g });
+  for (const ch of CHAPTERS) {
+    for (const [id, c] of Object.entries(ch.clues)) out.push({ where: id, ...c });
+    for (const g of ch.goals) out.push({ where: "goal", ...g });
+    out.push({ where: "chapter", ...ch.title }, { where: "chapter", ...ch.number });
+  }
   for (const [id, m] of Object.entries(MENU)) out.push({ where: id, ...m });
   for (const [id, l] of Object.entries(BATTLE_TEXT)) out.push({ where: id, ...l });
   for (const w of LOST_WORDS) out.push({ where: w.flag, ...w });
-  out.push({ where: "chapter", ...CHAPTER }, { where: "chapter", ...CHAPTER.number });
   for (const s of Object.values(SPECIES)) for (const m of s.moves || []) out.push({ where: s.name, ...m });
   return out;
 };
@@ -67,47 +69,63 @@ t("every tappable word has a meaning", () => {
   for (const l of allLines()) for (const tok of parseJa(l.j)) if (tok.word && !GLOSS[tok.lemma] && !/^\{?[abn]\}?$/.test(tok.word)) missing.add(tok.lemma);
   eq([...missing], []);
 });
+const ALL_CLUES = Object.assign({}, ...CHAPTERS.map((c) => c.clues));
 t("every reference is real: scenes, clues, people, art", () => {
   const scene = (id, where) => ok(SCENES[id], `${where}: no scene ${id}`);
-  for (const p of PEOPLE) {
-    for (const e of p.talk) scene(e.scene, p.id);
-    if (p.walker) ok(WALKERS[p.walker], p.id + " walker");
-    if (p.object) ok(OBJECTS[p.object], p.id + " object");
-    if (p.sprite) ok(SPRITES[p.sprite], p.id + " sprite");
+  for (const ch of CHAPTERS) {
+    scene(ch.start, "start"); scene(ch.readyScene, "ready");
+    for (const p of ch.people) {
+      for (const e of p.talk) scene(e.scene, p.id);
+      if (p.walker) ok(WALKERS[p.walker], p.id + " walker");
+      if (p.object) ok(OBJECTS[p.object], p.id + " object");
+      if (p.sprite) ok(SPRITES[p.sprite], p.id + " sprite");
+    }
+    for (const [k, list] of Object.entries(ch.places)) for (const e of list) scene(e.scene, k);
+    for (const b of ch.buildings) for (const e of b.talk) scene(e.scene, "building");
+    const region = REGIONS[ch.region];
+    ok(MAPS[region.theme], region.name + " map"); ok(WALKERS[region.guardian.look], region.name + " guardian");
+    for (const c of ch.caseClues) ok(ch.clues[c], "case clue " + c);
   }
-  for (const [k, list] of Object.entries(PLACES)) for (const e of list) scene(e.scene, k);
-  scene(START_SCENE, "start"); scene(LOST_SCENE, "lost");
+  scene(LOST_SCENE, "lost");
   for (const [id, nodes] of Object.entries(SCENES)) walk(nodes, (n) => {
     if (n.s) ok(CAST[n.s], `${id}: nobody called ${n.s}`);
-    if (n.clue) ok(CLUES[n.clue], `${id}: no clue ${n.clue}`);
-    if (n.present) ok(CLUES[n.present.right], `${id}: no clue ${n.present.right}`);
+    if (n.clue) ok(ALL_CLUES[n.clue], `${id}: no clue ${n.clue}`);
+    if (n.present) ok(ALL_CLUES[n.present.right], `${id}: no clue ${n.present.right}`);
     if (n.join) ok(SPECIES[n.join] && SPRITES[n.join], `${id}: no creature ${n.join}`);
     if (n.fight) {
       for (const [s] of n.fight.team) ok(SPECIES[s], `${id}: no creature ${s}`);
       for (const k of ["win", "lose", "flee", "caught"]) if (n.fight[k]) scene(n.fight[k], `${id} ${k}`);
+      if (n.fight.open) ok(BATTLE_TEXT[n.fight.open], `${id}: no line ${n.fight.open}`);
     }
   });
   for (const c of Object.values(CAST)) {
     if (c.portrait) ok(PORTRAITS[c.portrait], "portrait " + c.portrait);
     if (c.sprite) ok(SPRITES[c.sprite], "sprite " + c.sprite);
   }
-  ok(MAPS[REGIONS[0].theme], "the map"); ok(WALKERS[REGIONS[0].guardian.look], "the guardian");
   for (const k of ["down", "up", "right"]) eq(HERO[k].length, 2, "hero " + k);
 });
-t("everyone stands somewhere you can reach, and nobody blocks the way", () => {
-  const map = parseMap(REGIONS[0].map);
-  const spots = new Set(PEOPLE.map((p) => p.x + "," + p.y));
-  const seen = reachable(map, map.start, false, spots);
-  const near = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has((x + dx) + "," + (y + dy)));
-  for (const p of PEOPLE) {
-    ok(!BLOCKING.has(tileAt(map, p.x, p.y)), `${p.id} is inside something`);
-    ok(near(p.x, p.y), `${p.id} can't be reached`);
-  }
-  const b = map.rows.findIndex((r) => r.includes("H"));
-  ok(near(map.rows[b].indexOf("H"), b), "the kiosk");
-  ok(near(map.guardian.x, map.guardian.y), "Hana");
-  ok(near(map.shrine.x, map.shrine.y), "the shrine");
-});
+for (const ch of CHAPTERS) {
+  t(`${REGIONS[ch.region].name}: everyone stands somewhere you can reach, and every building is really there`, () => {
+    const map = parseMap(REGIONS[ch.region].map);
+    const from = ch.region === 0 ? map.start : arrival(map, "west");
+    const spots = new Set(ch.people.filter((p) => !p.show).map((p) => p.x + "," + p.y));
+    const seen = reachable(map, from, false, spots);
+    const near = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has((x + dx) + "," + (y + dy)));
+    for (const p of ch.people) {
+      ok(!BLOCKING.has(tileAt(map, p.x, p.y)), `${p.id} is inside something`);
+      ok(near(p.x, p.y), `${p.id} can't be reached`);
+    }
+    for (const b of ch.buildings) {
+      for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) eq(tileAt(map, b.x + i, b.y + j), "H", `building at ${b.x + i},${b.y + j}`);
+      ok(near(b.x, b.y) || near(b.x + b.w - 1, b.y + b.h - 1), `building ${b.x},${b.y}`);
+    }
+    map.rows.forEach((row, y) => Array.from(row).forEach((c, x) => {
+      if (c === "H") ok(ch.buildings.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h), `nothing says what the building at ${x},${y} is`);
+    }));
+    ok(near(map.guardian.x, map.guardian.y), "the guardian");
+    ok(near(map.shrine.x, map.shrine.y), "the shrine");
+  });
+}
 
 /* ── play it ──
    A player who keeps talking to whoever has something new, and picks the right answers. */
@@ -119,7 +137,7 @@ function talk(id, flags) {
     if (n.flag) flags[n.flag] = true;
     if (n.clue) {
       flags[n.clue] = true;
-      if (CASE_CLUES.every((c) => flags[c])) flags.ready = true;
+      for (const ch of CHAPTERS) if (ch.caseClues.every((c) => flags[c])) flags[ch.ready] = true;
     }
     if (n.j) heard.push(n.j);
     if (n.choose) { const o = n.choose.find((x) => !x.retry); q = afterChoice(q, n, o); }
@@ -129,41 +147,52 @@ function talk(id, flags) {
   if (fought && fought.caught) return { heard, then: talk(fought.caught, flags) };
   return { heard };
 }
-t("the mystery can be solved from the first step, and ends with the campus warm", () => {
-  const flags = {};
-  talk(START_SCENE, flags);
-  ok(flags.intro, "the intro finishes");
-  eq(goalNow(GOALS, flags).until, "ready", "the first goal is asking around");
-  for (let round = 0; round < 8 && !flags.ready; round++) {
-    for (const p of PEOPLE) { const e = pickEntry(p.talk, flags); if (e) talk(e.scene, flags); }
-    talk(pickEntry(PLACES.building, flags).scene, flags);
-    talk(pickEntry(PLACES.guardian, flags).scene, flags);
-    if (flags.ready) break;
-  }
-  ok(flags.ready, "talking to everyone finds every clue");
-  for (const c of CASE_CLUES) ok(flags[c], c);
-  eq(goalNow(GOALS, flags).until, "solved", "then go to Hana");
-  const finale = pickEntry(PLACES.guardian, flags);
-  eq(finale.scene, "finale");
-  talk("finale", flags);
-  ok(flags.solved, "beating the spirit solves the case");
-  ok(flags.word1, "and Kotodama gets a word back");
-  eq(pickEntry(PLACES.guardian, flags).scene, "hana_end");
-  eq(goalNow(GOALS, flags).until, "never");
+for (const ch of CHAPTERS) {
+  t(`${REGIONS[ch.region].name}: the mystery can be solved from the first step`, () => {
+    const flags = {};
+    talk(ch.start, flags);
+    ok(flags[ch.introFlag], "the intro finishes");
+    eq(goalNow(ch.goals, flags).until, ch.ready, "the first goal is asking around");
+    const visible = (p) => (p.show || []).every((f) => flags[f]) && !(p.hide || []).some((f) => flags[f]);
+    for (let round = 0; round < 10 && !flags[ch.ready]; round++) {
+      for (const p of ch.people.filter(visible)) { const e = pickEntry(p.talk, flags); if (e) talk(e.scene, flags); }
+      for (const b of ch.buildings) { const e = pickEntry(b.talk, flags); if (e) talk(e.scene, flags); }
+      if (flags[ch.ready]) break;
+      talk(pickEntry(ch.places.guardian, flags).scene, flags);
+    }
+    ok(flags[ch.ready], "talking to everyone finds every clue");
+    for (const c of ch.caseClues) ok(flags[c], c);
+    eq(goalNow(ch.goals, flags).until, ch.solved, "then go to the guardian");
+    const finale = pickEntry(ch.places.guardian, flags);
+    talk(finale.scene, flags);
+    ok(flags[ch.solved], "the showdown solves the case");
+    eq(goalNow(ch.goals, flags).until, "never");
+    const backOne = LOST_WORDS.find((w) => flags[w.flag]);
+    ok(backOne, "and Kotodama gets a word back");
+  });
+  t(`${REGIONS[ch.region].name} finale: only the true culprit and the right clues move it forward`, () => {
+    const scene = SCENES[pickEntry(ch.places.guardian, { [ch.ready]: true }).scene];
+    const who = scene.find((n) => n.choose);
+    eq(who.choose.filter((o) => !o.retry).length, 1, "one right answer");
+    const wrong = who.choose.find((o) => o.retry);
+    ok(afterChoice([{ j: "x" }], who, wrong).includes(who), "a wrong name asks again");
+    const shows = scene.filter((x) => x.present);
+    ok(shows.length >= 3, "at least three pieces of evidence");
+    for (const n of shows) {
+      ok(ch.caseClues.includes(n.present.right), n.present.right + " is one you must have found");
+      ok(n.present.wrong.length, "a wrong clue gets an answer");
+    }
+  });
+}
+t("losing a boss doesn't lose the case: you go straight back to the fight", () => {
+  eq(pickEntry(CHAPTERS[0].places.guardian, { accused: true, ready: true }).scene, "boss_again");
+  eq(pickEntry(CHAPTERS[1].places.guardian, { c2_accused: true, c2_ready: true }).scene, "c2_boss_again");
 });
-t("finale: only the true culprit and the right clues move it forward", () => {
-  const who = SCENES.finale.find((n) => n.choose);
-  eq(who.choose.filter((o) => !o.retry).length, 1, "one right answer");
-  const wrong = who.choose.find((o) => o.retry);
-  const q = afterChoice([{ j: "x" }], who, wrong);
-  ok(q.includes(who), "a wrong name asks again");
-  for (const n of SCENES.finale.filter((x) => x.present)) {
-    ok(CASE_CLUES.includes(n.present.right), n.present.right + " is one you must have found");
-    ok(n.present.wrong.length, "a wrong clue gets an answer");
-  }
-});
-t("losing the boss doesn't lose the case: you go straight back to the fight", () => {
-  eq(pickEntry(PLACES.guardian, { accused: true, ready: true }).scene, "boss_again");
+t("beating a guardian opens the road only once the next chapter exists", () => {
+  const m = parseMap(["###", "#G>", "#.#", "###"]);
+  eq(step({ x: 1, y: 2 }, "up", m, { cleared: true }).event, null, "the guardian has stepped aside");
+  eq(step({ x: 1, y: 1 }, "right", m, { cleared: true, open: false }).event, { type: "locked" });
+  eq(step({ x: 1, y: 1 }, "right", m, { cleared: true, open: true }).event, { type: "region", to: 1 });
 });
 t("your name: clean rōmaji or kana becomes katakana, anything else stays as you typed it", () => {
   eq(nameFromInput("matthew", toKana), "Matthew");

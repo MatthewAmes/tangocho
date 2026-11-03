@@ -41,9 +41,18 @@ export const SPECIES = {
     { j: "{氷|こおり}", e: "Ice", kind: "cold", power: 1.2 },
   ] },
   // Act 8 — routines, time, events
-  mezamashi:   { name: "Mezamashi",   ja: "メザマシ",       emoji: "🐓", badge: "⏰", from: "目覚まし (alarm clock)" },
-  nebokuro:    { name: "Nebokuro",    ja: "ネボクロウ",     emoji: "🦉", badge: "💤", from: "寝坊 + ふくろう (oversleep + owl)" },
-  keekin:      { name: "Keekin",      ja: "ケーキン",       emoji: "🐹", badge: "🎂", from: "ケーキ + 金 (cake + gold)" },
+  mezamashi:   { name: "Mezamashi",   ja: "メザマシ",       emoji: "🐓", badge: "⏰", from: "目覚まし (alarm clock)", kind: "bright", moves: [
+    { j: "{大きい|おおきい} {音|おと}", e: "Big Sound", kind: "bright", power: 1 },
+    { j: "{羽|はね}", e: "Feather", kind: "plain", power: 1.2 },
+  ] },
+  nebokuro:    { name: "Nebokuro",    ja: "ネボクロウ",     emoji: "🦉", badge: "💤", from: "寝坊 + ふくろう (oversleep + owl)", kind: "cold", moves: [
+    { j: "{眠い|ねむい} {声|こえ}", e: "Sleepy Voice", kind: "cold", power: 1 },
+    { j: "{羽|はね}", e: "Feather", kind: "plain", power: 1.3, uses: 4 },
+  ] },
+  keekin:      { name: "Keekin",      ja: "ケーキン",       emoji: "🐹", badge: "🎂", from: "ケーキ + 金 (cake + gold)", kind: "hot", moves: [
+    { j: "{熱い|あつい} クリーム", e: "Hot Cream", kind: "hot", power: 1 },
+    { j: "{甘い|あまい} ケーキ", e: "Sweet Cake", kind: "plain", power: 1.3, uses: 4 },
+  ] },
   // Act 9 — chores, laundry, jobs
   sentakuma:   { name: "Sentakuma",   ja: "センタクマ",     emoji: "🐻", badge: "💧", from: "洗濯 + 熊 (laundry + bear)" },
   gomitanu:    { name: "Gomitanu",    ja: "ゴミタヌ",       emoji: "🦝", badge: "🗑️", from: "ゴミ + 狸 (trash + raccoon dog)" },

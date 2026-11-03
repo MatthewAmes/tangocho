@@ -1,4 +1,8 @@
 /* ── Kotoba Quest: the story ──
+   Shared text and Chapter 1 live here; each later chapter has its own file (quest-ch2.js),
+   joined up in CHAPTERS at the bottom. Flags, scenes and clues share one namespace, so a later
+   chapter prefixes its own (c2_...).
+
    A mystery you solve by understanding people, played in Japanese (Matthew, 2026-11-03: "an
    earnest game thats purely japanese", "real dialogue and conversations in context").
 
@@ -19,15 +23,13 @@
      { fight: { team, win, lose, flee } }   win/lose/flee name the scene that follows
    tools/test-quest-story.mjs checks all of it: every word glossed, every reference real, and
    the whole mystery solvable from the first step. */
+import { CH2 } from "./quest-ch2.js";
 
-export const CHAPTER = {
-  j: "{消えた|きえた|消える} {春|はる}",
-  e: "The Vanished Spring",
-  number: { j: "{第一章|だいいっしょう}", e: "Chapter 1" },
-};
+const CH1_TITLE = { j: "{消えた|きえた|消える} {春|はる}", e: "The Vanished Spring" };
+const CH1_NUMBER = { j: "{第一章|だいいっしょう}", e: "Chapter 1" };
 
 /* Who speaks, and which picture goes with them. `sprite` looks in the creature art. */
-export const CAST = {
+const CH1_CAST = {
   kotodama: { name: "コトダマ", sprite: "kotodama" },
   samuneko: { name: "サムネコ", sprite: "samuneko" },
   hana: { name: "ハナ", portrait: "hana" },
@@ -37,7 +39,7 @@ export const CAST = {
   taro: { name: "タロウ", portrait: "taro" },
 };
 
-export const CLUES = {
+const CH1_CLUES = {
   c_rumor: { j: "ケンさんの {話|はなし}：{犯人|はんにん}は サムネコだ。", e: "What Ken says: the culprit is Samuneko." },
   c_cat: { j: "サムネコも {寒くて|さむくて|寒い} {ふるえて||ふるえる} いる。{犯人|はんにん}じゃ ないと {思う|おもう}。", e: "Samuneko is cold and shivering too. I don't think it's the culprit." },
   c_wind: { j: "{冷たい|つめたい} {風|かぜ}は {北|きた}の {方|ほう}から {来る|くる}。", e: "The cold wind comes from the north." },
@@ -49,20 +51,21 @@ export const CLUES = {
 /* Kotodama's six lost words: one comes back at the end of each chapter. */
 export const LOST_WORDS = [
   { flag: "word1", j: "{住めば都|すめばみやこ}", e: "Home is where you make it" },
+  { flag: "word2", j: "{類は友を呼ぶ|るいはともをよぶ}", e: "Birds of a feather flock together" },
 ];
 export const LOST_WORD_COUNT = 6;
 
-export const CASE_CLUES = ["c_wind", "c_soup", "c_night", "c_taro", "c_machine"];
+const CH1_CASE_CLUES = ["c_wind", "c_soup", "c_night", "c_taro", "c_machine"];
 
 /* What to do next, in the notebook and under the map: the first whose `until` isn't done. */
-export const GOALS = [
+const CH1_GOALS = [
   { until: "ready", j: "みんなに {話|はなし}を {聞きましょう|ききましょう|聞く}。", e: "Let's ask everyone what they know." },
   { until: "solved", j: "ハナさんの {所|ところ}へ {行きましょう|いきましょう|行く}。みんなを {集めます|あつめます|集める}。", e: "Let's go to Hana. We'll gather everyone." },
-  { until: "never", j: "{第二章|だいにしょう}は もうすぐ！ {草|くさ}の {中|なか}で なかまを {探しましょう|さがしましょう|探す}。", e: "Chapter 2 is coming soon! Let's look for companions in the grass." },
+  { until: "never", j: "{東|ひがし}の {道|みち}が {開きました|あきました|開く}。{町|まち}へ {行きましょう|いきましょう|行く}！", e: "The road east is open. Let's go to town!" },
 ];
 
 /* Who stands where on Campus Meadows. `talk`: the first entry whose need/not fit is what they say. */
-export const PEOPLE = [
+const CH1_PEOPLE = [
   { id: "ken", x: 4, y: 6, walker: "ken", talk: [
     { need: ["solved"], scene: "ken_end" },
     { need: ["c_cat", "c_rumor"], not: ["ken_sorry"], scene: "ken_sorry" },
@@ -83,6 +86,7 @@ export const PEOPLE = [
     { need: ["c_night"], scene: "aya_again" },
     { scene: "aya_first" },
   ] },
+  { id: "hana_after", x: 14, y: 9, walker: "hana", show: ["solved"], talk: [{ scene: "hana_end" }] },
   { id: "machine", x: 13, y: 1, object: "machine", hide: ["solved"], talk: [
     { need: ["c_machine"], scene: "machine_again" },
     { scene: "machine_first" },
@@ -90,32 +94,29 @@ export const PEOPLE = [
 ];
 
 /* The things on the map itself. */
-export const PLACES = {
+const CH1_PLACES = {
   guardian: [
-    { need: ["solved"], scene: "hana_end" },
     { need: ["accused"], scene: "boss_again" },
     { need: ["ready"], scene: "finale" },
     { need: ["c_wind"], scene: "hana_again" },
     { scene: "hana_first" },
   ],
-  building: [
+  sign: [{ scene: "sign" }],
+  shrine: [{ scene: "shrine" }],
+  locked: [{ scene: "gate_closed" }],
+};
+const CH1_BUILDINGS = [
+  { x: 12, y: 2, w: 1, h: 1, talk: [
     { need: ["solved"], scene: "taro_end" },
     { need: ["c_taro"], scene: "taro_again" },
     { scene: "taro_first" },
-  ],
-  sign: [{ scene: "sign" }],
-  shrine: [{ scene: "shrine" }],
-  locked: [
-    { need: ["solved"], scene: "gate_open" },
-    { scene: "gate_closed" },
-  ],
-};
-export const START_SCENE = "intro";
+  ] },
+];
 export const LOST_SCENE = "woke_up";
 
 const K = "kotodama";
 
-export const SCENES = {
+const CH1_SCENES = {
   ready: [
     { s: K, j: "@さん、{手がかり|てがかり}が {全部|ぜんぶ} {集まりました|あつまりました|集まる}！", e: "@, we've got all the clues!" },
     { s: K, j: "ハナさんの {所|ところ}へ {行きましょう|いきましょう|行く}！", e: "Let's go to Hana!" },
@@ -423,7 +424,7 @@ export const SCENES = {
   ],
   hana_end: [
     { s: "hana", j: "{花|はな}が {咲きました|さきました|咲く}よ。きれいでしょう？", e: "The flowers have bloomed. Pretty, aren't they?" },
-    { s: "hana", j: "この {先|さき}は {町|まち}です。{第二章|だいにしょう}で {会いましょう|あいましょう|会う}！", e: "Past here is the town. See you in Chapter 2!" },
+    { s: "hana", j: "この {先|さき}は {町|まち}です。{気をつけて|きをつけて|気をつける} {行って|いって|行く} ください！", e: "Past here is the town. Take care on your way!" },
   ],
 
   sign: [
@@ -439,9 +440,6 @@ export const SCENES = {
   gate_closed: [
     { j: "{道|みち}が {凍って|こおって|凍る} います。{通れません|とおれません|通る}。", e: "The road is frozen. You can't get through." },
   ],
-  gate_open: [
-    { j: "{町|まち}への {道|みち}です。{第二章|だいにしょう}は もうすぐ！", e: "The road to town. Chapter 2 is coming soon!" },
-  ],
   woke_up: [
     { j: "{目|め}が {覚めました|さめました|覚める}。{神社|じんじゃ}です。", e: "You woke up. You're at the shrine." },
     { s: K, j: "だいじょうぶですか。みんな {元気|げんき}に なりましたよ。", e: "Are you okay? Everyone's feeling better." },
@@ -452,6 +450,7 @@ export const SCENES = {
 export const BATTLE_TEXT = {
   appear: { j: "{a}が {現れた|あらわれた|現れる}！", e: "{a} appeared!" },
   boss: { j: "{冷房|れいぼう}の {精霊|せいれい}、{a}が {現れた|あらわれた|現れる}！", e: "{a}, the spirit of the air conditioner, appeared!" },
+  coatBoss: { j: "{黒い|くろい} コートの {人|ひと}の {a}が {襲って|おそって|襲う} きた！", e: "Black Coat's {a} attacked!" },
   uses: { j: "{a}の {b}！", e: "{a} used {b}!" },
   hit: { j: "{a}に {n}の ダメージ！", e: "{n} damage to {a}!" },
   strong: { j: "よく {効いた|きいた|効く}！", e: "It really worked!" },
@@ -496,7 +495,8 @@ export const MENU = {
 };
 
 /* Every word you can tap. Keys are dictionary forms. */
-export const GLOSS = {
+const CH1_GLOSS = {
+  "開く": "to open (by itself)",
   "消える": "to disappear", "春": "spring", "第一章": "Chapter 1", "第二章": "Chapter 2", "話": "talk, story", "犯人": "culprit",
   "寒い": "cold (weather)", "ふるえる": "to shiver", "思う": "to think", "冷たい": "cold (to the touch)", "風": "wind",
   "北": "north", "東": "east", "方": "direction", "来る": "to come", "売店": "kiosk, shop", "売れる": "to sell (well)",
@@ -531,3 +531,13 @@ export const GLOSS = {
   "自動": "automatic", "出す": "to bring out (元気を出す: cheer up)", "光": "light", "声": "voice",
   "息": "breath", "歌": "song", "晴れ": "sunny weather", "爪": "claw", "牙": "fang", "羽": "feather, wing", "雪": "snow", "氷": "ice",
 };
+
+export const CHAPTERS = [
+  { region: 0, title: CH1_TITLE, number: CH1_NUMBER, start: "intro", introFlag: "intro", ready: "ready", readyScene: "ready", solved: "solved",
+    clues: CH1_CLUES, caseClues: CH1_CASE_CLUES, goals: CH1_GOALS, people: CH1_PEOPLE, places: CH1_PLACES, buildings: CH1_BUILDINGS, scenes: CH1_SCENES },
+  CH2,
+];
+export const chapterFor = (region) => CHAPTERS.find((c) => c.region === region) || CHAPTERS[0];
+export const SCENES = Object.assign({}, ...CHAPTERS.map((c) => c.scenes));
+export const CAST = { ...CH1_CAST, ...CH2.cast };
+export const GLOSS = { ...CH1_GLOSS, ...CH2.gloss };

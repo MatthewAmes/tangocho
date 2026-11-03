@@ -42,9 +42,10 @@ export function step(state, dir, map, opts = {}) {
   const [dx, dy] = DIRS[dir] || [0, 0];
   const x = state.x + dx, y = state.y + dy;
   const cleared = !!opts.cleared;
+  const open = opts.open ?? cleared;
   let t = tileAt(map, x, y);
   if (t === "G" && cleared) t = "=";
-  if (t === ">") return cleared ? { x: state.x, y: state.y, event: { type: "region", to: +1 } }
+  if (t === ">") return open ? { x: state.x, y: state.y, event: { type: "region", to: +1 } }
                                 : { x: state.x, y: state.y, event: { type: "locked" } };
   if (t === "<") return { x: state.x, y: state.y, event: { type: "region", to: -1 } };
   if (t === "G") return { x: state.x, y: state.y, event: { type: "guardian" } };

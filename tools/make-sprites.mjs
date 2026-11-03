@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SPECIES, REGIONS } from "../src/data/quest-world.js";
-import { CAST, PEOPLE } from "../src/data/quest-story.js";
+import { CAST, CHAPTERS } from "../src/data/quest-story.js";
 import { draw } from "./sprite-designs.mjs";
 import { sheet } from "./pixel-art.mjs";
 import { paintMap, hero, guardianWalker, portrait, objects } from "./world-art.mjs";
@@ -23,7 +23,7 @@ const WORLD_MODULE = path.join(ROOT, "src", "data", "quest-world-art.js");
 const uri = (img) => "data:image/png;base64," + encodePng(img).toString("base64");
 
 /* Only regions with a written chapter ship their map; the rest wait for their story. */
-const PLAYABLE = REGIONS.slice(0, 1);
+const PLAYABLE = CHAPTERS.map((c) => REGIONS[c.region]);
 
 fs.mkdirSync(OUT, { recursive: true });
 const ids = Object.keys(SPECIES);
@@ -39,7 +39,7 @@ ${ids.map((id, i) => `  ${id}: "${uri(images[i])}",`).join("\n")}
 `);
 
 const faces = Object.values(CAST).map((c) => c.portrait).filter(Boolean);
-const walkers = PEOPLE.map((p) => p.walker).filter(Boolean);
+const walkers = CHAPTERS.flatMap((c) => c.people).map((p) => p.walker).filter(Boolean);
 const guardians = PLAYABLE.map((r) => r.guardian.look);
 const walking = [...new Set([...walkers, ...guardians])];
 const h = hero(), obj = objects();
