@@ -84,6 +84,9 @@ export function toKana(input) {
     // a doubled consonant is the small っ: "ippun" -> いっぷん
     if (ch === s[i + 1] && !VOWEL.test(ch) && ch !== "n") { out += "っ"; i++; continue; }
 
+    // Hepburn doubles ち as "tch": "shutchou" -> しゅっちょう, "botchan" -> ぼっちゃん
+    if (ch === "t" && s.startsWith("ch", i + 1)) { out += "っ"; i++; continue; }
+
     let hit = null;
     for (const k of KEYS_BY_LEN) {
       if (k.length <= s.length - i && s.startsWith(k, i)) { hit = k; break; }
@@ -97,14 +100,29 @@ export function toKana(input) {
   return out;
 }
 
+const toHiragana = (s) => String(s || "").replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+
 /* Grading is on kana, so anything that is only a spelling difference has to be flattened
-   first: katakana to hiragana, ー dropped, and づ/ぢ folded onto ず/じ. */
+   first: katakana to hiragana, ー and 〜 dropped, づ/ぢ folded onto ず/じ, and を onto お,
+   because the particle is pronounced and usually typed "o". */
 export function normalizeKana(s) {
-  return String(s || "")
-    .replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
-    .replace(/[ー\s・、。]/g, "")
+  return toHiragana(s)
+    .replace(/[ー〜~\s・、。]/g, "")
     .replace(/づ/g, "ず")
-    .replace(/ぢ/g, "じ");
+    .replace(/ぢ/g, "じ")
+    .replace(/を/g, "お");
 }
 
-export const kanaEqual = (a, b) => normalizeKana(a) === normalizeKana(b);
+/* ー spelled out as the vowel it lengthens: ヨーロッパ -> よおろっぱ. That is how a long mark
+   gets typed in rōmaji ("yooroppa"), and it came out wrong on every long loanword. Only ー
+   expands: おばあさん and おばさん must stay different words. */
+const VOWEL_OF = new Map();
+for (const [vowel, row] of [["あ", "あかさたなはまやらわがざだばぱぁゃ"], ["い", "いきしちにひみりぎじぢびぴぃ"],
+                            ["う", "うくすつぬふむゆるぐずづぶぷぅゅ"], ["え", "えけせてねへめれげぜでべぺぇ"],
+                            ["お", "おこそとのほもよろをごぞどぼぽぉょ"]]) {
+  for (const k of row) VOWEL_OF.set(k, vowel);
+}
+export const spellLongVowels = (s) => toHiragana(s).replace(/(.)ー/gu, (m, k) => k + (VOWEL_OF.get(k) || ""));
+
+export const kanaEqual = (a, b) => normalizeKana(a) === normalizeKana(b)
+  || normalizeKana(spellLongVowels(a)) === normalizeKana(spellLongVowels(b));

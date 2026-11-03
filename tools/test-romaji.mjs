@@ -72,5 +72,19 @@ eq(toKana("umi"), "うみ");
 eq(toKana("samui"), "さむい");
 eq(toKana("yomimasu"), "よみます");
 
+/* Real answers that came back wrong (2026-11-03). Long loanwords typed with a doubled
+   vowel, Hepburn's "tch", and を typed "o". */
+eq(kanaEqual(toKana("yooroppa"), "ヨーロッパ"), true, "yooroppa is ヨーロッパ");
+eq(kanaEqual(toKana("oosutoraria"), "オーストラリア"), true, "oosutoraria is オーストラリア");
+eq(kanaEqual(toKana("puuru"), "プール"), true, "puuru is プール");
+eq(kanaEqual(toKana("menyuu"), "メニュー"), true, "menyuu is メニュー");
+eq(kanaEqual(toKana("pu-ru"), "プール"), true, "a typed long mark still works");
+eq(toKana("shutchou"), "しゅっちょう", "tch is っち");
+eq(toKana("batchiri"), "ばっちり", "tch is っち");
+eq(kanaEqual(toKana("ochaoireru"), "おちゃをいれる"), true, "を typed as o");
+eq(kanaEqual(toKana("ochawoireru"), "おちゃをいれる"), true, "を typed as wo");
+/* Only ー expands: real long vowels still tell words apart. */
+eq(kanaEqual("おばさん", "おばあさん"), false, "aunt is not grandmother");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

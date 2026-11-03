@@ -26,7 +26,7 @@
 import { hashSeed } from "./session.mjs";
 import { wilson } from "./calibration.mjs";
 import { editDistance } from "./learner.mjs";
-import { normalizeKana } from "./romaji.mjs";
+import { normalizeKana, spellLongVowels } from "./romaji.mjs";
 
 /* How much of the deck is quarantined at a time. Every reserved word is one Smart Review
    cannot teach you, so this buys measurement with study time and the price should stay
@@ -119,6 +119,8 @@ export function acceptedForms(card) {
     out.add(normalise(base));
     out.add(normalise(base.replace(/[（(][^）)]*[）)]/g, "")));   // drop bracket and contents
     out.add(normalise(base.replace(/[（()）]/g, "")));            // keep contents, drop brackets
+    out.add(normalise(spellLongVowels(base.replace(/[（(][^）)]*[）)]/g, ""))));   // プール as "puuru"
+    out.add(normalise(spellLongVowels(base.replace(/[（()）]/g, ""))));
   }
   out.delete("");
   return out;
