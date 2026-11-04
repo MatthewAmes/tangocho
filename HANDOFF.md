@@ -33,45 +33,24 @@ So Study now defaults to **Book order** (`plan.book`, `tools/bookorder.mjs`):
 The plan agreed with him: Acts 7→ before class starts in January, 10–15 min a day, and
 playing Pokémon in Japanese for fun.
 
-**Quest tab — Kotoba Quest (2026-11-03).** A mystery RPG with monster battles, played in
-Japanese. He rejected the first version (type a word to attack): "i wanted it to be like an
-earnest game thats purely japanese that i can binge and learn", then "mix of mystery rpg and
-monster rpg so i can get real dialogue and conversations in context". **Do not bring typing
-or quizzes back into it.** It is **original** and must stay that way: our own creatures,
-story and art; no Pokémon names, characters or music.
-- The Japanese is the game. You understand people to solve the case: talk to everyone, fill
-  the notebook, name the culprit, show the right clue at each step. Wrong answers get a reply
-  and another try, never a penalty. Tap any word for its meaning, ？ for a line's English,
-  🔊 to hear it. Every kanji has furigana.
-- Chapters 1 and 2 so far (Acts 7 and 8). Each uses its act's words where they mean something
-  and ends on its proverb. Next chapters: one per act, a new `src/data/quest-chN.js` added to
-  `CHAPTERS` in `quest-story.js`. The road to it opens by itself, and its map, walkers and
-  portraits are generated from that entry. Copy `quest-ch2.js` for the shape; check slang
-  before naming things (Chapter 2's bell part is a 棒 because 金の玉 is rude).
-- Story and every line: `src/data/quest-story.js` and `quest-ch2.js` (the header of the first
-  explains the format). Runner helpers:
-  `tools/quest-story.mjs`. Rules: `tools/quest.mjs`. Screen: `src/tabs/Quest.jsx`.
-  `tools/test-quest-story.mjs` checks every word has a gloss and every kanji a reading, and
-  plays the mystery through from the first step.
-- What pulls him through is written into the story on purpose: Kotodama has lost six important
-  words and one (the act's proverb) returns each chapter, a person in a black coat is behind
-  each case and leaves a cliffhanger, a creature or two joins at the end, and the creature book
-  shows silhouettes to fill. No streaks, timers or guilt: he asked for "addictive", and this app
-  has already been stripped once of exactly that kind of noise.
-- Saving: anything that matters writes at once. Plain steps wait 15 seconds or until you leave,
-  because every write also pushes to the cloud and KV has a daily write limit. `jpn101:quest2`
-  syncs like the deck when signed in.
-- Battles are menus in Japanese. Words are the strategy: 熱い beats cold, 冷たい beats bright,
-  明るい beats hot.
-- **It does not feed Study's memory.** Nothing here is graded, so nothing is written to FSRS or
-  the evidence log; tapped words are only kept in the save. Whether to connect them is open.
-- Save is `jpn101:quest2`; the old attack-game save (`jpn101:quest`) is ignored.
-- Art is drawn in code: creatures in `tools/sprite-designs.mjs`, maps and people in
-  `tools/world-art.mjs` (themes for all six regions already exist), painter
-  `tools/pixel-art.mjs`. `node tools/make-sprites.mjs` regenerates `src/data/quest-sprites.js`
-  and `src/data/quest-world-art.js`, and `art/*.png` to look at; `tools/test-sprites.mjs` fails if
-  they drift. Gemini was tried first and dropped: its API has no free image tier and he won't
-  pay beyond his subscription.
+**Quest tab — Kotoba Quest (rebuilt 2026-11-04).** A fast action game. Third attempt, and the
+history matters: type-a-word-to-attack ("THE GAME SUCKS"), then a mystery RPG of Japanese dialogue
+("boring ah game", "the reading is boring"; it is in git before this change if ever wanted).
+**So: no typing, no quizzes, no walls of text.** It must stay original.
+- Monsters swarm you, your partner fires by itself, you only move. Every few seconds Kotodama
+  shouts one short order (「暗い所へ！」) in voice and text, and you have about 3 seconds. Obey and
+  you blast what's near you; miss and you lose 30% health and see the English. Understanding
+  is what keeps you alive, and `tools/test-run-game.mjs` holds that true by playing whole runs
+  with a bot that understands against one that doesn't.
+- A run is a few minutes. Words climb with time (`from` in `src/data/run-orders.js`), from colours
+  and directions into Act 7's. The results screen lists the words that got you. Bosses come
+  every minute; beat one and it becomes a partner, whose `kind` changes your shots.
+- Rules: `tools/run-game.mjs` (pure, no React). Drawing and input: `src/tabs/Quest.jsx`. Save:
+  `jpn101:run` (best score, partners). **It does not feed Study's memory.**
+- Art is drawn in code: creatures in `tools/sprite-designs.mjs`, arenas and the hero in
+  `tools/world-art.mjs`, painter `tools/pixel-art.mjs`; `node tools/make-sprites.mjs` regenerates
+  the modules, and `tools/test-sprites.mjs` fails if they drift. Gemini's API has no free image
+  tier, and he won't pay beyond his subscription.
 
 ## Calm mode (2026-10-13)
 

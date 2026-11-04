@@ -1,624 +1,326 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import SpeakBtn from "../components/SpeakBtn.jsx";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { sGet, sSet } from "../lib/storage.js";
 import { setSessionBusy } from "../lib/session.js";
-import { SPECIES, REGIONS } from "../data/quest-world.js";
+import { playFeedback } from "../lib/sfx.js";
+import { ttsUnlock, speakJa } from "../lib/tts.js";
+import { SPECIES } from "../data/quest-world.js";
 import { SPRITES } from "../data/quest-sprites.js";
-import { MAPS, HERO, WALKERS, PORTRAITS, OBJECTS } from "../data/quest-world-art.js";
-import { CHAPTERS, chapterFor, CAST, LOST_WORDS, LOST_WORD_COUNT, SCENES, LOST_SCENE, BATTLE_TEXT, MENU, GLOSS } from "../data/quest-story.js";
-import { parseMap, arrival, step, statsOf, newMon, wildLevel, gainXp, movesOf, hitFor, foeMove, catchChance, normaliseSave, wakeAtShrine, healAll } from "../../tools/quest.mjs";
-import { parseJa, plainJa, rubyParts, pickEntry, goalNow, nameFromInput, afterChoice } from "../../tools/quest-story.mjs";
-import { toKana } from "../../tools/romaji.mjs";
+import { ARENAS, HERO } from "../data/quest-world-art.js";
+import { LINES, STAGES } from "../data/run-orders.js";
+import { W, H, newRun, step, applyUpgrade, upgradeChoices, worstWords, finalScore, kindOf } from "../../tools/run-game.mjs";
+import { parseJa, rubyParts } from "../../tools/ja-markup.mjs";
 
 /* ── Kotoba Quest ──
-   A mystery you solve by understanding people, in Japanese, with creatures to befriend on
-   the way. Nothing here is a quiz: the Japanese IS the game. Tap any word for its meaning;
-   ？ shows a line's English. The story and every line are in src/data/quest-story.js. */
+   Survive the swarm. You only move; your partner fires by itself. Kotodama shouts one short
+   order in Japanese every few seconds, and understanding it is what keeps you alive. The rules
+   are in tools/run-game.mjs; this file draws them and takes your input. */
 
-const SAVE_KEY = "jpn101:quest2";
-const MAX_TEAM = 6;
-const W = 256, H = 176;             // the map in its own pixels
-const POSITION_SAVE_MS = 15000;     // walking saves gently: each write also goes to the cloud
-const DEFAULT_NAME = "トモ";
+const SAVE_KEY = "jpn101:run";
+const BOLT = { plain: "#f4f0ff", cold: "#8fdcff", hot: "#ff9a3a", bright: "#ffe45a" };
+const KIND_ICON = { plain: "⭐", cold: "❄️", hot: "🔥", bright: "☀️" };
 
-const sp = (id) => SPECIES[id] || SPECIES.kotodama;
+const images = {};
+const img = (src) => { if (!images[src]) { images[src] = new Image(); images[src].src = src; } return images[src]; };
 
-/* Lay a picture on the map by tile, feet on the tile's bottom edge. */
-const onMap = (x, y, pw, ph) => ({
-  left: ((x * 16 + 8 - pw / 2) / W) * 100 + "%", top: ((y * 16 + 16 - ph) / H) * 100 + "%",
-  width: (pw / W) * 100 + "%", height: (ph / H) * 100 + "%",
-});
-
-/* A line of Japanese. Words are buttons that open their meaning, unless `plain` (it is
-   already inside something you press). */
-function Ja({ src, name, onWord, plain }) {
+function Ja({ src }) {
   return (
     <span lang="ja">
-      {parseJa(src, name).map((t, i) => {
-        if (!t.word) return <React.Fragment key={i}>{t.text}</React.Fragment>;
-        const inner = rubyParts(t.word, t.reading).map((p, k) => (p.ruby ? <ruby key={k}>{p.text}<rt>{p.ruby}</rt></ruby> : <React.Fragment key={k}>{p.text}</React.Fragment>));
-        if (plain || !onWord) return <React.Fragment key={i}>{inner}</React.Fragment>;
-        return <button key={i} type="button" className="tc-qw" onClick={(e) => { e.stopPropagation(); onWord(t); }}>{inner}</button>;
+      {parseJa(src).map((t, i) => (t.word
+        ? rubyParts(t.word, t.reading).map((p, k) => (p.ruby ? <ruby key={i + "-" + k}>{p.text}<rt>{p.ruby}</rt></ruby> : <React.Fragment key={i + "-" + k}>{p.text}</React.Fragment>))
+        : <React.Fragment key={i}>{t.text}</React.Fragment>))}
+    </span>
+  );
+}
+
+function Partners({ owned, chosen, onPick }) {
+  return (
+    <div className="tc-qparty">
+      {Object.keys(SPECIES).map((id) => {
+        const have = owned.includes(id);
+        return (
+          <button key={id} type="button" disabled={!have} aria-pressed={chosen === id} aria-label={have ? SPECIES[id].name : "Locked creature"}
+                  className={"tc-qpick" + (chosen === id ? " is-on" : "") + (have ? "" : " is-locked")} onClick={() => onPick(id)}>
+            <img src={SPRITES[id]} alt="" draggable={false} />
+            {have && <i>{KIND_ICON[kindOf(id)]}</i>}
+          </button>
+        );
       })}
-    </span>
+    </div>
   );
 }
-
-/* ？ shows the English under whatever it sits beside. */
-function HelpLine({ e, name }) {
-  const [open, setOpen] = useState(false);
-  const text = String(e || "").replace(/@/g, name || "");
-  return (
-    <>
-      <button type="button" className={"tc-qhelp" + (open ? " is-on" : "")} aria-label="Show the English" aria-expanded={open} onClick={(ev) => { ev.stopPropagation(); setOpen(!open); }}>？</button>
-      {open && <p className="tc-qen">{text}</p>}
-    </>
-  );
-}
-
-function Face({ who }) {
-  const c = CAST[who];
-  if (!c) return null;
-  const art = c.portrait ? PORTRAITS[c.portrait] : SPRITES[c.sprite];
-  return art ? <img className="tc-qface" src={art} alt="" draggable={false} /> : null;
-}
-
-function Sprite({ species, big, flip }) {
-  const s = sp(species);
-  const art = SPRITES[species];
-  return (
-    <span className={"tc-qsprite" + (big ? " is-big" : "") + (art ? " is-art" : "") + (art && flip ? " is-flip" : "")} aria-hidden="true">
-      {art ? <img src={art} alt="" draggable={false} /> : <>{s.emoji}<i>{s.badge}</i></>}
-    </span>
-  );
-}
-
-function HpBar({ hp, max }) {
-  const f = Math.max(0, Math.min(1, max ? hp / max : 0));
-  return (
-    <span className="tc-qhp" role="meter" aria-label="Health" aria-valuemin={0} aria-valuemax={max} aria-valuenow={Math.max(0, hp)}>
-      <i className={f <= 0.25 ? "is-low" : f <= 0.5 ? "is-mid" : ""} style={{ width: Math.round(f * 100) + "%" }} />
-    </span>
-  );
-}
-
-/* The button you press to go on. It takes the keyboard's focus each time, so Enter or Space
-   reads through a conversation without reaching for the mouse. */
-function NextBtn({ onClick, label = MENU.next }) {
-  const ref = useRef(null);
-  useEffect(() => { if (ref.current) ref.current.focus(); }, [onClick]);
-  return <button ref={ref} type="button" className="tc-btn tc-btn-primary tc-qgo" onClick={onClick}><Ja src={label.j} plain /> ▼</button>;
-}
-
-function fill(line, vars) {
-  const put = (s, k) => s.replace(/\{([abn])\}/g, (m, v) => { const x = vars[v]; return x == null ? "" : typeof x === "object" ? x[k] : x; });
-  return { j: put(line.j, "j"), e: put(line.e, "e") };
-}
-const say = (key, vars = {}) => fill(BATTLE_TEXT[key], vars);
-const nameOf = (id) => ({ j: sp(id).ja, e: sp(id).name });
 
 export default function Quest() {
-  const [save, setSave] = useState(null);
-  const [view, setView] = useState("map");              // map | note
-  const [noteTab, setNoteTab] = useState("clues");
-  const [scene, setScene] = useState(null);             // { node, queue }
-  const [battle, setBattle] = useState(null);
-  const [menu, setMenu] = useState("main");             // main | moves | team, inside a battle
-  const [word, setWord] = useState(null);
-  const [facing, setFacing] = useState({ dir: "down", step: 0 });
-  const [nameDraft, setNameDraft] = useState("");
-  const [resetArmed, setResetArmed] = useState(false);
+  const [screen, setScreen] = useState("title");       // title | play | level | over
+  const [save, setSave] = useState({ best: 0, partners: ["kotodama"], partner: "kotodama", sound: true });
+  const [shout, setShout] = useState(null);            // the order on screen, or how it went
+  const [choices, setChoices] = useState([]);
+  const [paused, setPaused] = useState(false);
+  const [result, setResult] = useState(null);
 
-  /* Anything that matters saves at once. Plain steps wait a little and save when you stop or
-     leave, because every write also goes up to the cloud, and that has a daily limit. */
-  const pendingWalk = useRef(null), walkTimer = useRef(null);
-  const persist = useCallback((s) => {
-    pendingWalk.current = null; clearTimeout(walkTimer.current);
-    setSave(s); sSet(SAVE_KEY, JSON.stringify(s));
-  }, []);
-  const flushWalk = useCallback(() => {
-    clearTimeout(walkTimer.current);
-    if (pendingWalk.current) { sSet(SAVE_KEY, JSON.stringify(pendingWalk.current)); pendingWalk.current = null; }
-  }, []);
-  const walked = useCallback((s) => {
-    setSave(s); pendingWalk.current = s;
-    clearTimeout(walkTimer.current); walkTimer.current = setTimeout(flushWalk, POSITION_SAVE_MS);
-  }, [flushWalk]);
-  useEffect(() => {
-    const onHide = () => { if (document.visibilityState === "hidden") flushWalk(); };
-    document.addEventListener("visibilitychange", onHide);
-    window.addEventListener("pagehide", flushWalk);
-    return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", flushWalk); flushWalk(); };
-  }, [flushWalk]);
-  const region = save ? REGIONS[save.region] : REGIONS[0];
-  const chapter = chapterFor(save ? save.region : 0);
-  const map = useMemo(() => parseMap(region.map), [region]);
-  const playerName = (save && save.name) || DEFAULT_NAME;
-  const flags = (save && save.flags) || {};
-  const cleared = !!flags[chapter.solved];
-  const roadOpen = cleared && CHAPTERS.some((c) => c.region === save.region + 1);
-
-  useEffect(() => { setSessionBusy(!!battle || !!scene); return () => setSessionBusy(false); }, [battle, scene]);
-
-  /* ── the story runner ──
-     Nodes that show nothing (a flag, a clue, a heal) happen straight away; the first one
-     that needs the player stops the run and waits. */
-  const run = useCallback((queue, from) => {
-    let q = queue.slice(), s = from, changed = false, node = null, fight = null;
-    while (q.length) {
-      const n = q.shift();
-      if (n.flag) { s = { ...s, flags: { ...s.flags, [n.flag]: true } }; if (n.flag === "rested") s = { ...s, rest: { region: s.region } }; changed = true; continue; }
-      if (n.heal) { s = { ...s, team: healAll(s.team) }; changed = true; continue; }
-      if (n.clue) {
-        if (s.flags[n.clue]) continue;
-        s = { ...s, flags: { ...s.flags, [n.clue]: true } }; changed = true;
-        const ch = CHAPTERS.find((c) => c.caseClues.includes(n.clue));
-        const ready = !!ch && ch.caseClues.every((c) => s.flags[c]) && !s.flags[ch.ready];
-        if (ready) s = { ...s, flags: { ...s.flags, [ch.ready]: true } };
-        q = [{ found: n.clue }, ...(ready ? SCENES[ch.readyScene] : []), ...q];
-        continue;
-      }
-      if (n.join) {
-        if (s.team.some((m) => m.species === n.join) || s.team.length >= MAX_TEAM) continue;
-        s = { ...s, team: [...s.team, newMon(n.join, Math.max(4, s.team[s.lead].level - 2))], caught: s.caught.includes(n.join) ? s.caught : [...s.caught, n.join], seen: s.seen.includes(n.join) ? s.seen : [...s.seen, n.join] };
-        changed = true;
-      }
-      if (n.fight) { fight = n.fight; break; }
-      node = n; break;
-    }
-    if (changed) persist(s);
-    if (fight) { setScene(null); startFight(fight, s); return; }
-    setScene(node ? { node, queue: q } : null);
-  }, [persist]);   // eslint-disable-line react-hooks/exhaustive-deps
-
-  const play = useCallback((id, from) => run(SCENES[id] || [], from), [run]);
+  const rootRef = useRef(null), canvasRef = useRef(null), runRef = useRef(null), keys = useRef(new Set()), stick = useRef(null);
+  const fx = useRef({ sparks: [], shake: 0, flash: 0 });
+  const hpRef = useRef(null), xpRef = useRef(null), timeRef = useRef(null), scoreRef = useRef(null), timerRef = useRef(null);
+  const saveRef = useRef(save), screenRef = useRef(screen), pausedRef = useRef(false);
+  saveRef.current = save; screenRef.current = screen; pausedRef.current = paused;
+  const calm = useRef(typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
   useEffect(() => {
     sGet(SAVE_KEY).then((raw) => {
-      let parsed = null;
-      try { parsed = raw ? JSON.parse(raw) : null; } catch (e) {}
-      const s = normaliseSave(parsed, REGIONS);
-      setSave(s);
-      const ch = chapterFor(s.region);
-      if (!s.flags[ch.introFlag]) play(ch.start, s);
-    }).catch(() => { const s = normaliseSave(null, REGIONS); setSave(s); play(CHAPTERS[0].start, s); });
-  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+      try { const s = raw ? JSON.parse(raw) : null; if (s) setSave((d) => ({ ...d, ...s, partners: s.partners && s.partners.length ? s.partners : d.partners })); } catch (e) {}
+    }).catch(() => {});
+  }, []);
+  const store = useCallback((patch) => {
+    const next = { ...saveRef.current, ...patch };
+    saveRef.current = next; setSave(next); sSet(SAVE_KEY, JSON.stringify(next));
+  }, []);
+  useEffect(() => { setSessionBusy(screen === "play" || screen === "level"); return () => setSessionBusy(false); }, [screen]);
 
-  const nextLine = () => run(scene.queue, save);
-  const choose = (option) => run(afterChoice(scene.queue, scene.node, option), save);
-  const submitName = (e) => {
-    e.preventDefault();
-    const name = nameFromInput(nameDraft, toKana) || DEFAULT_NAME;
-    const s = { ...save, name };
-    persist(s);
-    setNameDraft("");
-    run(scene.queue, s);
-  };
-  const present = (clue) => {
-    const { right, wrong } = scene.node.present;
-    if (clue === right) run(scene.queue, save);
-    else run([...wrong, scene.node, ...scene.queue], save);
-  };
-  const openWord = (t) => {
-    setWord(t);
-    const key = t.lemma;
-    if (save && GLOSS[key]) persist({ ...save, met: { ...save.met, [key]: (save.met[key] || 0) + 1 } });
-  };
+  const start = useCallback(() => {
+    ttsUnlock();
+    runRef.current = newRun(saveRef.current.partner);
+    fx.current = { sparks: [], shake: 0, flash: 0 };
+    setShout(null); setResult(null); setPaused(false); setScreen("play");
+    if (rootRef.current) rootRef.current.scrollIntoView({ block: "start" });
+  }, []);
 
-  /* ── walking ── */
-  const people = useMemo(() => chapter.people.filter((p) => (p.show || []).every((f) => flags[f]) && !(p.hide || []).some((f) => flags[f])), [chapter, flags]);
-  const move = useCallback((dir) => {
-    if (!save || view !== "map" || scene || battle) return;
-    setFacing((f) => ({ dir, step: f.step + 1 }));
-    const [dx, dy] = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
-    const person = people.find((p) => p.x === save.x + dx && p.y === save.y + dy);
-    if (person) { const e = pickEntry(person.talk, flags); if (e) play(e.scene, save); return; }
-    const r = step({ x: save.x, y: save.y }, dir, map, { cleared, open: roadOpen });
-    const s = { ...save, x: r.x, y: r.y };
-    const ev = r.event;
-    if (!ev) { walked(s); return; }
-    if (ev.type === "encounter") {
-      setSave(s);
-      const pool = region.wild;
-      startFight({ team: [[pool[Math.floor(Math.random() * pool.length)], wildLevel(save.region)]], wild: true }, s);
-      return;
+  const pickUpgrade = useCallback((id) => {
+    const s = runRef.current;
+    applyUpgrade(s, id);
+    if (s.pendingLevels > 0) setChoices(upgradeChoices(Math.random));
+    else setScreen("play");
+  }, []);
+
+  /* What just happened in the rules becomes sound, sparks and the shout at the top. */
+  const handleEvents = useCallback((s) => {
+    const f = fx.current;
+    const burst = (x, y, color, n) => { for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, v = 30 + Math.random() * 80; f.sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.5, color }); } };
+    for (const e of s.events) {
+      if (e.type === "order") {
+        setShout({ j: e.order.j, state: "go" });
+        if (saveRef.current.sound) { try { speakJa(e.order.say, 1); } catch (err) {} }
+      } else if (e.type === "obeyed") {
+        setShout({ j: e.order.j, state: "ok" });
+        burst(e.x, e.y, "#ffe45a", 40); f.shake = 5; f.flash = 0.12;
+        try { playFeedback(true); } catch (err) {}
+      } else if (e.type === "missed") {
+        setShout({ j: e.order.j, en: e.order.en, state: "miss" });
+        f.shake = 9; f.flash = -0.3;
+        try { playFeedback(false); } catch (err) {}
+      } else if (e.type === "kill") burst(e.x, e.y, e.boss ? "#ff7a5a" : "#ffffff", e.boss ? 40 : 6);
+      else if (e.type === "hit") { burst(e.x, e.y, "#ff5a5a", 6); f.shake = Math.max(f.shake, 3); }
+      else if (e.type === "boss") setShout({ j: LINES.boss, state: "boss" });
+      else if (e.type === "caught") {
+        const owned = saveRef.current.partners;
+        if (!owned.includes(e.species)) store({ partners: [...owned, e.species] });
+      } else if (e.type === "level") { setChoices(upgradeChoices(Math.random)); setScreen("level"); }
+      else if (e.type === "over") {
+        const score = finalScore(s), isBest = score > (saveRef.current.best || 0);
+        if (isBest) store({ best: score });
+        setResult({ score, isBest, seconds: Math.floor(s.t), kills: s.kills, obeyed: s.obeyed, words: worstWords(s), caught: s.caught.slice(), stage: s.stage });
+        setShout(null); setScreen("over");
+      }
     }
-    if (ev.type === "region") {
-      const to = save.region + ev.to;
-      const ch = chapterFor(to);
-      if (ch.region !== to) return;
-      const p = arrival(parseMap(REGIONS[to].map), ev.to > 0 ? "west" : "east");
-      const moved = { ...s, region: to, x: p.x, y: p.y, rest: ev.to > 0 ? { region: to } : s.rest };
-      persist(moved);
-      if (!moved.flags[ch.introFlag]) play(ch.start, moved);
-      return;
-    }
-    const tx = save.x + dx, ty = save.y + dy;
-    const list = ev.type === "building"
-      ? (chapter.buildings.find((b) => tx >= b.x && tx < b.x + b.w && ty >= b.y && ty < b.y + b.h) || {}).talk
-      : chapter.places[ev.type];
-    const e = list && pickEntry(list, flags);
-    if (e) play(e.scene, s);
-  }, [save, view, scene, battle, map, people, flags, region, chapter, cleared, roadOpen, persist, walked, play]);   // eslint-disable-line react-hooks/exhaustive-deps
+    s.events.length = 0;
+  }, [store]);
 
+  /* ── the loop ── */
   useEffect(() => {
-    if (view !== "map" || scene || battle) return undefined;
-    const KEYS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", w: "up", s: "down", a: "left", d: "right" };
-    const onKey = (e) => {
+    let raf = 0, last = performance.now();
+    const draw = (s, dt) => {
+      const c = canvasRef.current; if (!c) return;
+      const g = c.getContext("2d"); g.imageSmoothingEnabled = false;
+      const f = fx.current;
+      const shake = calm.current ? 0 : f.shake;
+      g.save();
+      if (shake > 0.2) g.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+      const bg = img(ARENAS[STAGES[s ? s.stage : 0]]);
+      if (bg.complete) g.drawImage(bg, 0, 0, W, H); else { g.fillStyle = "#3f7d3f"; g.fillRect(0, 0, W, H); }
+      if (s) {
+        const o = s.order, h = s.hero;
+        if (o && o.pads.length) for (const p of o.pads) {
+          g.globalAlpha = 0.92; g.fillStyle = p.fill || "#ffffff33";
+          if (!p.species) { g.beginPath(); g.arc(p.x, p.y, p.r, 0, 6.3); g.fill(); }
+          g.globalAlpha = 1; g.strokeStyle = "#1c1430"; g.lineWidth = 2; g.beginPath(); g.arc(p.x, p.y, p.r, 0, 6.3); g.stroke();
+          if (p.icon) { g.font = "24px serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillStyle = "#000"; g.fillText(p.icon, p.x, p.y + 1); }
+          if (p.species) { const im = img(SPRITES[p.species]); if (im.complete) g.drawImage(im, p.x - 24, p.y - 24, 48, 48); }
+        }
+        for (const gem of s.gems) { g.fillStyle = "#7ae8ff"; g.fillRect(gem.x - 2, gem.y - 2, 4, 4); g.fillStyle = "#ffffff"; g.fillRect(gem.x - 2, gem.y - 2, 2, 2); }
+        const sorted = s.foes.slice().sort((a, b) => a.y - b.y);
+        for (const e of sorted) {
+          const im = img(SPRITES[e.species]), size = e.boss ? 48 : 24;
+          g.save(); g.translate(e.x, e.y);
+          if (e.left) g.scale(-1, 1);
+          if (im.complete) g.drawImage(im, -size / 2, -size / 2, size, size);
+          if (e.flash > 0) { g.globalCompositeOperation = "lighter"; g.globalAlpha = 0.7; if (im.complete) g.drawImage(im, -size / 2, -size / 2, size, size); }
+          g.restore();
+          if (e.boss) { g.fillStyle = "#000"; g.fillRect(e.x - 22, e.y - 30, 44, 4); g.fillStyle = "#ff5a5a"; g.fillRect(e.x - 21, e.y - 29, 42 * Math.max(0, e.hp / e.maxHp), 2); }
+        }
+        g.fillStyle = BOLT[s.kind] || "#fff";
+        for (const b of s.bolts) { const r = s.gun.size; g.fillRect(b.x - r, b.y - r, r * 2, r * 2); }
+        const blink = h.inv > 0 && Math.floor(h.inv * 16) % 2 === 0;
+        if (!blink) {
+          const frames = HERO[h.dir] || HERO.down, pic = img(frames[Math.floor(h.walk / 10) % 2]);
+          g.save(); g.translate(h.x, h.y); if (h.left) g.scale(-1, 1);
+          if (pic.complete) g.drawImage(pic, -8, -14, 16, 20);
+          g.restore();
+        }
+        const pal = img(SPRITES[s.partner]), a = s.t * 2.2;
+        if (pal.complete) g.drawImage(pal, h.x + Math.cos(a) * 16 - 8, h.y + Math.sin(a) * 12 - 16, 16, 16);
+        for (const p of f.sparks) { g.fillStyle = p.color; g.globalAlpha = Math.max(0, p.life * 2); g.fillRect(p.x, p.y, 2, 2); }
+        g.globalAlpha = 1;
+      }
+      g.restore();
+      if (f.flash !== 0) { g.fillStyle = f.flash > 0 ? "rgba(255,255,200," + f.flash * 3 + ")" : "rgba(255,40,40," + -f.flash + ")"; g.fillRect(0, 0, W, H); }
+      for (const p of f.sparks) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
+      f.sparks = f.sparks.filter((p) => p.life > 0);
+      f.shake = Math.max(0, f.shake - dt * 30);
+      f.flash = f.flash > 0 ? Math.max(0, f.flash - dt) : Math.min(0, f.flash + dt);
+    };
+    const hud = (s) => {
+      if (!s) return;
+      if (hpRef.current) hpRef.current.style.width = Math.max(0, (s.hero.hp / s.hero.maxHp) * 100) + "%";
+      if (xpRef.current) xpRef.current.style.width = (s.xp / s.xpNext) * 100 + "%";
+      if (timeRef.current) timeRef.current.textContent = Math.floor(s.t / 60) + ":" + String(Math.floor(s.t % 60)).padStart(2, "0");
+      if (scoreRef.current) scoreRef.current.textContent = finalScore(s).toLocaleString();
+      if (timerRef.current) timerRef.current.style.width = s.order ? Math.max(0, (s.order.left / s.order.dur) * 100) + "%" : "0%";
+    };
+    const frame = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const s = runRef.current;
+      if (s && screenRef.current === "play" && !pausedRef.current) {
+        let dx = 0, dy = 0;
+        const k = keys.current;
+        if (k.has("ArrowLeft") || k.has("a")) dx -= 1;
+        if (k.has("ArrowRight") || k.has("d")) dx += 1;
+        if (k.has("ArrowUp") || k.has("w")) dy -= 1;
+        if (k.has("ArrowDown") || k.has("s")) dy += 1;
+        if (stick.current && stick.current.active) { dx += stick.current.dx; dy += stick.current.dy; }
+        step(s, { dx, dy }, dt);
+        handleEvents(s);
+      }
+      draw(screenRef.current === "title" ? null : s, pausedRef.current ? 0 : dt);
+      hud(s);
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [handleEvents]);
+
+  /* ── input ── */
+  useEffect(() => {
+    const MOVE = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d"]);
+    const down = (e) => {
       const tag = (e.target && e.target.tagName) || "";
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      const dir = KEYS[e.key];
-      if (dir) { e.preventDefault(); move(dir); }
+      const now = screenRef.current;
+      if (now === "play") {
+        if (MOVE.has(e.key)) { keys.current.add(e.key); e.preventDefault(); }
+        if (e.key === "Escape" || e.key === "p") setPaused((p) => !p);
+      } else if (now === "level" && ["1", "2", "3"].includes(e.key)) {
+        e.preventDefault();
+        const b = document.querySelectorAll(".tc-qlevel button")[+e.key - 1];
+        if (b) b.click();
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [view, scene, battle, move]);
+    const up = (e) => keys.current.delete(e.key);
+    const hide = () => { keys.current.clear(); if (document.visibilityState === "hidden" && screenRef.current === "play") setPaused(true); };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", hide);
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      window.removeEventListener("keydown", down); window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", hide); document.removeEventListener("visibilitychange", hide);
+    };
+  }, []);
 
-  /* ── battle ──
-     A turn is worked out at once and told as a list of lines; each line remembers the health
-     to show while it is on screen, so the bars move with the story, not ahead of it. */
-  function startFight(def, s) {
-    const foes = def.team.map(([id, lvl]) => newMon(id, lvl));
-    const lead = s.team[s.lead] && s.team[s.lead].hp > 0 ? s.lead : s.team.findIndex((m) => m.hp > 0);
-    const first = lead < 0 ? 0 : lead;
-    const team = lead < 0 ? healAll(s.team) : s.team;
-    const met = foes.map((f) => f.species).filter((id) => !s.seen.includes(id));
-    const next = { ...s, lead: first, team, seen: met.length ? [...s.seen, ...met] : s.seen };
-    persist(next);
-    const opening = say(def.open || (def.boss ? "boss" : "appear"), { a: nameOf(foes[0].species) });
-    setMenu("main");
-    setBattle({ def, foes, fi: 0, uses: {}, log: [{ ...opening, fh: foes[0].hp, lh: team[first].hp, li: first, fi: 0 }], i: 0, end: null });
-  }
-
-  const tellTurn = (b, s, log, end) => {
-    persist(s);
-    setMenu("main");
-    setBattle({ ...b, log, i: 0, end });
+  /* Drag anywhere on the arena to move: the further you pull, the faster you go. */
+  const onDown = (e) => { if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); stick.current = { active: true, ox: e.clientX, oy: e.clientY, dx: 0, dy: 0 }; };
+  const onMove = (e) => {
+    const st = stick.current; if (!st || !st.active) return;
+    const dx = e.clientX - st.ox, dy = e.clientY - st.oy, d = Math.hypot(dx, dy);
+    if (d < 6) { st.dx = 0; st.dy = 0; return; }
+    const k = Math.min(1, d / 40) / d;
+    st.dx = dx * k; st.dy = dy * k;
   };
+  const onUp = () => { stick.current = null; };
 
-  /* The foe's half of a turn, after the player's. Returns [save, end]. */
-  const foeTurn = (b, foes, s, log) => {
-    const foe = foes[b.fi];
-    const move1 = foeMove(foe.species);
-    const me = s.team[s.lead];
-    const { dmg, mult } = hitFor({ level: foe.level, move: move1, foeSpecies: me.species });
-    const team = s.team.slice();
-    const hp = Math.max(0, me.hp - dmg);
-    team[s.lead] = { ...me, hp };
-    const mark = (lh, li = s.lead) => ({ fh: foe.hp, lh, li, fi: b.fi });
-    log.push({ ...say("uses", { a: nameOf(foe.species), b: { j: move1.j, e: move1.e } }), ...mark(me.hp) });
-    if (mult > 1) log.push({ ...say("strong"), ...mark(me.hp) });
-    if (mult < 1) log.push({ ...say("weak"), ...mark(me.hp) });
-    log.push({ ...say("hit", { a: nameOf(me.species), n: dmg }), ...mark(hp) });
-    let next = { ...s, team };
-    if (hp > 0) return [next, null];
-    log.push({ ...say("down", { a: nameOf(me.species) }), ...mark(0) });
-    const nextLead = team.findIndex((m) => m.hp > 0);
-    if (nextLead < 0) { log.push({ ...say("lost"), ...mark(0) }); return [next, "lost"]; }
-    next = { ...next, lead: nextLead };
-    log.push({ ...say("next", { a: nameOf(team[nextLead].species) }), ...mark(team[nextLead].hp, nextLead) });
-    return [next, null];
-  };
-
-  const useMove = (move1, index) => {
-    const b = battle, foes = b.foes.slice(), s0 = save, me = s0.team[s0.lead];
-    const uses = { ...b.uses };
-    if (move1.uses) uses[s0.lead + ":" + index] = (uses[s0.lead + ":" + index] || 0) + 1;
-    const foe = foes[b.fi];
-    const { dmg, mult } = hitFor({ level: me.level, move: move1, foeSpecies: foe.species });
-    const hp = Math.max(0, foe.hp - dmg);
-    foes[b.fi] = { ...foe, hp };
-    const mark = (fh, fi = b.fi) => ({ fh, lh: me.hp, li: s0.lead, fi });
-    const log = [{ ...say("uses", { a: nameOf(me.species), b: { j: move1.j, e: move1.e } }), ...mark(foe.hp) }];
-    if (mult > 1) log.push({ ...say("strong"), ...mark(foe.hp) });
-    if (mult < 1) log.push({ ...say("weak"), ...mark(foe.hp) });
-    log.push({ ...say("hit", { a: nameOf(foe.species), n: dmg }), ...mark(hp) });
-    const bb = { ...b, foes, uses };
-    if (hp > 0) {
-      const [s, end] = foeTurn(bb, foes, s0, log);
-      tellTurn(bb, s, log, end);
-      return;
-    }
-    log.push({ ...say("down", { a: nameOf(foe.species) }), ...mark(0) });
-    if (b.fi + 1 < foes.length) {
-      const fi = b.fi + 1;
-      log.push({ ...say("appear", { a: nameOf(foes[fi].species) }), ...mark(foes[fi].hp, fi) });
-      tellTurn({ ...bb, fi }, s0, log, null);
-      return;
-    }
-    const xp = foes.reduce((n, f) => n + f.level * 8, 0);
-    const { mon, levelled } = gainXp(me, xp);
-    const team = s0.team.slice(); team[s0.lead] = mon;
-    log.push({ ...say("win"), ...mark(0) }, { ...say("xp", { n: xp }), ...mark(0) });
-    if (levelled) log.push({ ...say("level", { a: nameOf(me.species), n: mon.level }), ...mark(0) });
-    tellTurn(bb, { ...s0, team }, log, "won");
-  };
-
-  const tryCatch = () => {
-    const b = battle, foe = b.foes[b.fi], s0 = save, me = s0.team[s0.lead];
-    const max = statsOf(foe.level).maxHp, chance = catchChance(foe.hp, max);
-    const mark = { fh: foe.hp, lh: me.hp, li: s0.lead, fi: b.fi };
-    if (chance <= 0) { tellTurn(b, s0, [{ ...say("tooStrong"), ...mark }], null); return; }
-    const log = [{ ...say("throw", { a: nameOf(foe.species) }), ...mark }];
-    if (Math.random() < chance) {
-      const joins = s0.team.length < MAX_TEAM;
-      const s = { ...s0, team: joins ? [...s0.team, { ...foe, xp: 0 }] : s0.team, caught: s0.caught.includes(foe.species) ? s0.caught : [...s0.caught, foe.species] };
-      log.push({ ...say(joins ? "caught" : "caughtHome", { a: nameOf(foe.species) }), ...mark });
-      tellTurn(b, s, log, "caught");
-      return;
-    }
-    log.push({ ...say("broke"), ...mark });
-    const [s, end] = foeTurn(b, b.foes, s0, log);
-    tellTurn(b, s, log, end);
-  };
-
-  const tryRun = () => {
-    const b = battle, foe = b.foes[b.fi], me = save.team[save.lead];
-    const mark = { fh: foe.hp, lh: me.hp, li: save.lead, fi: b.fi };
-    if (b.def.boss) { tellTurn(b, save, [{ ...say("noFlee"), ...mark }], null); return; }
-    tellTurn(b, save, [{ ...say("fled"), ...mark }], "fled");
-  };
-
-  const swapTo = (i) => {
-    const b = battle, s0 = { ...save, lead: i }, foe = b.foes[b.fi];
-    const log = [{ ...say("next", { a: nameOf(s0.team[i].species) }), fh: foe.hp, lh: s0.team[i].hp, li: i, fi: b.fi }];
-    const [s, end] = foeTurn(b, b.foes, s0, log);
-    tellTurn(b, s, log, end);
-  };
-
-  const nextBattleLine = () => {
-    const b = battle;
-    if (b.i + 1 < b.log.length) { setBattle({ ...b, i: b.i + 1 }); return; }
-    if (!b.end) { setBattle({ ...b, log: [], i: 0 }); return; }
-    const { def, end } = b;
-    setBattle(null);
-    if (end === "lost") { const s = wakeAtShrine(save, REGIONS); persist(s); play(def.lose || LOST_SCENE, s); return; }
-    const after = end === "won" ? def.win : end === "caught" ? def.caught : def.flee;
-    if (after) play(after, save);
-  };
-
-  if (!save) return <div className="tc-empty">読み込み中…</div>;
-
-  const wordCard = word && (
-    <div className="tc-qgloss" role="dialog" aria-label="Word meaning" onClick={() => setWord(null)}>
-      <div className="tc-qgloss-in" onClick={(e) => e.stopPropagation()}>
-        <p className="tc-qgw" lang="ja">{word.lemma} <SpeakBtn text={word.lemma} /></p>
-        {word.reading && <p className="tc-qgr" lang="ja">{word.reading}</p>}
-        <p className="tc-qgm">{GLOSS[word.lemma] || ""}</p>
-        <button type="button" className="tc-btn tc-btn-sm" onClick={() => setWord(null)}>OK</button>
-      </div>
-    </div>
-  );
-
-  /* ── the notebook ── */
-  if (view === "note") {
-    const clues = Object.keys(chapter.clues).filter((c) => flags[c]);
-    const met = Object.keys(save.met).sort();
-    const lost = LOST_WORDS.filter((w) => flags[w.flag]);
-    const dex = Object.keys(SPECIES);
-    const tab = (id, label) => (
-      <button type="button" className={"tc-btn tc-btn-sm" + (noteTab === id ? " tc-btn-primary" : "")} aria-pressed={noteTab === id} onClick={() => setNoteTab(id)}><Ja src={label.j} plain /></button>
-    );
-    return (
-      <div className="tc-quest">
-        <div className="tc-qhead">
-          <b><Ja src={MENU.notebook.j} plain /></b>
-          <button type="button" className="tc-btn tc-btn-sm" onClick={() => setView("map")}><Ja src={MENU.map.j} plain /></button>
-        </div>
-        <div className="tc-qtabs">{tab("clues", MENU.clues)}{tab("words", MENU.words)}{tab("team", MENU.team)}{tab("dex", MENU.dex)}</div>
-        {noteTab === "clues" && (
-          <div className="tc-qclue tc-qlost">
-            <p className="tc-qsay"><Ja src={MENU.lostWords.j} onWord={openWord} /> {lost.length} / {LOST_WORD_COUNT}</p>
-            {lost.map((w) => <div key={w.flag} className="tc-qlostword"><p className="tc-qsay"><Ja src={w.j} onWord={openWord} /></p><HelpLine e={w.e} /></div>)}
-          </div>
-        )}
-        {noteTab === "clues" && clues.map((c) => (
-          <div key={c} className="tc-qclue"><p className="tc-qsay"><Ja src={chapter.clues[c].j} onWord={openWord} /></p><HelpLine e={chapter.clues[c].e} /></div>
-        ))}
-        {noteTab === "words" && (met.length
-          ? <ul className="tc-qwords">{met.map((w) => <li key={w}><b lang="ja">{w}</b> <span>{GLOSS[w]}</span></li>)}</ul>
-          : <div className="tc-qclue"><p className="tc-qsay"><Ja src={MENU.noWords.j} onWord={openWord} /></p><HelpLine e={MENU.noWords.e} /></div>)}
-        {noteTab === "team" && save.team.map((m, i) => (
-          <div key={i} className={"tc-qmon" + (i === save.lead ? " is-lead" : "")}>
-            <Sprite species={m.species} />
-            <div className="tc-qmoninfo">
-              <p><b lang="ja">{sp(m.species).ja}</b> Lv {m.level}</p>
-              <HpBar hp={m.hp} max={statsOf(m.level).maxHp} />
-              <p className="tc-qfrom" lang="ja">{sp(m.species).from}</p>
-            </div>
-            {i !== save.lead && m.hp > 0 && <button type="button" className="tc-btn tc-btn-sm" onClick={() => persist({ ...save, lead: i })}><Ja src={MENU.lead.j} plain /></button>}
-          </div>
-        ))}
-        {noteTab === "dex" && (
-          <>
-            <p className="tc-qnote"><Ja src={MENU.dexCaught.j} plain /> {save.caught.length} / {dex.length}</p>
-            <div className="tc-qdex">
-              {dex.map((id) => {
-                const seen = save.seen.includes(id), caught = save.caught.includes(id);
-                return (
-                  <div key={id} className={"tc-qdexcell" + (seen ? "" : " is-unknown")}>
-                    <img src={SPRITES[id]} alt="" draggable={false} />
-                    <span lang="ja">{seen ? sp(id).ja : "？？？"}{caught ? " ★" : ""}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-        <div className="tc-qclue tc-qsaved"><p className="tc-qsay"><Ja src={MENU.saved.j} onWord={openWord} /></p><HelpLine e={MENU.saved.e} /></div>
-        <button type="button" className="tc-qrestart" onClick={() => {
-          if (!resetArmed) { setResetArmed(true); return; }
-          const s = normaliseSave(null, REGIONS);
-          persist(s); setResetArmed(false); setView("map"); play(CHAPTERS[0].start, s);
-        }}>{resetArmed ? "Press again to erase this adventure and start over" : "Start over"}</button>
-        {wordCard}
-      </div>
-    );
-  }
-
-  /* ── battle ── */
-  if (battle) {
-    const line = battle.log[battle.i];
-    const fi = line ? line.fi : battle.fi;
-    const foe = battle.foes[fi];
-    const li = line ? line.li : save.lead;
-    const me = save.team[li];
-    const foeHp = line ? line.fh : foe.hp;
-    const myHp = line ? line.lh : me.hp;
-    const moves = movesOf(me.species);
-    const left = (m, i) => (m.uses ? m.uses - (battle.uses[save.lead + ":" + i] || 0) : null);
-    return (
-      <div className="tc-quest">
-        <div className="tc-qfoe">
-          <Sprite species={foe.species} big />
-          <div>
-            <p><b lang="ja">{sp(foe.species).ja}</b> Lv {foe.level}</p>
-            <HpBar hp={foeHp} max={statsOf(foe.level).maxHp} />
-          </div>
-        </div>
-        <div className="tc-qlead">
-          <Sprite species={me.species} flip />
-          <div>
-            <p><b lang="ja">{sp(me.species).ja}</b> Lv {me.level}</p>
-            <HpBar hp={myHp} max={statsOf(me.level).maxHp} />
-          </div>
-        </div>
-        {line ? (
-          <div className="tc-qbox">
-            <p className="tc-qsay" aria-live="polite"><Ja key={battle.i} src={line.j} onWord={openWord} /></p>
-            <HelpLine key={"h" + battle.i} e={line.e} />
-            <NextBtn onClick={nextBattleLine} />
-          </div>
-        ) : menu === "moves" ? (
-          <div className="tc-qbox tc-qmenu">
-            {moves.map((m, i) => {
-              const n = left(m, i);
-              return (
-                <button key={i} type="button" className="tc-btn" disabled={n === 0} title={m.e} onClick={() => useMove(m, i)}>
-                  <Ja src={m.j} plain />{n != null && <small> ×{n}</small>}
-                </button>
-              );
-            })}
-            <button type="button" className="tc-btn" onClick={() => setMenu("main")}><Ja src={MENU.back.j} plain /></button>
-            <div className="tc-qmenuhelp"><HelpLine e={moves.map((m) => m.e).join(" · ")} /></div>
-          </div>
-        ) : menu === "team" ? (
-          <div className="tc-qbox tc-qmenu">
-            {save.team.map((m, i) => (
-              <button key={i} type="button" className="tc-btn" disabled={i === save.lead || m.hp <= 0} onClick={() => swapTo(i)}>
-                <span lang="ja">{sp(m.species).ja}</span> <small>{m.hp}/{statsOf(m.level).maxHp}</small>
-              </button>
-            ))}
-            <button type="button" className="tc-btn" onClick={() => setMenu("main")}><Ja src={MENU.back.j} plain /></button>
-          </div>
-        ) : (
-          <div className="tc-qbox tc-qmenu">
-            <button type="button" className="tc-btn tc-btn-primary" onClick={() => setMenu("moves")}><Ja src={MENU.fight.j} plain /></button>
-            {!battle.def.boss && <button type="button" className="tc-btn" onClick={tryCatch}><Ja src={MENU.catch.j} plain /></button>}
-            <button type="button" className="tc-btn" disabled={save.team.length < 2} onClick={() => setMenu("team")}><Ja src={MENU.team.j} plain /></button>
-            <button type="button" className="tc-btn" onClick={tryRun}><Ja src={MENU.run.j} plain /></button>
-            <div className="tc-qmenuhelp"><HelpLine e={[MENU.fight.e, ...(battle.def.boss ? [] : [MENU.catch.e]), MENU.team.e, MENU.run.e].join(" · ")} /></div>
-          </div>
-        )}
-        {wordCard}
-      </div>
-    );
-  }
-
-  /* ── the map, and whatever is being said on it ── */
-  const node = scene && scene.node;
-  const goal = goalNow(chapter.goals, flags);
-  const heroPic = HERO[facing.dir === "left" ? "right" : facing.dir][facing.step % 2];
-  const onGrass = map.rows[save.y] && map.rows[save.y][save.x] === ",";
-  const speaker = node && node.s;
+  const playing = screen === "play" || screen === "level";
   return (
-    <div className="tc-quest">
-      <div className="tc-qhead">
-        <div>
-          <b><Ja src={chapter.number.j} plain /> <Ja src={chapter.title.j} plain /></b>
-          {!scene && <div className="tc-qgoal"><p className="tc-qsay"><Ja src={goal.j} onWord={openWord} /></p><HelpLine key={goal.until} e={goal.e} /></div>}
+    <div className="tc-quest" ref={rootRef}>
+      {playing && (
+        <div className="tc-qhud">
+          <span className="tc-qbar tc-qbar-hp" role="img" aria-label="Health"><i ref={hpRef} /></span>
+          <b ref={timeRef} className="tc-qtime">0:00</b>
+          <b ref={scoreRef} className="tc-qscore">0</b>
+          <button type="button" className="tc-btn tc-btn-sm" aria-label={save.sound ? "Turn the voice off" : "Turn the voice on"} onClick={() => store({ sound: !save.sound })}>{save.sound ? "🔊" : "🔇"}</button>
+          <button type="button" className="tc-btn tc-btn-sm" aria-label={paused ? "Resume" : "Pause"} onClick={() => setPaused(!paused)}>{paused ? "▶" : "⏸"}</button>
+          <span className="tc-qbar tc-qbar-xp" role="img" aria-label="Experience"><i ref={xpRef} /></span>
         </div>
-        {!scene && <button type="button" className="tc-btn tc-btn-sm" onClick={() => setView("note")}><Ja src={MENU.notebook.j} plain /></button>}
-      </div>
-
-      <div className="tc-qmap" role="img" aria-label={`Map of ${region.name}. You are at column ${save.x + 1}, row ${save.y + 1}.`}>
-        <img className="tc-qmapbg" src={MAPS[region.theme]} alt="" draggable={false} />
-        {map.east && <img className="tc-qactor" src={roadOpen ? OBJECTS.open : OBJECTS.locked} style={onMap(map.east.x, map.east.y, 16, 16)} alt="" draggable={false} />}
-        {!cleared && <img className="tc-qactor" src={WALKERS[region.guardian.look]} style={onMap(map.guardian.x, map.guardian.y, 16, 20)} alt="" draggable={false} />}
-        {people.map((p) => (
-          p.sprite ? <img key={p.id} className="tc-qactor" src={SPRITES[p.sprite]} style={onMap(p.x, p.y, 24, 24)} alt="" draggable={false} />
-          : p.object ? <img key={p.id} className="tc-qactor" src={OBJECTS[p.object]} style={onMap(p.x, p.y, 16, 20)} alt="" draggable={false} />
-          : <img key={p.id} className="tc-qactor" src={WALKERS[p.walker]} style={onMap(p.x, p.y, 16, 20)} alt="" draggable={false} />
-        ))}
-        <img key={save.region} className={"tc-qactor tc-qhero" + (facing.dir === "left" ? " is-left" : "") + (onGrass ? " is-grass" : "")} src={heroPic}
-             style={onMap(save.x, save.y, 16, 20)} alt="" draggable={false} />
-      </div>
-
-      {node && (
-        <div className="tc-qbox">
-          {node.name ? (
-            <form className="tc-qname" onSubmit={submitName}>
-              <p className="tc-qsay"><Ja src={MENU.nameAsk.j} onWord={openWord} /></p><HelpLine e={MENU.nameAsk.e} />
-              <input className="tc-input" autoFocus value={nameDraft} maxLength={16} onChange={(e) => setNameDraft(e.target.value)}
-                     placeholder="Matthew" aria-label="Your name" autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false} />
-              <p className="tc-qkana" lang="ja" aria-hidden="true">{nameFromInput(nameDraft, toKana) || "　"}</p>
-              <button type="submit" className="tc-btn tc-btn-primary tc-qgo"><Ja src={MENU.nameOk.j} plain /></button>
-            </form>
-          ) : node.choose ? (
-            <div className="tc-qchoices">
-              {node.choose.map((o, i) => (
-                <div key={i} className="tc-qchoice">
-                  <button type="button" className="tc-btn" onClick={() => choose(o)}><Ja src={o.j} name={playerName} plain /></button>
-                  <HelpLine e={o.e} name={playerName} />
-                </div>
-              ))}
-            </div>
-          ) : node.present ? (
-            <div className="tc-qchoices">
-              <p className="tc-qsay"><Ja src={MENU.pickClue.j} onWord={openWord} /></p><HelpLine e={MENU.pickClue.e} />
-              {Object.keys(chapter.clues).filter((c) => flags[c]).map((c) => (
-                <div key={c} className="tc-qchoice">
-                  <button type="button" className="tc-btn tc-qcluebtn" onClick={() => present(c)}><Ja src={chapter.clues[c].j} plain /></button>
-                  <HelpLine e={chapter.clues[c].e} />
-                </div>
-              ))}
-            </div>
-          ) : node.found ? (
-            <>
-              <p className="tc-qeyebrow"><Ja src={MENU.found.j} plain /></p>
-              <p className="tc-qsay"><Ja src={chapter.clues[node.found].j} onWord={openWord} /></p>
-              <HelpLine key={node.found} e={chapter.clues[node.found].e} />
-              <NextBtn onClick={nextLine} />
-            </>
-          ) : (
-            <>
-              <div className="tc-qline2">
-                {speaker && <Face who={speaker} />}
-                <div className="tc-qtalk">
-                  {speaker && CAST[speaker] && <p className="tc-qwho"><Ja src={CAST[speaker].name} plain /></p>}
-                  <p className="tc-qsay"><Ja key={node.j} src={node.j} name={playerName} onWord={openWord} /></p>
-                </div>
-              </div>
-              <div className="tc-qtools">
-                <SpeakBtn text={plainJa(node.j, playerName)} />
-                <HelpLine key={node.j} e={node.e} name={playerName} />
-              </div>
-              <NextBtn onClick={nextLine} />
-            </>
-          )}
+      )}
+      {playing && (
+        <div className={"tc-qshout" + (shout ? " is-" + shout.state : "")} aria-live="assertive">
+          {shout ? <p><Ja src={shout.j} />{shout.en && <small> = {shout.en}</small>}</p> : <p className="tc-qquiet">　</p>}
+          <span className="tc-qclock"><i ref={timerRef} /></span>
         </div>
       )}
 
-      {!scene && (
-        <div className="tc-qpad" role="group" aria-label="Move">
-          <button type="button" className="tc-btn tc-qup" aria-label="Move up" onClick={() => move("up")}>▲</button>
-          <button type="button" className="tc-btn tc-qleft" aria-label="Move left" onClick={() => move("left")}>◀</button>
-          <button type="button" className="tc-btn tc-qright" aria-label="Move right" onClick={() => move("right")}>▶</button>
-          <button type="button" className="tc-btn tc-qdown" aria-label="Move down" onClick={() => move("down")}>▼</button>
-        </div>
-      )}
-      {!flags[CHAPTERS[0].introFlag] && <p className="tc-qnote tc-qkeys">Tap any word for its meaning. ？ shows the English. 🔊 reads it aloud.</p>}
-      {wordCard}
+      <div className="tc-qstage">
+        <canvas ref={canvasRef} width={W} height={H} className="tc-qarena" aria-label="The arena. Use the arrow keys or drag to move."
+                onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
+
+        {screen === "title" && (
+          <div className="tc-qover">
+            <h2 className="tc-qtitle"><Ja src={LINES.title} /></h2>
+            <p className="tc-qhow">Move with the arrow keys, or drag on a phone. Your partner fires by itself.<br />
+              When Kotodama shouts an order, <b>obey it fast.</b></p>
+            {save.best > 0 && <p className="tc-qbest">Best: {save.best.toLocaleString()}</p>}
+            <Partners owned={save.partners} chosen={save.partner} onPick={(id) => store({ partner: id })} />
+            <button type="button" className="tc-btn tc-btn-primary tc-qstart" autoFocus onClick={start}>Start ▶</button>
+          </div>
+        )}
+
+        {screen === "level" && (
+          <div className="tc-qover tc-qlevel">
+            <h2 className="tc-qtitle">Lv UP!</h2>
+            <div className="tc-qups">
+              {choices.map((u, i) => (
+                <button key={u.id} type="button" className="tc-btn" autoFocus={i === 0} onClick={() => pickUpgrade(u.id)}>
+                  <em aria-hidden="true">{u.icon}</em><Ja src={u.j} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {paused && screen === "play" && (
+          <div className="tc-qover">
+            <h2 className="tc-qtitle">⏸</h2>
+            <button type="button" className="tc-btn tc-btn-primary tc-qstart" autoFocus onClick={() => setPaused(false)}>Resume ▶</button>
+          </div>
+        )}
+
+        {screen === "over" && result && (
+          <div className="tc-qover">
+            <h2 className="tc-qtitle"><Ja src={LINES.over} /></h2>
+            <p className="tc-qbig">{result.score.toLocaleString()}{result.isBest && <small> <Ja src={LINES.newBest} /></small>}</p>
+            <p className="tc-qstats">{Math.floor(result.seconds / 60)}:{String(result.seconds % 60).padStart(2, "0")} · {result.kills} defeated · orders obeyed: {result.obeyed}</p>
+            {result.caught.length > 0 && (
+              <div className="tc-qcaught">
+                {result.caught.map((id) => <img key={id} src={SPRITES[id]} alt={SPECIES[id].name} draggable={false} />)}
+                <span>New partner!</span>
+              </div>
+            )}
+            {result.words.length > 0 && (
+              <ul className="tc-qmissed">
+                {result.words.map((w) => <li key={w.id}><b><Ja src={w.j} /></b> <span>{w.en}</span></li>)}
+              </ul>
+            )}
+            <Partners owned={save.partners} chosen={save.partner} onPick={(id) => store({ partner: id })} />
+            <button type="button" className="tc-btn tc-btn-primary tc-qstart" autoFocus onClick={start}><Ja src={LINES.again} /> ▶</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
